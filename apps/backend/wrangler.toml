@@ -1,0 +1,62 @@
+name = "backend"
+main = "src/index.ts"
+compatibility_date = "2023-12-18"
+
+# Environment variables
+[vars]
+ENV = "development"
+
+# Production Environment
+[env.production]
+vars = { ENV = "production" }
+# routes = [
+#   { pattern = "your-production-url.com/*", zone_name = "your-zone.com" }
+# ]
+logpush = true
+analytics_engine_datasets = [{ binding = "ANALYTICS" }]
+
+# D1 database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "main-db-prod"
+database_id = "" # Add your D1 database ID here for production
+
+# KV namespace binding
+[[kv_namespaces]]
+binding = "KV"
+id = "" # Add your KV namespace ID here for production
+preview_id = "" # Add your KV preview ID here for dev
+
+# R2 bucket binding
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "bucket-prod" # Add your R2 bucket name here
+preview_bucket_name = "bucket-dev" # Add your R2 preview bucket name here for dev
+
+# Queue binding
+[[queues.producers]]
+binding = "QUEUE"
+queue = "queue-prod" # Add your Queue name here
+
+[env.development]
+logpush = true
+analytics_engine_datasets = [{ binding = "ANALYTICS" }]
+
+[[env.development.d1_databases]]
+binding = "DB"
+database_name = "main-db-dev"
+database_id = ""
+
+[[env.development.kv_namespaces]]
+binding = "KV"
+id = ""
+preview_id = ""
+
+[[env.development.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "bucket-dev"
+preview_bucket_name = "bucket-dev"
+
+[[env.development.queues.producers]]
+binding = "QUEUE"
+queue = "queue-dev"
