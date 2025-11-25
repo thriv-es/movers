@@ -56,6 +56,8 @@ export default defineConfig(({ mode }) => {
     // configure development server
     server: {
       open: false,
+      host: true, // Allow access from network (for mobile testing)
+      port: 5173, // Explicit port for easier access
 
       // proxy requests to backend Cloudflare Worker dev server
       proxy: {

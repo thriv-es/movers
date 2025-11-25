@@ -2,7 +2,16 @@ import { useState, useRef, useEffect } from 'react'
 import type { ChatMessage } from '@workspace/data'
 import { Button } from '@workspace/react-ui/components/ui/button'
 import { Input } from '@workspace/react-ui/components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@workspace/react-ui/components/ui/dialog'
 import { chatApi } from '@/lib/api-client'
+import { PHOTO_INSTRUCTIONS } from '@/constants/photo-instructions'
 
 interface ChatStepProps {
   messages: ChatMessage[]
@@ -18,6 +27,7 @@ export function ChatStep({
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isFinished, setIsFinished] = useState(false)
+  const [showInstructionsModal, setShowInstructionsModal] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const hasFetchedInitialGreeting = useRef(false)
 
@@ -132,6 +142,7 @@ export function ChatStep({
       </div>
       <div className="flex gap-2">
         <Input
+          type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -141,18 +152,77 @@ export function ChatStep({
             }
           }}
           placeholder="Type your message..."
-          disabled={isLoading || isFinished}
+          disabled={isLoading}
           className="flex-1"
+          style={{ fontSize: '16px' }}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="sentences"
         />
-        <Button onClick={handleSend} disabled={isLoading || isFinished || !input.trim()}>
+        <Button onClick={handleSend} disabled={isLoading || !input.trim()}>
           Send
         </Button>
       </div>
       {isFinished && (
-        <Button onClick={onNext} size="lg" className="w-full">
+        <Button onClick={() => setShowInstructionsModal(true)} size="lg" className="w-full">
           Continue to Photo Upload
         </Button>
       )}
+      
+      <Dialog open={showInstructionsModal} onOpenChange={setShowInstructionsModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Photo Upload Instructions</DialogTitle>
+            <DialogDescription>
+              Follow these guidelines to get the most accurate estimate
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 text-sm">
+            <div>
+              <h3 className="font-semibold mb-2">{PHOTO_INSTRUCTIONS.whatToPhotograph.title}</h3>
+              <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                {PHOTO_INSTRUCTIONS.whatToPhotograph.items.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            
+            <div>
+              <h3 className="font-semibold mb-2">{PHOTO_INSTRUCTIONS.photoTips.title}</h3>
+              <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                {PHOTO_INSTRUCTIONS.photoTips.items.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            
+            <div>
+              <h3 className="font-semibold mb-2">{PHOTO_INSTRUCTIONS.whatNotToDo.title}</h3>
+              <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                {PHOTO_INSTRUCTIONS.whatNotToDo.items.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            
+            <div className="bg-muted p-3 rounded-md">
+              <p className="text-xs">
+                <strong>{PHOTO_INSTRUCTIONS.howMany.label}</strong> {PHOTO_INSTRUCTIONS.howMany.text}
+              </p>
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button onClick={() => {
+              setShowInstructionsModal(false)
+              onNext()
+            }} size="lg" className="w-full">
+              Got it, Start Uploading
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

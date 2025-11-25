@@ -103,7 +103,23 @@ app.post('/api/chat', async (c) => {
     }
     
     // Determine if finished based on readiness_for_next_stage from prompt output
-    const finished = parsedSessionData?.readiness_for_next_stage === true;
+    // OR as a fallback, check if all required fields are collected
+    const dataCollected = parsedSessionData?.data_collected;
+    const isReadyByFields = !!(
+      dataCollected?.origin_address &&
+      dataCollected?.origin_city &&
+      dataCollected?.origin_state &&
+      dataCollected?.destination_address &&
+      dataCollected?.destination_city &&
+      dataCollected?.destination_state &&
+      dataCollected?.move_date &&
+      dataCollected?.origin_floor != null &&
+      dataCollected?.origin_has_elevator != null &&
+      dataCollected?.destination_floor != null &&
+      dataCollected?.destination_has_elevator != null
+    );
+    
+    const finished = parsedSessionData?.readiness_for_next_stage === true || isReadyByFields;
 
     // Return FULL content (with JSON) so it's available when messages are sent to /api/estimate
     // Frontend will strip JSON for display purposes

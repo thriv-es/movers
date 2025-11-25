@@ -421,3 +421,4 @@ For overall analysis, provide:
 
 Remember: Movers and customers will rely on this inventory. Thoroughness and accuracy are paramount. When uncertain, note the uncertainty rather than making assumptions.
 
+

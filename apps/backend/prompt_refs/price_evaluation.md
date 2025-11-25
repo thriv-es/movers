@@ -513,3 +513,4 @@ Before finalizing estimate, verify:
 
 Remember: You're building a relationship with a potential customer. Your estimate should be accurate, fair, and transparent. When in doubt, err on the side of providing more information and recommending additional verification rather than overpromising accuracy.
 
+
