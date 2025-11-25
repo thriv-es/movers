@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { zSocialMediaDto } from '@workspace/data'
 
 export interface AppConfig extends z.infer<typeof zAppConfig> {}
 
@@ -46,8 +45,6 @@ export const zAppConfig = z.object({
     legal: z.string().min(1),
   }),
 
-  socialMedia: zSocialMediaDto.optional(),
-
   // opengraph and x/twitter cards are not implemented (commented example below)
   // image: z.string().optional(),
   // ogImageHeightPx: z.coerce.number().default(630),
@@ -71,9 +68,5 @@ export const CONFIG: AppConfig = zAppConfig.parse({
   keywords: import.meta.env.VITE_META_KEYWORDS_CSV,
   contacts: {
     legal: import.meta.env.VITE_LEGAL_CONTACT,
-  },
-  socialMedia: {
-    github: import.meta.env.VITE_GITHUB,
-    twitter: import.meta.env.VITE_TWITTER,
   },
 })

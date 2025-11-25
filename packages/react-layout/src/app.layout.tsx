@@ -1,6 +1,6 @@
 import { Outlet, useLocation } from 'react-router'
 import { cn } from '@workspace/tw-style'
-import type { AppNavLink, AppNavLinkGroup, SocialMediaDto } from '@workspace/data'
+import type { AppNavLink } from '@workspace/data'
 
 import { LayoutHeader } from './components/layout/layout-header.tsx'
 import { LayoutFooter } from './components/layout/layout-footer.tsx'
@@ -8,8 +8,6 @@ import { LayoutMain } from './components/layout/layout-main.tsx'
 
 export interface AppLayoutProps {
   navLinks?: AppNavLink[]
-  footerNavLinkGroups?: AppNavLinkGroup[]
-  socialMedia?: SocialMediaDto
   hasMain?: boolean
   isMainContainer?: boolean
   className?: string
@@ -27,7 +25,6 @@ export interface AppLayoutProps {
  */
 export function AppLayout({
   navLinks,
-  socialMedia,
   hasMain = true,
   isMainContainer = true,
   className,
@@ -46,7 +43,7 @@ export function AppLayout({
         <Outlet />
       )}
 
-      <LayoutFooter socialMedia={socialMedia} />
+      <LayoutFooter />
     </>
   )
 }

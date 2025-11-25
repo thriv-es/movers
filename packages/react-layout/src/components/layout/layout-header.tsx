@@ -65,7 +65,7 @@ export function LayoutHeader({ navLinks, className }: LayoutHeaderProps) {
           onClick={handleMenuLinkClick}
         >
           <Logo className="~size-5/6" />
-          App
+          Movers
         </Link>
         <ul className="hidden md:flex ~gap-4/6">
           {navLinks?.map((item) => (
