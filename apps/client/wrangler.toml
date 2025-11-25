@@ -13,7 +13,7 @@ compatibility_date = "2023-12-18"
 logpush = true
 analytics_engine_datasets = [{ binding = "ANALYTICS" }]
 [env.development.vars]
-ENV = "development"
+ENV = "preview"
 
 [env.production]
 vars = { ENV = "production" }
