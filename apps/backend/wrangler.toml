@@ -2,24 +2,23 @@ name = "movers-backend"
 main = "src/index.ts"
 compatibility_date = "2023-12-18"
 
-# Environment variables
+# Environment variables (Production by default)
 [vars]
-ENV = "development"
+ENV = "production"
 # AI_GATEWAY_AUTH_TOKEN - Use .dev.vars for local dev (see .dev.vars.example)
 # For production: use `wrangler secret put AI_GATEWAY_AUTH_TOKEN`
 AI_GATEWAY_PROJECT_NAME = "movers_demo" 
 PRICE_PER_BOX = 50
 PRICE_PER_LARGE_ITEM = 100
 
-# Production Environment
-[env.production]
-vars = { ENV = "production" }
+# Preview Environment (for testing)
+[env.preview]
+vars = { ENV = "preview" }
+# For custom domains:
 # routes = [
-#   { pattern = "your-production-url.com/*", zone_name = "your-zone.com" }
+#   { pattern = "api.yourdomain.com/*", zone_name = "yourdomain.com" }
 # ]
 logpush = true
-# Commented out for local development
-# analytics_engine_datasets = [{ binding = "ANALYTICS" }]
 
 # D1 database binding
 # Commented out for local development - uncomment and add database ID when deploying
@@ -48,28 +47,16 @@ logpush = true
 # binding = "QUEUE"
 # queue = "queue-prod" # Add your Queue name here
 
-[env.development]
-logpush = true
-# Commented out for local development
-# analytics_engine_datasets = [{ binding = "ANALYTICS" }]
-
-# Commented out for local development - uncomment when you have a D1 database set up
-# [[env.development.d1_databases]]
+# Optional: Preview environment resources (if needed)
+# [[env.preview.d1_databases]]
 # binding = "DB"
-# database_name = "main-db-dev"
+# database_name = "main-db-preview"
 # database_id = ""
 
-# Commented out for local development - uncomment when you have Cloudflare resources set up
-# [[env.development.kv_namespaces]]
+# [[env.preview.kv_namespaces]]
 # binding = "KV"
 # id = ""
-# preview_id = ""
 
-# [[env.development.r2_buckets]]
+# [[env.preview.r2_buckets]]
 # binding = "BUCKET"
-# bucket_name = "bucket-dev"
-# preview_bucket_name = "bucket-dev"
-
-# [[env.development.queues.producers]]
-# binding = "QUEUE"
-# queue = "queue-dev"
+# bucket_name = "bucket-preview"

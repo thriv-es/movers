@@ -4,10 +4,11 @@
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",
-    "deploy:prod": "wrangler deploy --env production",
+    "deploy:preview": "wrangler deploy --env preview",
     "dev": "wrangler dev --host 0.0.0.0",
     "start": "wrangler dev --host 0.0.0.0",
     "logs": "wrangler tail",
+    "logs:preview": "wrangler tail --env preview",
     "secret:set": "wrangler secret put",
     "secret:list": "wrangler secret list",
     "db:gen": "drizzle-kit generate:sqlite",

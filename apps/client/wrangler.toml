@@ -3,16 +3,15 @@ compatibility_date = "2023-12-18"
 pages_build_output_dir = "dist"
 
 [vars]
-ENV = "development"
+ENV = "production"
 
 [placement]
 mode = "smart"
 
-[env.development]
+[env.preview]
 compatibility_date = "2023-12-18"
-logpush = true
 analytics_engine_datasets = [{ binding = "ANALYTICS" }]
-[env.development.vars]
+[env.preview.vars]
 ENV = "preview"
 
 [env.production]
@@ -20,5 +19,4 @@ vars = { ENV = "production" }
 # routes = [
 #   { pattern = "your-production-url.com/*", zone_name = "your-zone.com" }
 # ]
-logpush = true
 analytics_engine_datasets = [{ binding = "ANALYTICS" }]
