@@ -70,19 +70,29 @@ The client app will be available at http://localhost:5173
 
 ## Deployment
 
-### Client (Cloudflare Pages)
+Deploy to Cloudflare Workers and Pages:
 
 ```sh
-cd apps/client
-pnpm build
-# Deploy dist/ to Cloudflare Pages
+# Quick deployment (from root)
+pnpm deploy:all
 ```
 
-### Backend (Cloudflare Workers)
+For detailed deployment instructions, see:
+- **[Quick Start Guide](./DEPLOY_QUICKSTART.md)** - Fast deployment in 5 steps
+- **[Complete Deployment Guide](./DEPLOYMENT.md)** - Detailed guide with troubleshooting, custom domains, and monitoring
+
+### Quick Commands
 
 ```sh
-cd apps/backend
-pnpm deploy
+# Deploy backend only
+pnpm deploy:backend
+
+# Deploy client only
+pnpm deploy:client
+
+# View logs
+cd apps/backend && pnpm logs
+cd apps/client && pnpm pages:tail
 ```
 
 ## License

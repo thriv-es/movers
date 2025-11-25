@@ -1,4 +1,4 @@
-name = "backend"
+name = "movers-backend"
 main = "src/index.ts"
 compatibility_date = "2023-12-18"
 

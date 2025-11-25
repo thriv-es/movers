@@ -8,7 +8,10 @@
     "build": "pnpm typecheck && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "ship": "pnpm dlx wrangler pages deploy dist --project-name=client"
+    "deploy": "pnpm build && wrangler pages deploy dist --project-name=movers-client",
+    "deploy:prod": "pnpm build && wrangler pages deploy dist --project-name=movers-client --branch=main",
+    "pages:tail": "wrangler pages deployment tail",
+    "ship": "pnpm deploy"
   },
   "dependencies": {
     "@fluid-tailwind/tailwind-merge": "^0.0.3",

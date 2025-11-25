@@ -4,8 +4,12 @@
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",
+    "deploy:prod": "wrangler deploy --env production",
     "dev": "wrangler dev --host 0.0.0.0",
     "start": "wrangler dev --host 0.0.0.0",
+    "logs": "wrangler tail",
+    "secret:set": "wrangler secret put",
+    "secret:list": "wrangler secret list",
     "db:gen": "drizzle-kit generate:sqlite",
     "db:push": "drizzle-kit push:sqlite"
   },
