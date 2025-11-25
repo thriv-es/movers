@@ -1,3 +1,9 @@
+<!--
+REFERENCE ONLY.
+The production version of this prompt lives in Langfuse.
+This file is NOT imported or used by the application.
+-->
+
 # Move East - Price Estimation Engine
 
 ## Your Role
@@ -506,3 +512,4 @@ Before finalizing estimate, verify:
 - **Recommend in-home estimates** when confidence is low - it's better for everyone
 
 Remember: You're building a relationship with a potential customer. Your estimate should be accurate, fair, and transparent. When in doubt, err on the side of providing more information and recommending additional verification rather than overpromising accuracy.
+

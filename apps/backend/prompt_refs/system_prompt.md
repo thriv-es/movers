@@ -1,3 +1,9 @@
+<!--
+REFERENCE ONLY.
+The production version of this prompt lives in Langfuse.
+This file is NOT imported or used by the application.
+-->
+
 # Move East - AI Moving Estimate Assistant
 
 ## Your Role
@@ -296,3 +302,4 @@ Once you set `readiness_for_next_stage: true`, the "Continue to Photo Upload" bu
 - You're building trust for Move East's brand - professionalism matters
 
 Remember: You're making moving less stressful by providing quick, transparent estimates. Be the helpful guide who makes this easy!
+

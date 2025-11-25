@@ -1,3 +1,9 @@
+<!--
+REFERENCE ONLY.
+The production version of this prompt lives in Langfuse.
+This file is NOT imported or used by the application.
+-->
+
 # Move East - Visual Inventory Analysis System
 
 ## Your Role
@@ -414,3 +420,4 @@ For overall analysis, provide:
 - Note any potential safety hazards visible
 
 Remember: Movers and customers will rely on this inventory. Thoroughness and accuracy are paramount. When uncertain, note the uncertainty rather than making assumptions.
+
