@@ -65,7 +65,7 @@ export function LayoutHeader({ navLinks, className }: LayoutHeaderProps) {
           onClick={handleMenuLinkClick}
         >
           <Logo className="~size-5/6" />
-          App
+          Movers
         </Link>
         <ul className="hidden md:flex ~gap-4/6">
           {navLinks?.map((item) => (
@@ -77,32 +77,34 @@ export function LayoutHeader({ navLinks, className }: LayoutHeaderProps) {
         <div className="hidden md:flex md:items-center md:justify-end md:flex-1">
           <ThemeMenu iconSize="md" />
         </div>
-        <div className="flex items-center justify-end flex-1 md:hidden">
-          <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="~-mr-2/4">
-                <MenuIcon />
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="right" className={className}>
-              <SheetHeader>
-                <SheetTitle>Menu</SheetTitle>
-                <SheetDescription className="sr-only">Mobile Navigation Menu</SheetDescription>
-              </SheetHeader>
-              <div className="flex flex-col items-start ~gap-0.5/1 ~mt-4/6">
-                {navLinks?.map((item) => (
-                  <HeaderNavLink
-                    key={item.title}
-                    title={item.title}
-                    href={item.href}
-                    isAtScrollThreshold={isAtScrollThreshold}
-                    onClick={handleMenuLinkClick}
-                  />
-                ))}
-              </div>
-            </SheetContent>
-          </Sheet>
-        </div>
+        {navLinks && navLinks.length > 0 && (
+          <div className="flex items-center justify-end flex-1 md:hidden">
+            <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="~-mr-2/4">
+                  <MenuIcon />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className={className}>
+                <SheetHeader>
+                  <SheetTitle>Menu</SheetTitle>
+                  <SheetDescription className="sr-only">Mobile Navigation Menu</SheetDescription>
+                </SheetHeader>
+                <div className="flex flex-col items-start ~gap-0.5/1 ~mt-4/6">
+                  {navLinks.map((item) => (
+                    <HeaderNavLink
+                      key={item.title}
+                      title={item.title}
+                      href={item.href}
+                      isAtScrollThreshold={isAtScrollThreshold}
+                      onClick={handleMenuLinkClick}
+                    />
+                  ))}
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
+        )}
       </nav>
     </header>
   )

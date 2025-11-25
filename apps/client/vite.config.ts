@@ -56,33 +56,17 @@ export default defineConfig(({ mode }) => {
     // configure development server
     server: {
       open: false,
+      host: true, // Allow access from network (for mobile testing)
+      port: 5173, // Explicit port for easier access
 
-      // uncomment the following to configure the dev server to proxy requests a back-end API
-      // proxy: {
-      //   '/api': {
-      //     target: DEV_API_URL, // e.g. 'http://localhost:3000'
-      //     changeOrigin: true,
-      //     secure: false,
-      //
-      //     // uncomment to enable websockets support
-      //     // ws: true,
-      //
-      //     // reference example of a rewrite configuration (not currently required)
-      //     // rewrite: (path) => path.replace(/^\/api/, ''),
-      //
-      //     // set origin header to match the target origin to satisfy anti-CSRF middleware in development
-      //     configure: (proxy, _options) => {
-      //       proxy.on('proxyReq', (proxyReq, _req, _res) => {
-      //         // extract the protocol and host from the target URL
-      //         const targetUrl = new URL(DEV_API_URL)
-      //         const targetOrigin = `${targetUrl.protocol}//${targetUrl.host}`
-      //
-      //         // set the origin header to match the target origin
-      //         proxyReq.setHeader('Origin', targetOrigin)
-      //       })
-      //     },
-      //   },
-      // },
+      // proxy requests to backend Cloudflare Worker dev server
+      proxy: {
+        '/api': {
+          target: 'http://localhost:8787',
+          changeOrigin: true,
+          secure: false,
+        },
+      },
     },
 
     define: {

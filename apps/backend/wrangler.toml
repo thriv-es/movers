@@ -5,6 +5,11 @@ compatibility_date = "2023-12-18"
 # Environment variables
 [vars]
 ENV = "development"
+# AI_GATEWAY_AUTH_TOKEN - Use .dev.vars for local dev (see .dev.vars.example)
+# For production: use `wrangler secret put AI_GATEWAY_AUTH_TOKEN`
+AI_GATEWAY_PROJECT_NAME = "movers_demo" 
+PRICE_PER_BOX = 50
+PRICE_PER_LARGE_ITEM = 100
 
 # Production Environment
 [env.production]
@@ -13,50 +18,58 @@ vars = { ENV = "production" }
 #   { pattern = "your-production-url.com/*", zone_name = "your-zone.com" }
 # ]
 logpush = true
-analytics_engine_datasets = [{ binding = "ANALYTICS" }]
+# Commented out for local development
+# analytics_engine_datasets = [{ binding = "ANALYTICS" }]
 
 # D1 database binding
-[[d1_databases]]
-binding = "DB"
-database_name = "main-db-prod"
-database_id = "" # Add your D1 database ID here for production
+# Commented out for local development - uncomment and add database ID when deploying
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "main-db-prod"
+# database_id = "" # Add your D1 database ID here for production
 
 # KV namespace binding
-[[kv_namespaces]]
-binding = "KV"
-id = "" # Add your KV namespace ID here for production
-preview_id = "" # Add your KV preview ID here for dev
+# Commented out for local development - uncomment and add IDs when deploying
+# [[kv_namespaces]]
+# binding = "KV"
+# id = "" # Add your KV namespace ID here for production
+# preview_id = "" # Add your KV preview ID here for dev
 
 # R2 bucket binding
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "bucket-prod" # Add your R2 bucket name here
-preview_bucket_name = "bucket-dev" # Add your R2 preview bucket name here for dev
+# Commented out for local development - uncomment and add bucket names when deploying
+# [[r2_buckets]]
+# binding = "BUCKET"
+# bucket_name = "bucket-prod" # Add your R2 bucket name here
+# preview_bucket_name = "bucket-dev" # Add your R2 preview bucket name here for dev
 
 # Queue binding
-[[queues.producers]]
-binding = "QUEUE"
-queue = "queue-prod" # Add your Queue name here
+# Commented out for local development - uncomment and add queue name when deploying
+# [[queues.producers]]
+# binding = "QUEUE"
+# queue = "queue-prod" # Add your Queue name here
 
 [env.development]
 logpush = true
-analytics_engine_datasets = [{ binding = "ANALYTICS" }]
+# Commented out for local development
+# analytics_engine_datasets = [{ binding = "ANALYTICS" }]
 
-[[env.development.d1_databases]]
-binding = "DB"
-database_name = "main-db-dev"
-database_id = ""
+# Commented out for local development - uncomment when you have a D1 database set up
+# [[env.development.d1_databases]]
+# binding = "DB"
+# database_name = "main-db-dev"
+# database_id = ""
 
-[[env.development.kv_namespaces]]
-binding = "KV"
-id = ""
-preview_id = ""
+# Commented out for local development - uncomment when you have Cloudflare resources set up
+# [[env.development.kv_namespaces]]
+# binding = "KV"
+# id = ""
+# preview_id = ""
 
-[[env.development.r2_buckets]]
-binding = "BUCKET"
-bucket_name = "bucket-dev"
-preview_bucket_name = "bucket-dev"
+# [[env.development.r2_buckets]]
+# binding = "BUCKET"
+# bucket_name = "bucket-dev"
+# preview_bucket_name = "bucket-dev"
 
-[[env.development.queues.producers]]
-binding = "QUEUE"
-queue = "queue-dev"
+# [[env.development.queues.producers]]
+# binding = "QUEUE"
+# queue = "queue-dev"

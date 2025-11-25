@@ -10,7 +10,7 @@ import { CONFIG } from '@/config'
 export function RootLayout(): JSX.Element {
   return (
     <>
-      <AppLayout navLinks={NAV_LINKS} socialMedia={CONFIG.socialMedia} />
+      <AppLayout navLinks={NAV_LINKS} />
       <ScrollRestoration />
     </>
   )

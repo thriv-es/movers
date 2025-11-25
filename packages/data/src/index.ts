@@ -13,6 +13,7 @@ export * from './helpers/urls-slashes'
 
 // zod schemas
 export * from './z-common/z-date-time'
+export * from './z-common/z-move-demo'
 
 // zod schemas for front-end
 export * from './z-ui/z-app-navigation'
@@ -23,3 +24,4 @@ export * from './type-guards/object.guards'
 
 // types + type utilities
 export * from './types/object.types'
+export * from './types/move-demo.types'

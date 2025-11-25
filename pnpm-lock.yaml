@@ -62,16 +62,19 @@ importers:
       '@libsql/client':
         specifier: ^0.4.0-pre.5
         version: 0.4.3
+      '@workspace/data':
+        specifier: workspace:*
+        version: link:../../packages/data
       drizzle-orm:
         specifier: ^0.29.3
-        version: 0.29.5(@cloudflare/workers-types@4.20251125.0)(@libsql/client@0.4.3)(@types/react@18.3.12)(react@18.3.1)
+        version: 0.29.5(@cloudflare/workers-types@4.20251121.0)(@libsql/client@0.4.3)(@types/react@18.3.12)(react@18.3.1)
       hono:
         specifier: ^3.12.0
         version: 3.12.12
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20231218.0
-        version: 4.20251125.0
+        version: 4.20251121.0
       drizzle-kit:
         specifier: ^0.20.9
         version: 0.20.18
@@ -80,7 +83,7 @@ importers:
         version: 5.7.2
       wrangler:
         specifier: ^3.22.1
-        version: 3.114.15(@cloudflare/workers-types@4.20251125.0)
+        version: 3.114.15(@cloudflare/workers-types@4.20251121.0)
 
   apps/client:
     dependencies:
@@ -736,8 +739,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@cloudflare/workers-types@4.20251125.0':
-    resolution: {integrity: sha512-YZdO/IX10DiHb2v+7H2CL5SKAbxJQIG22jNefgtW86YMf5LvQk6f75v5T/j1ju56MBwm6RzcqvsECF+cXs2h3g==}
+  '@cloudflare/workers-types@4.20251121.0':
+    resolution: {integrity: sha512-jzFg7hEGKzpEalxTCanN6lM8IdkvO/brsERp/+OyMms4Zi0nhDPUAg9dUcKU8wDuDUnzbjkplY6YRwle7Cq6gA==}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -1428,6 +1431,24 @@ packages:
   '@esbuild/netbsd-x64@0.18.20':
     resolution: {integrity: sha512-iO1c++VP6xUBUmltHZoMtCUdPlnPGdBom6IrO4gyKPFFVBKioIImVooR5I83nTew5UOYrk3gIJhbZh8X44y06A==}
     engines: {node: '>=12'}
+    cpu: [x64]
+    os: [netbsd]
+
+  '@esbuild/netbsd-x64@0.19.12':
+    resolution: {integrity: sha512-3ltjQ7n1owJgFbuC61Oj++XhtzmymoCihNFgT84UAmJnxJfm4sYCiSLTXZtE00VWYpPMYc+ZQmB6xbSdVh0JWA==}
+    engines: {node: '>=12'}
+    cpu: [x64]
+    os: [netbsd]
+
+  '@esbuild/netbsd-x64@0.21.5':
+    resolution: {integrity: sha512-Woi2MXzXjMULccIwMnLciyZH4nCIMpWQAs049KEeMvOcNADVxo0UBIQPfSmxB3CWKedngg7sWZdLvLczpe0tLg==}
+    engines: {node: '>=12'}
+    cpu: [x64]
+    os: [netbsd]
+
+  '@esbuild/netbsd-x64@0.23.1':
+    resolution: {integrity: sha512-aevEkCNu7KlPRpYLjwmdcuNz6bDFiE7Z8XC4CPqExjTvrHugh28QzUXVOZtiYghciKUacNktqxdpymplil1beA==}
+    engines: {node: '>=18'}
     cpu: [x64]
     os: [netbsd]
 
@@ -5090,7 +5111,7 @@ snapshots:
   '@cloudflare/workerd-windows-64@1.20250718.0':
     optional: true
 
-  '@cloudflare/workers-types@4.20251125.0': {}
+  '@cloudflare/workers-types@4.20251121.0': {}
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
@@ -6845,9 +6866,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  drizzle-orm@0.29.5(@cloudflare/workers-types@4.20251125.0)(@libsql/client@0.4.3)(@types/react@18.3.12)(react@18.3.1):
+  drizzle-orm@0.29.5(@cloudflare/workers-types@4.20251121.0)(@libsql/client@0.4.3)(@types/react@18.3.12)(react@18.3.1):
     optionalDependencies:
-      '@cloudflare/workers-types': 4.20251125.0
+      '@cloudflare/workers-types': 4.20251121.0
       '@libsql/client': 0.4.3
       '@types/react': 18.3.12
       react: 18.3.1
@@ -8655,7 +8676,7 @@ snapshots:
       '@cloudflare/workerd-linux-arm64': 1.20250718.0
       '@cloudflare/workerd-windows-64': 1.20250718.0
 
-  wrangler@3.114.15(@cloudflare/workers-types@4.20251125.0):
+  wrangler@3.114.15(@cloudflare/workers-types@4.20251121.0):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.3.4
       '@cloudflare/unenv-preset': 2.0.2(unenv@2.0.0-rc.14)(workerd@1.20250718.0)
@@ -8668,7 +8689,7 @@ snapshots:
       unenv: 2.0.0-rc.14
       workerd: 1.20250718.0
     optionalDependencies:
-      '@cloudflare/workers-types': 4.20251125.0
+      '@cloudflare/workers-types': 4.20251121.0
       fsevents: 2.3.3
       sharp: 0.33.5
     transitivePeerDependencies:
