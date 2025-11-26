@@ -5,6 +5,7 @@ import type { ChatMessage, ChatApiResponse, EstimateResult, MoveInfo } from '@wo
 import { zChatMessage, zEstimateResult, zMoveInfo } from '@workspace/data';
 import { calculatePrice } from './lib/pricing';
 import { extractAndRepairJSON } from './lib/json-utils';
+import { AiGatewayService } from './services/ai-gateway';
 
 const AI_GATEWAY_URL = 'https://ai-gateway.nxty.ai';
 
@@ -12,7 +13,7 @@ const AI_GATEWAY_URL = 'https://ai-gateway.nxty.ai';
 export type Bindings = {
   DB: D1Database;
   KV: KVNamespace;
-  BUCKET: R2Bucket;
+  MOVERS_BUCKET: R2Bucket;
   QUEUE: Queue;
   ENV: 'development' | 'production';
   AI_GATEWAY_AUTH_TOKEN: string;
@@ -32,6 +33,78 @@ app.get('/', (c) => {
     message: 'Hello, World!',
     env: c.env.ENV,
   });
+});
+
+// POST /api/images/upload
+app.post('/api/images/upload', async (c) => {
+  try {
+    const formData = await c.req.formData();
+    const images = formData.getAll('images');
+    const uploadedUrls: string[] = [];
+
+    if (!images || images.length === 0) {
+      return c.json({ error: 'No images provided' }, 400);
+    }
+
+    for (const entry of images) {
+      if (entry instanceof File) {
+        const key = `${crypto.randomUUID()}-${entry.name}`;
+        await c.env.MOVERS_BUCKET.put(key, entry.stream(), {
+          httpMetadata: {
+            contentType: entry.type,
+          },
+        });
+        const url = new URL(c.req.url);
+        uploadedUrls.push(`${url.origin}/api/images/${key}`);
+      }
+    }
+
+    return c.json(uploadedUrls);
+  } catch (error) {
+    console.error('Image upload error:', error);
+    return c.json({ error: 'Failed to upload images' }, 500);
+  }
+});
+
+// GET /api/images/:key
+app.get('/api/images/:key', async (c) => {
+  const key = c.req.param('key');
+  const object = await c.env.MOVERS_BUCKET.get(key);
+
+  if (!object) {
+    return c.json({ error: 'Image not found' }, 404);
+  }
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('etag', object.httpEtag);
+
+  return new Response(object.body, {
+    headers,
+  });
+});
+
+// POST /api/images/analyze
+app.post('/api/images/analyze', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { urls } = body;
+
+    if (!urls || !Array.isArray(urls) || urls.length === 0) {
+      return c.json({ error: 'urls must be a non-empty array' }, 400);
+    }
+
+    const aiGateway = new AiGatewayService(c.env);
+    const result = await aiGateway.analyzeImages(urls);
+
+    return c.json(result);
+  } catch (error) {
+    console.error('Image analysis error:', error);
+    return c.json(
+      { error: error instanceof Error ? error.message : 'Failed to analyze images' },
+      500
+    );
+  }
 });
 
 // POST /api/chat

@@ -43,11 +43,10 @@ logpush = true
 # preview_id = "" # Add your KV preview ID here for dev
 
 # R2 bucket binding
-# Commented out for local development - uncomment and add bucket names when deploying
-# [[r2_buckets]]
-# binding = "BUCKET"
-# bucket_name = "bucket-prod" # Add your R2 bucket name here
-# preview_bucket_name = "bucket-dev" # Add your R2 preview bucket name here for dev
+[[r2_buckets]]
+binding = "MOVERS_BUCKET"
+bucket_name = "movers"
+preview_bucket_name = "movers-dev"
 
 # Queue binding
 # Commented out for local development - uncomment and add queue name when deploying

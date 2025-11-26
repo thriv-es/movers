@@ -52,3 +52,51 @@ export async function estimateApi(
   return response.json() as Promise<EstimateResult>
 }
 
+/**
+ * Uploads images to the backend.
+ */
+export async function uploadImages(files: File[]): Promise<string[]> {
+  const formData = new FormData()
+  for (const file of files) {
+    formData.append('images', file)
+  }
+
+  const response = await fetch('/api/images/upload', {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string }
+    throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
+  }
+
+  return response.json() as Promise<string[]>
+}
+
+/**
+ * Analyzes images to detect items and estimate volume.
+ */
+export async function analyzeImages(urls: string[]): Promise<{
+  items: { type: string; count: number }[]
+  total_volume_cubic_feet: number
+}> {
+  const response = await fetch('/api/images/analyze', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ urls }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string }
+    throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
+  }
+
+  return response.json() as Promise<{
+    items: { type: string; count: number }[]
+    total_volume_cubic_feet: number
+  }>
+}
+

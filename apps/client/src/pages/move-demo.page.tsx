@@ -58,34 +58,41 @@ export default function MoveDemoPage(): JSX.Element {
     }
   }, [currentStep])
 
-  const handleStartProcessing = useCallback(async () => {
-    setIsProcessing(true)
-    setCurrentStep('processing')
-
-    try {
-      const result = await estimateApi(messages, uploadedFiles)
-      setEstimateResult(result)
-      setDetectedItems(result.items)
-      setCurrentStep('items')
-    } catch (error) {
-      console.error('Estimate API error:', error)
-      alert(`Error processing estimate: ${error instanceof Error ? error.message : 'Unknown error'}`)
-      setCurrentStep('upload')
-    } finally {
-      setIsProcessing(false)
+  const handleAnalysisComplete = useCallback((items: DetectedItem[], volume: number) => {
+    setDetectedItems(items)
+    
+    // Create a partial estimate result with the analysis data
+    // The full price calculation will happen later or we can trigger it here if needed
+    // For now, we'll construct a basic estimate result to proceed to the items step
+    
+    // Estimate boxes based on volume (similar to backend logic for consistency)
+    const estimatedBoxesMin = Math.max(5, Math.ceil((volume * 1.2) / 4))
+    const estimatedBoxesMax = Math.max(10, Math.ceil((volume * 1.2) / 3))
+    
+    const initialEstimate: EstimateResult = {
+      items,
+      estimatedBoxes: {
+        min: estimatedBoxesMin,
+        max: estimatedBoxesMax
+      },
+      price: {
+        currency: 'USD',
+        total: 0, // Will be calculated in PriceStep
+        breakdown: {},
+        confidence: 'low'
+      }
     }
-  }, [messages, uploadedFiles])
+    
+    setEstimateResult(initialEstimate)
+    setCurrentStep('items')
+  }, [])
 
   const handleItemsUpdated = useCallback((items: DetectedItem[]) => {
     setDetectedItems(items)
     if (estimateResult) {
-      // Recalculate price with updated items
-      // In a real app, this would call the backend, but for demo we'll keep the same box estimate
       setEstimateResult({
         ...estimateResult,
         items,
-        // Note: Price would need to be recalculated on backend with updated items
-        // For now, we keep the existing price structure
       })
     }
   }, [estimateResult])
@@ -108,7 +115,7 @@ export default function MoveDemoPage(): JSX.Element {
           <UploadStep
             files={uploadedFiles}
             onFilesChange={setUploadedFiles}
-            onNext={handleStartProcessing}
+            onAnalysisComplete={handleAnalysisComplete}
           />
         )
       case 'processing':
