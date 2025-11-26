@@ -16,6 +16,9 @@ mode = "smart"
 compatibility_date = "2023-12-18"
 [env.preview.vars]
 ENV = "preview"
+BACKEND_URL = "https://movers.assaf-6f5.workers.dev"
 
 [env.production]
-vars = { ENV = "production" }
+[env.production.vars]
+ENV = "production"
+BACKEND_URL = "https://movers.assaf-6f5.workers.dev"
