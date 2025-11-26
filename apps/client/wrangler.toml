@@ -6,13 +6,8 @@ pages_build_output_dir = "dist"
 
 [vars]
 ENV = "production"
-
-# NOTE: Service bindings must be configured in Cloudflare Dashboard for Git deployments
-# Go to: movers-front → Settings → Functions → Service bindings
-# Add: BACKEND → movers
-#
-# Alternatively, set BACKEND_URL secret in Dashboard:
-# movers-front → Settings → Environment variables → Add: BACKEND_URL = https://movers.<account>.workers.dev
+# TODO: Replace with your actual backend Worker URL
+BACKEND_URL = "https://movers.assaf-6f5.workers.dev"
 
 [placement]
 mode = "smart"
