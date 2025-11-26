@@ -1,7 +1,6 @@
 /**
- * Handle /api/ root path
+ * Handle /api/estimate route - proxy to backend Worker
  */
-
 const BACKEND_URL = 'https://movers.assaf-6f5.workers.dev';
 
 export async function onRequest(context: { request: Request }) {
@@ -34,14 +33,8 @@ export async function onRequest(context: { request: Request }) {
   } catch (error) {
     console.error('Proxy error:', error);
     return new Response(
-      JSON.stringify({ 
-        error: 'Proxy failed',
-        details: error instanceof Error ? error.message : String(error)
-      }), 
-      { 
-        status: 502,
-        headers: { 'Content-Type': 'application/json' }
-      }
+      JSON.stringify({ error: 'Proxy failed', details: String(error) }), 
+      { status: 502, headers: { 'Content-Type': 'application/json' } }
     );
   }
 }
