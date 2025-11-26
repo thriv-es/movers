@@ -4,6 +4,12 @@ name = "movers"
 main = "src/index.ts"
 compatibility_date = "2023-12-18"
 
+# Enable Workers Logs
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+
 # Environment variables (Production by default)
 [vars]
 ENV = "production"
