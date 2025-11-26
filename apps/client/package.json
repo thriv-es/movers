@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "pnpm typecheck && vite build",
+    "build": "pnpm run build:deps && pnpm typecheck && vite build",
+    "build:deps": "cd ../.. && pnpm -r --filter '@workspace/*' build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "deploy": "pnpm build && wrangler pages deploy dist --project-name=movers-client",
