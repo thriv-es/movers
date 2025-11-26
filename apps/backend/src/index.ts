@@ -11,10 +11,7 @@ const AI_GATEWAY_URL = 'https://ai-gateway.nxty.ai';
 
 // Bindings
 export type Bindings = {
-  DB: D1Database;
-  KV: KVNamespace;
   MOVERS_BUCKET: R2Bucket;
-  QUEUE: Queue;
   ENV: 'development' | 'production';
   AI_GATEWAY_AUTH_TOKEN: string;
   AI_GATEWAY_PROJECT_NAME: string;
@@ -55,7 +52,22 @@ app.post('/api/images/upload', async (c) => {
           },
         });
         const url = new URL(c.req.url);
-        uploadedUrls.push(`${url.origin}/api/images/${key}`);
+        // Use the host header if available to construct the URL, otherwise fallback to c.req.url
+        // This is important because in production, the worker might be behind a proxy or load balancer
+        // and c.req.url might not reflect the public URL
+        let host = c.req.header('host');
+        // Fix for local development where host might be 0.0.0.0
+        if (host && host.startsWith('0.0.0.0')) {
+          host = host.replace('0.0.0.0', 'localhost');
+          // If port is missing, default to 8787 for local dev
+          if (!host.includes(':')) {
+            host = `${host}:${url.port || '8787'}`;
+          }
+        }
+        const protocol = url.protocol;
+        const origin = host ? `${protocol}//${host}` : url.origin;
+        
+        uploadedUrls.push(`${origin}/api/images/${key}`);
       }
     }
 
