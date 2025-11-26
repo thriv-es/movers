@@ -2,10 +2,6 @@ name = "client"
 compatibility_date = "2023-12-18"
 pages_build_output_dir = "dist"
 
-# Build all workspace dependencies before building the client
-[build]
-command = "cd ../.. && pnpm -r --filter './packages/**' build && cd apps/client && pnpm run build"
-
 [vars]
 ENV = "production"
 
@@ -20,7 +16,4 @@ ENV = "preview"
 
 [env.production]
 vars = { ENV = "production" }
-# routes = [
-#   { pattern = "your-production-url.com/*", zone_name = "your-zone.com" }
-# ]
 analytics_engine_datasets = [{ binding = "ANALYTICS" }]
