@@ -392,6 +392,8 @@ app.post('/api/estimate', async (c) => {
 
     const priceGatewayData = await priceGatewayResponse.json() as { completion: string | object };
     
+    console.log('DEBUG: price_evaluation raw response:', JSON.stringify(priceGatewayData).substring(0, 1000));
+    
     // Parse pricing response
     let priceData: {
       total: number;
@@ -422,8 +424,9 @@ app.post('/api/estimate', async (c) => {
       const errorPreview = typeof priceGatewayData.completion === 'string' 
         ? priceGatewayData.completion.substring(0, 500)
         : JSON.stringify(priceGatewayData.completion).substring(0, 500);
-      console.error('Failed to parse price evaluation response:', errorPreview);
-      console.error('Price parse error:', priceParseError);
+      console.error('DEBUG: USING FALLBACK PRICING - parse failed');
+      console.error('DEBUG: price_evaluation response preview:', errorPreview);
+      console.error('DEBUG: parse error:', priceParseError);
       // Fallback to simple pricing
       const priceResult = calculatePrice({
         items: validItems,
@@ -440,6 +443,12 @@ app.post('/api/estimate', async (c) => {
     }
 
     // Build price result from LLM response
+    console.log('DEBUG: USING LLM PRICING - success!', {
+      total: priceData.total,
+      breakdownKeys: Object.keys(priceData.breakdown || {}),
+      confidence: priceData.confidence,
+    });
+    
     const priceResult = {
       currency: priceData.currency || 'USD',
       total: priceData.total,
