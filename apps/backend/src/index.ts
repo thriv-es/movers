@@ -219,10 +219,8 @@ app.post('/api/estimate', async (c) => {
       }
     }
 
-    // For multiple files, pass as array or concatenated string
-    const filesField = imageBase64Array.length === 1 
-      ? imageBase64Array[0] 
-      : imageBase64Array;
+    // Always send files as an array for consistent AI Gateway handling
+    const filesField = imageBase64Array;
 
     // Use move_info from chat (allow nulls - price prompt will handle missing data)
     // If no move_info extracted, create empty structure (all nulls)
