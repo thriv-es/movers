@@ -244,6 +244,13 @@ app.post('/api/estimate', async (c) => {
     };
 
     // Call AI Gateway completion endpoint with image analysis
+    console.log('DEBUG: image_analysis_agent request:', JSON.stringify({
+      prompt_name: 'image_analysis_agent',
+      prompt_variables: promptVariables,
+      filesCount: Array.isArray(filesField) ? filesField.length : 1,
+      max_tokens: 8000,
+    }, null, 2));
+    
     const gatewayResponse = await fetch(`${AI_GATEWAY_URL}/v1/completion`, {
       method: 'POST',
       headers: {
@@ -261,9 +268,15 @@ app.post('/api/estimate', async (c) => {
 
     if (!gatewayResponse.ok) {
       const errorText = await gatewayResponse.text();
+      console.error('DEBUG: image_analysis_agent FAILED:', {
+        status: gatewayResponse.status,
+        statusText: gatewayResponse.statusText,
+        error: errorText,
+      });
       throw new Error(`AI Gateway error: ${gatewayResponse.status} ${gatewayResponse.statusText} - ${errorText}`);
     }
 
+    console.log('DEBUG: image_analysis_agent SUCCESS');
     const gatewayData = await gatewayResponse.json() as { completion: string | object };
     
     // Handle both string and object responses from AI Gateway
@@ -335,6 +348,12 @@ app.post('/api/estimate', async (c) => {
     };
 
     // Call price_evaluation prompt for LLM-based pricing
+    console.log('DEBUG: price_evaluation request:', JSON.stringify({
+      prompt_name: 'price_evaluation',
+      prompt_variables: pricePromptVariables,
+      max_tokens: 8000,
+    }, null, 2));
+    
     const priceGatewayResponse = await fetch(`${AI_GATEWAY_URL}/v1/completion`, {
       method: 'POST',
       headers: {
@@ -351,7 +370,11 @@ app.post('/api/estimate', async (c) => {
 
     if (!priceGatewayResponse.ok) {
       const errorText = await priceGatewayResponse.text();
-      console.error('Price evaluation error:', errorText);
+      console.error('DEBUG: price_evaluation FAILED:', {
+        status: priceGatewayResponse.status,
+        statusText: priceGatewayResponse.statusText,
+        error: errorText,
+      });
       // Fallback to simple pricing if LLM fails
       const priceResult = calculatePrice({
         items: validItems,
