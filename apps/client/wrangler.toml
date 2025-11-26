@@ -6,7 +6,6 @@ pages_build_output_dir = "dist"
 
 [vars]
 ENV = "production"
-# TODO: Replace with your actual backend Worker URL
 BACKEND_URL = "https://movers.assaf-6f5.workers.dev"
 
 [placement]
@@ -16,9 +15,7 @@ mode = "smart"
 compatibility_date = "2023-12-18"
 [env.preview.vars]
 ENV = "preview"
-BACKEND_URL = "https://movers.assaf-6f5.workers.dev"
 
 [env.production]
 [env.production.vars]
 ENV = "production"
-BACKEND_URL = "https://movers.assaf-6f5.workers.dev"
