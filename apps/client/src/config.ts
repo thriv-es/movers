@@ -42,7 +42,7 @@ export const zAppConfig = z.object({
   author: z.string().default(''),
   keywords: z.string().default(''),
   contacts: z.object({
-    legal: z.string().min(1),
+    legal: z.string().default('contact@example.com'),
   }),
 
   // opengraph and x/twitter cards are not implemented (commented example below)
@@ -67,6 +67,6 @@ export const CONFIG: AppConfig = zAppConfig.parse({
   author: import.meta.env.VITE_META_AUTHOR,
   keywords: import.meta.env.VITE_META_KEYWORDS_CSV,
   contacts: {
-    legal: import.meta.env.VITE_LEGAL_CONTACT,
+    legal: import.meta.env.VITE_LEGAL_CONTACT || undefined,
   },
 })
