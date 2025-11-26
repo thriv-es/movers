@@ -9,8 +9,8 @@
     "build:deps": "cd ../.. && pnpm -r --filter '@workspace/*' build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "deploy": "pnpm build && wrangler pages deploy dist --project-name=movers-client",
-    "deploy:prod": "pnpm build && wrangler pages deploy dist --project-name=movers-client --branch=main",
+    "deploy": "pnpm build && wrangler pages deploy dist --project-name=movers-front",
+    "deploy:prod": "pnpm build && wrangler pages deploy dist --project-name=movers-front --branch=main",
     "pages:tail": "wrangler pages deployment tail",
     "ship": "pnpm deploy"
   },

@@ -1,9 +1,17 @@
-name = "client"
+# Cloudflare Pages project configuration
+# Matches Git-connected project: movers-front
+name = "movers-front"
 compatibility_date = "2023-12-18"
 pages_build_output_dir = "dist"
 
 [vars]
 ENV = "production"
+
+# Service binding for direct Worker-to-Worker communication (recommended over HTTP proxy)
+# This eliminates the need for BACKEND_URL and provides faster, more reliable connections
+[[services]]
+binding = "BACKEND"
+service = "movers"
 
 [placement]
 mode = "smart"
@@ -14,6 +22,14 @@ analytics_engine_datasets = [{ binding = "ANALYTICS" }]
 [env.preview.vars]
 ENV = "preview"
 
+[[env.preview.services]]
+binding = "BACKEND"
+service = "movers"
+
 [env.production]
 vars = { ENV = "production" }
 analytics_engine_datasets = [{ binding = "ANALYTICS" }]
+
+[[env.production.services]]
+binding = "BACKEND"
+service = "movers"

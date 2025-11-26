@@ -1,4 +1,6 @@
-name = "movers-backend"
+# Cloudflare Worker configuration
+# Matches Git-connected project: movers
+name = "movers"
 main = "src/index.ts"
 compatibility_date = "2023-12-18"
 
