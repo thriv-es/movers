@@ -1,33 +1,18 @@
 /**
  * Cloudflare Pages Function to proxy API requests to the backend Worker
- * 
- * Supports two connection modes:
- * 1. Service Binding (recommended) - Direct Worker-to-Worker communication via BACKEND binding
- * 2. HTTP Proxy (fallback) - Uses BACKEND_URL environment variable
- * 
- * Service Bindings are faster and more reliable as they don't require external network calls.
  */
 
-/**
- * Service binding interface for Cloudflare Workers
- * @see https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/
- */
-interface ServiceBinding {
-  fetch(request: Request | string, init?: RequestInit): Promise<Response>;
-}
+// Hardcoded backend URL - simplest approach that works
+const BACKEND_URL = 'https://movers.assaf-6f5.workers.dev';
 
-interface Env {
-  // Service binding to backend Worker (preferred)
-  BACKEND?: ServiceBinding;
-  // Fallback HTTP URL (legacy support)
-  BACKEND_URL?: string;
-}
-
-export async function onRequest(context: { request: Request; env: Env }) {
-  const { request, env } = context;
+export async function onRequest(context: { request: Request }) {
+  const { request } = context;
   
   try {
     const url = new URL(request.url);
+    
+    // Construct target URL
+    const targetUrl = new URL(url.pathname + url.search, BACKEND_URL);
     
     // Create headers (remove host to avoid conflicts)
     const headers = new Headers(request.headers);
@@ -44,34 +29,8 @@ export async function onRequest(context: { request: Request; env: Env }) {
       fetchOptions.body = request.body;
     }
 
-    let response: Response;
-
-    // Method 1: Use Service Binding (preferred - faster and more reliable)
-    if (env.BACKEND) {
-      // Service binding uses relative URLs - the path is forwarded directly
-      response = await env.BACKEND.fetch(
-        new Request(url.pathname + url.search, fetchOptions)
-      );
-    }
-    // Method 2: HTTP Proxy fallback (requires BACKEND_URL env var)
-    else if (env.BACKEND_URL) {
-      const targetUrl = new URL(url.pathname + url.search, env.BACKEND_URL);
-      response = await fetch(targetUrl.toString(), fetchOptions);
-    }
-    // No backend configured
-    else {
-      console.error('Neither BACKEND service binding nor BACKEND_URL is configured');
-      return new Response(
-        JSON.stringify({ 
-          error: 'Backend configuration error',
-          hint: 'Configure BACKEND service binding in wrangler.toml or set BACKEND_URL secret'
-        }), 
-        { 
-          status: 500,
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
-    }
+    // Forward the request to backend
+    const response = await fetch(targetUrl.toString(), fetchOptions);
     
     // Return the response
     return new Response(response.body, {

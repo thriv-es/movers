@@ -6,16 +6,6 @@ pages_build_output_dir = "dist"
 
 [vars]
 ENV = "production"
-BACKEND_URL = "https://movers.assaf-6f5.workers.dev"
 
 [placement]
 mode = "smart"
-
-[env.preview]
-compatibility_date = "2023-12-18"
-[env.preview.vars]
-ENV = "preview"
-
-[env.production]
-[env.production.vars]
-ENV = "production"
