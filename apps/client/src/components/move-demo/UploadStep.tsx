@@ -1,19 +1,19 @@
 import { useRef, useState } from 'react'
 import { Button } from '@workspace/react-ui/components/ui/button'
 import { X, Loader2 } from 'lucide-react'
-import { uploadImages, analyzeImages } from '@/lib/api-client'
-import type { DetectedItem } from '@workspace/data'
+import { estimateApi } from '@/lib/api-client'
+import type { ChatMessage, EstimateResult } from '@workspace/data'
 
 interface UploadStepProps {
   files: File[]
+  messages: ChatMessage[]
   onFilesChange: (files: File[]) => void
-  onAnalysisComplete: (items: DetectedItem[], volume: number) => void
+  onEstimateComplete: (result: EstimateResult) => void
 }
 
-export function UploadStep({ files, onFilesChange, onAnalysisComplete }: UploadStepProps): JSX.Element {
+export function UploadStep({ files, messages, onFilesChange, onEstimateComplete }: UploadStepProps): JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [isUploading, setIsUploading] = useState(false)
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -32,30 +32,26 @@ export function UploadStep({ files, onFilesChange, onAnalysisComplete }: UploadS
   const handleContinue = async () => {
     if (files.length === 0) return
 
-    setIsUploading(true)
+    setIsProcessing(true)
     setError(null)
 
     try {
-      // 1. Upload images
-      const uploadedUrls = await uploadImages(files)
-      
-      setIsUploading(false)
-      setIsAnalyzing(true)
-
-      // 2. Analyze images
-      const result = await analyzeImages(uploadedUrls)
-      
-      // 3. Pass results to parent
-      onAnalysisComplete(result.items, result.total_volume_cubic_feet)
+      // Call estimate API - handles upload, analysis, and pricing in one call
+      console.log('UploadStep: Calling estimateApi with', files.length, 'files and', messages.length, 'messages')
+      const result = await estimateApi(messages, files)
+      console.log('UploadStep: Estimate result received:', { 
+        itemsCount: result.items.length, 
+        priceTotal: result.price.total 
+      })
+      onEstimateComplete(result)
     } catch (err) {
-      console.error('Upload/Analysis error:', err)
+      console.error('Estimate error:', err)
       setError(err instanceof Error ? err.message : 'An error occurred during processing')
-      setIsUploading(false)
-      setIsAnalyzing(false)
+      setIsProcessing(false)
     }
   }
 
-  const canContinue = files.length >= 1 && files.length <= 5 && !isUploading && !isAnalyzing
+  const canContinue = files.length >= 1 && files.length <= 5 && !isProcessing
 
   return (
     <div className="space-y-6">
@@ -76,7 +72,7 @@ export function UploadStep({ files, onFilesChange, onAnalysisComplete }: UploadS
         <Button
           onClick={() => fileInputRef.current?.click()}
           variant="outline"
-          disabled={files.length >= 5 || isUploading || isAnalyzing}
+          disabled={files.length >= 5 || isProcessing}
         >
           {files.length === 0 ? 'Select Images' : 'Add More Images'}
         </Button>
@@ -100,7 +96,7 @@ export function UploadStep({ files, onFilesChange, onAnalysisComplete }: UploadS
                 onClick={() => handleRemove(index)}
                 className="absolute top-2 right-2 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                 aria-label="Remove image"
-                disabled={isUploading || isAnalyzing}
+                disabled={isProcessing}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -115,11 +111,11 @@ export function UploadStep({ files, onFilesChange, onAnalysisComplete }: UploadS
         </div>
       )}
 
-      {(isUploading || isAnalyzing) && (
+      {isProcessing && (
         <div className="flex flex-col items-center justify-center py-8 space-y-4">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
           <p className="text-muted-foreground">
-            {isUploading ? 'Uploading images...' : 'Analyzing your items...'}
+            Processing your images and calculating estimate...
           </p>
         </div>
       )}

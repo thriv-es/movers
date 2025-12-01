@@ -14,7 +14,6 @@ import { EditStep } from '@/components/move-demo/EditStep'
 import { ConfirmStep } from '@/components/move-demo/ConfirmStep'
 import { PriceStep } from '@/components/move-demo/PriceStep'
 import { ScheduleStep } from '@/components/move-demo/ScheduleStep'
-import { estimateApi } from '@/lib/api-client'
 
 export type Step =
   | 'intro'
@@ -33,7 +32,6 @@ export default function MoveDemoPage(): JSX.Element {
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [detectedItems, setDetectedItems] = useState<DetectedItem[]>([])
   const [estimateResult, setEstimateResult] = useState<EstimateResult | null>(null)
-  const [isProcessing, setIsProcessing] = useState(false)
 
   const handleNextStep = useCallback(() => {
     const steps: Step[] = [
@@ -58,32 +56,14 @@ export default function MoveDemoPage(): JSX.Element {
     }
   }, [currentStep])
 
-  const handleAnalysisComplete = useCallback((items: DetectedItem[], volume: number) => {
-    setDetectedItems(items)
-    
-    // Create a partial estimate result with the analysis data
-    // The full price calculation will happen later or we can trigger it here if needed
-    // For now, we'll construct a basic estimate result to proceed to the items step
-    
-    // Estimate boxes based on volume (similar to backend logic for consistency)
-    const estimatedBoxesMin = Math.max(5, Math.ceil((volume * 1.2) / 4))
-    const estimatedBoxesMax = Math.max(10, Math.ceil((volume * 1.2) / 3))
-    
-    const initialEstimate: EstimateResult = {
-      items,
-      estimatedBoxes: {
-        min: estimatedBoxesMin,
-        max: estimatedBoxesMax
-      },
-      price: {
-        currency: 'USD',
-        total: 0, // Will be calculated in PriceStep
-        breakdown: {},
-        confidence: 'low'
-      }
-    }
-    
-    setEstimateResult(initialEstimate)
+  const handleEstimateComplete = useCallback((result: EstimateResult) => {
+    console.log('handleEstimateComplete: Received full estimate result:', {
+      itemsCount: result.items.length,
+      priceTotal: result.price.total,
+      confidence: result.price.confidence
+    })
+    setDetectedItems(result.items)
+    setEstimateResult(result)
     setCurrentStep('items')
   }, [])
 
@@ -114,8 +94,9 @@ export default function MoveDemoPage(): JSX.Element {
         return (
           <UploadStep
             files={uploadedFiles}
+            messages={messages}
             onFilesChange={setUploadedFiles}
-            onAnalysisComplete={handleAnalysisComplete}
+            onEstimateComplete={handleEstimateComplete}
           />
         )
       case 'processing':
