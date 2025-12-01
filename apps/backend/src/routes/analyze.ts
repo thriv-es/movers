@@ -130,7 +130,8 @@ analyze.post('/', async (c) => {
     console.log('DEBUG: image_analysis_agent SUCCESS');
     const gatewayData = await gatewayResponse.json() as { completion: string | object };
 
-    // Parse LLM response
+    // Parse LLM response - if it's not valid JSON with expected structure,
+    // it means the AI couldn't analyze the images (refusal, error, etc.)
     let llmData: {
       items: Array<{ type: string; count: number }>;
       total_volume_cubic_feet: number;
@@ -148,18 +149,23 @@ analyze.post('/', async (c) => {
       }
 
       if (!llmData.items || !Array.isArray(llmData.items)) {
-        throw new Error('Invalid response format: missing items array');
+        throw new Error('Missing items array');
       }
       if (typeof llmData.total_volume_cubic_feet !== 'number') {
-        throw new Error('Invalid response format: missing total_volume_cubic_feet');
+        throw new Error('Missing total_volume_cubic_feet');
       }
     } catch (parseError) {
-      const errorPreview = typeof gatewayData.completion === 'string'
-        ? gatewayData.completion.substring(0, 500)
-        : JSON.stringify(gatewayData.completion).substring(0, 500);
-      console.error('Failed to parse LLM response:', errorPreview);
-      console.error('Parse error:', parseError);
-      return c.json({ error: 'Failed to parse AI response' }, 500);
+      // If we can't parse valid JSON, the AI likely couldn't analyze the images
+      const completionPreview = typeof gatewayData.completion === 'string'
+        ? gatewayData.completion.substring(0, 300)
+        : JSON.stringify(gatewayData.completion).substring(0, 300);
+      console.warn('AI response not in expected format:', completionPreview);
+      console.warn('Parse error:', parseError);
+      
+      return c.json({ 
+        error: 'We couldn\'t analyze these images. Please try uploading clearer photos of your items.',
+        code: 'ANALYSIS_FAILED'
+      }, 400);
     }
 
     // Process items
