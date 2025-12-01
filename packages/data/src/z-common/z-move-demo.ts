@@ -49,6 +49,23 @@ export const zPrice = z.object({
 export const zEstimateResult = z.object({
   items: z.array(zDetectedItem),
   estimatedBoxes: zEstimatedBoxes,
+  boxesExplanation: z.string().optional(),
+  price: zPrice,
+})
+
+export const zAnalysisResult = z.object({
+  items: z.array(zDetectedItem),
+  totalVolumeCubicFeet: z.number().nonnegative(),
+  estimatedBoxes: zEstimatedBoxes,
+  boxesExplanation: z.string(),
+})
+
+export const zPriceRequest = z.object({
+  analysis: zAnalysisResult,
+  moveInfo: zMoveInfo,
+})
+
+export const zPriceResult = z.object({
   price: zPrice,
 })
 

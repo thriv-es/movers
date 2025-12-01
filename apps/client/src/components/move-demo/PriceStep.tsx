@@ -74,9 +74,17 @@ export function PriceStep({ estimateResult, onNext }: PriceStepProps): JSX.Eleme
         </div>
 
         <div className="border-t pt-4">
-          <p className="text-sm text-muted-foreground">
-            Estimated boxes: {estimatedBoxes.min} - {estimatedBoxes.max}
-          </p>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-lg">📦</span>
+            <p className="text-sm font-medium">
+              Estimated boxes: {estimatedBoxes.min} - {estimatedBoxes.max}
+            </p>
+          </div>
+          {estimateResult.boxesExplanation && (
+            <p className="text-sm text-muted-foreground ml-7">
+              {estimateResult.boxesExplanation}
+            </p>
+          )}
         </div>
       </div>
 

@@ -340,15 +340,31 @@ Return ONLY valid JSON in this exact format (no markdown, no explanations, just 
   "items": [
     {"type": "sofa", "count": 1},
     {"type": "dining table", "count": 1},
-    {"type": "chairs", "count": 4}
+    {"type": "chairs", "count": 4},
+    {"type": "small_moving_box_packed", "count": 5}
   ],
-  "total_volume_cubic_feet": 100.0
+  "total_volume_cubic_feet": 100.0,
+  "estimated_boxes_min": 15,
+  "estimated_boxes_max": 25,
+  "boxes_explanation": "5 packed boxes already visible in photos. Estimated 10-20 additional boxes needed for: kitchen items (dishes, pots, pans), books and decor, clothing and linens. Large furniture (sofa, dining table, bed) will be wrapped and moved as-is, not boxed."
 }
 ```
 
 **Rules:**
 - "items": List ALL detected items with their counts (consolidate duplicates across images, avoid double-counting)
-- "total_volume_cubic_feet": Total estimated volume of all items in cubic feet (use this to estimate boxes: ~3-4 cu ft per box)
+- "total_volume_cubic_feet": Total estimated volume of all items in cubic feet
+- "estimated_boxes_min": Minimum number of standard moving boxes needed for BOXABLE items only
+- "estimated_boxes_max": Maximum number of standard moving boxes needed for BOXABLE items only
+- "boxes_explanation": Brief explanation of how you calculated the box estimate - mention packed boxes visible, what items need boxing, and what large items will be wrapped instead
+
+**Box Estimation Guidelines:**
+- Only count boxes needed for items that GO IN BOXES (dishes, books, clothes, small decor, electronics accessories)
+- DO NOT include large furniture in box estimates (sofas, beds, tables, dressers, refrigerators get wrapped, not boxed)
+- Include any already-packed boxes you see in the photos
+- Standard box holds ~3-4 cubic feet of items
+- Give a realistic range (min = optimistic packing, max = conservative packing)
+- Example: A room with 5 packed boxes visible + estimated 20 cu ft of loose boxable items = 5 + (20/4) to 5 + (20/3) = 10-12 boxes
+
 - Item types can be anything you detect (furniture, appliances, electronics, boxes, etc.) - be descriptive
 - Return ONLY the JSON object, no markdown code blocks, no extra text
 

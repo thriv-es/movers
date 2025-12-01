@@ -1,8 +1,5 @@
 export type Bindings = {
-  DB: D1Database;
-  KV: KVNamespace;
-  BUCKET: R2Bucket;
-  QUEUE: Queue;
+  MOVERS_BUCKET: R2Bucket;
   ENV: 'development' | 'production';
   AI_GATEWAY_AUTH_TOKEN: string;
   AI_GATEWAY_PROJECT_NAME: string;

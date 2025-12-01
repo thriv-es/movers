@@ -1,9 +1,3 @@
-<!--
-REFERENCE ONLY.
-The production version of this prompt lives in Langfuse.
-This file is NOT imported or used by the application.
--->
-
 # Move East - Price Estimation Engine
 
 ## Your Role
@@ -100,7 +94,7 @@ Formula: Labor Cost = Crew Size × Hours × Hourly Rate per Mover
 ### Step 3: Packing Materials & Supplies
 
 **Box Costs**:
-Use `{{estimated_boxes_max}}` for box count (or calculate from `{{total_volume_cubic_feet}}`):
+Use `{{estimated_boxes_min}}` and `{{estimated_boxes_max}}` for box counts (these are pre-calculated based on boxable items only, NOT total volume):
 - Small box: $2.00 each
 - Medium box: $2.50 each
 - Large box: $3.00 each
@@ -386,9 +380,9 @@ You will receive the following variables that you MUST use in your calculations:
 
 **Inventory & Volume:**
 - `{{items}}`: JSON array of detected items, each with "type" and "count" properties (e.g., [{"type": "bed frame with mattress (queen)", "count": 1}, {"type": "nightstand", "count": 2}]) - parse this to understand what items need to be moved, identify special items requiring surcharges, and count beds/mattresses for mattress covers
-- `{{total_volume_cubic_feet}}`: Total volume in cubic feet - use this for volume-based pricing
-- `{{estimated_boxes_min}}`: Minimum estimated boxes needed
-- `{{estimated_boxes_max}}`: Maximum estimated boxes needed - use this for box-based costs
+- `{{total_volume_cubic_feet}}`: Total volume in cubic feet - use this for volume-based pricing (labor time, truck size) NOT for box calculations
+- `{{estimated_boxes_min}}`: Minimum estimated boxes needed (pre-calculated for boxable items only - excludes large furniture that gets wrapped)
+- `{{estimated_boxes_max}}`: Maximum estimated boxes needed (pre-calculated for boxable items only) - use this for box-based costs
 
 **Move Details:**
 - `{{distance_miles}}`: Distance between origin and destination in miles - use for transportation costs

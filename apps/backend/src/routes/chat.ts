@@ -110,4 +110,3 @@ chat.post('/', async (c) => {
 });
 
 export default chat;
-

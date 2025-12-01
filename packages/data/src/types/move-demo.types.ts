@@ -49,6 +49,32 @@ export interface Price {
 export interface EstimateResult {
   items: DetectedItem[]
   estimatedBoxes: EstimatedBoxes
+  boxesExplanation?: string
+  price: Price
+}
+
+/**
+ * Result from /api/analyze - image analysis step
+ */
+export interface AnalysisResult {
+  items: DetectedItem[]
+  totalVolumeCubicFeet: number
+  estimatedBoxes: EstimatedBoxes
+  boxesExplanation: string
+}
+
+/**
+ * Request body for /api/price - pricing step
+ */
+export interface PriceRequest {
+  analysis: AnalysisResult
+  moveInfo: MoveInfo
+}
+
+/**
+ * Result from /api/price - pricing step
+ */
+export interface PriceResult {
   price: Price
 }
 

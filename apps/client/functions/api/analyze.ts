@@ -1,5 +1,5 @@
 /**
- * Handle /api/estimate route - proxy to backend Worker
+ * Handle /api/analyze route - proxy to backend Worker
  */
 const BACKEND_URL = 'https://movers.assaf-6f5.workers.dev';
 

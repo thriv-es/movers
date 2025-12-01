@@ -40,7 +40,7 @@ export const PHOTO_INSTRUCTIONS = {
   },
   howMany: {
     label: 'How Many Photos:',
-    text: 'Typically 15-25 photos for an average 2-3 bedroom home. More is better than less!',
+    text: 'Typically 5-10 photos for an average 2-3 bedroom home. More is better than less!',
   },
 } as const
 

@@ -1,5 +1,5 @@
 /**
- * Handle /api/images/analyze route - proxy to backend Worker
+ * Handle /api/price route - proxy to backend Worker
  */
 const BACKEND_URL = 'https://movers.assaf-6f5.workers.dev';
 
@@ -38,3 +38,4 @@ export async function onRequest(context: { request: Request }) {
     );
   }
 }
+
