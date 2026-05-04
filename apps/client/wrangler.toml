@@ -1,0 +1,24 @@
+name = "client"
+compatibility_date = "2023-12-18"
+pages_build_output_dir = "dist"
+
+[vars]
+ENV = "development"
+
+[placement]
+mode = "smart"
+
+[env.development]
+compatibility_date = "2023-12-18"
+logpush = true
+analytics_engine_datasets = [{ binding = "ANALYTICS" }]
+[env.development.vars]
+ENV = "development"
+
+[env.production]
+vars = { ENV = "production" }
+# routes = [
+#   { pattern = "your-production-url.com/*", zone_name = "your-zone.com" }
+# ]
+logpush = true
+analytics_engine_datasets = [{ binding = "ANALYTICS" }]
