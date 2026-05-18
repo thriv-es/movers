@@ -1,0 +1,6 @@
+# Copy this file to .dev.vars and fill in your values
+# .dev.vars is gitignored and used for local development
+
+AI_GATEWAY_AUTH_TOKEN=your_auth_token_here
+AI_GATEWAY_PROJECT_NAME=your_project_name_here
+

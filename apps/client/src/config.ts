@@ -43,10 +43,11 @@ export const zAppConfig = z.object({
   author: z.string().default(''),
   keywords: z.string().default(''),
   contacts: z.object({
-    legal: z.string().min(1),
+    legal: z.string().default('contact@example.com'),
   }),
 
   socialMedia: zSocialMediaDto.optional(),
+
 
   // opengraph and x/twitter cards are not implemented (commented example below)
   // image: z.string().optional(),

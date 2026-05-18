@@ -1,66 +1,75 @@
 # =============================================================================
-# Wrangler configuration for the backend Cloudflare Worker
+# Wrangler configuration for the Movers backend Cloudflare Worker
 #
 # GETTING STARTED
 # ---------------
-# 1. Rename this worker: change `name` below to match your project.
-# 2. For local dev, run: pnpm dev  (no Cloudflare account required)
+# 1. For local dev: copy .dev.vars.example to .dev.vars and fill in secrets
+# 2. Run: pnpm dev  (no Cloudflare account required)
 # 3. For production, create each resource with the Cloudflare CLI, then paste
 #    the IDs into the [env.production] section at the bottom of this file.
 #
 # PLACEHOLDER IDs
 # ---------------
 # The placeholder IDs below (all zeros) are used by `wrangler dev` to spin up
-# local simulations of each service — no real Cloudflare resources are created.
+# local simulations of each service -no real Cloudflare resources are created.
 # Replace them only when deploying to production.
 # =============================================================================
 
-name = "my-worker"          # ← Rename to match your project (used as the Worker's subdomain)
+name = "movers"
 main = "src/index.ts"
 compatibility_date = "2025-05-01"
 
 # ---------------------------------------------------------------------------
-# Environment variables available in code via `c.env.ENV`
+# Workers Logs
+# ---------------------------------------------------------------------------
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+
+# ---------------------------------------------------------------------------
+# Environment variables
+# Secrets (AI_GATEWAY_AUTH_TOKEN) go in .dev.vars for local dev.
+# For production: `wrangler secret put AI_GATEWAY_AUTH_TOKEN`
 # ---------------------------------------------------------------------------
 [vars]
 ENV = "development"
+AI_GATEWAY_PROJECT_NAME = "movers_demo"
+PRICE_PER_BOX = 50
+PRICE_PER_LARGE_ITEM = 100
 
 # ---------------------------------------------------------------------------
-# Cloudflare D1 — SQLite database
-# Create for production: wrangler d1 create my-worker-database
-# Docs: https://developers.cloudflare.com/d1/
-# ---------------------------------------------------------------------------
-[[d1_databases]]
-binding = "DB"                              # Access in worker code as: c.env.DB
-database_name = "my-worker-database-local"  # Local simulation name (can be anything)
-database_id = "00000000-0000-0000-0000-000000000001"  # Placeholder — safe for local dev
-
-# ---------------------------------------------------------------------------
-# Cloudflare KV — key-value store
-# Create for production: wrangler kv namespace create my-worker-cache
-# Docs: https://developers.cloudflare.com/kv/
-# ---------------------------------------------------------------------------
-[[kv_namespaces]]
-binding = "KV"                              # Access in worker code as: c.env.KV
-id = "00000000000000000000000000000001"     # Placeholder — safe for local dev
-
-# ---------------------------------------------------------------------------
-# Cloudflare R2 — object / blob storage
-# Create for production: wrangler r2 bucket create my-worker-storage
+# Cloudflare R2 -object / blob storage for uploaded move photos
+# Create for production: wrangler r2 bucket create movers-storage
 # Docs: https://developers.cloudflare.com/r2/
 # ---------------------------------------------------------------------------
 [[r2_buckets]]
-binding = "BUCKET"                          # Access in worker code as: c.env.BUCKET
-bucket_name = "my-worker-storage-local"    # Local simulation bucket name
+binding = "MOVERS_BUCKET"                  # Access in worker code as: c.env.MOVERS_BUCKET
+bucket_name = "movers-dev"                 # Local simulation bucket name
 
 # ---------------------------------------------------------------------------
-# Cloudflare Queues — durable background task queue
-# Create for production: wrangler queues create my-worker-tasks
-# Docs: https://developers.cloudflare.com/queues/
+# Cloudflare D1 -SQLite database (uncomment if needed)
+# Create for production: wrangler d1 create movers-database
 # ---------------------------------------------------------------------------
-[[queues.producers]]
-binding = "QUEUE"                           # Access in worker code as: c.env.QUEUE
-queue = "my-worker-tasks-local"            # Local simulation queue name
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "movers-database-local"
+# database_id = "00000000-0000-0000-0000-000000000001"  # Placeholder
+
+# ---------------------------------------------------------------------------
+# Cloudflare KV -key-value store (uncomment if needed)
+# Create for production: wrangler kv namespace create movers-cache
+# ---------------------------------------------------------------------------
+# [[kv_namespaces]]
+# binding = "KV"
+# id = "00000000000000000000000000000001"  # Placeholder
+
+# =============================================================================
+# PREVIEW ENVIRONMENT
+# =============================================================================
+[env.preview]
+vars = { ENV = "preview" }
+logpush = true
 
 # =============================================================================
 # PRODUCTION ENVIRONMENT
@@ -71,23 +80,7 @@ queue = "my-worker-tasks-local"            # Local simulation queue name
 [env.production]
 vars = { ENV = "production" }
 logpush = true
-analytics_engine_datasets = [{ binding = "ANALYTICS" }]
-
-# [[env.production.d1_databases]]
-# binding = "DB"
-# database_name = "my-worker-database"
-# database_id = ""  # ← Paste your D1 database ID here
-#                   #   Get it from: wrangler d1 create my-worker-database
-
-# [[env.production.kv_namespaces]]
-# binding = "KV"
-# id = ""           # ← Paste your KV namespace ID here
-#                   #   Get it from: wrangler kv namespace create my-worker-cache
 
 # [[env.production.r2_buckets]]
-# binding = "BUCKET"
-# bucket_name = "my-worker-storage"  # ← Your R2 bucket name
-
-# [[env.production.queues.producers]]
-# binding = "QUEUE"
-# queue = "my-worker-tasks"          # ← Your Queue name
+# binding = "MOVERS_BUCKET"
+# bucket_name = "movers-storage"   #Your R2 bucket name

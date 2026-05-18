@@ -20,6 +20,12 @@ const routes: RouteObject[] = [
         element: <IndexPage />,
       },
       {
+        path: '/estimate',
+        async lazy() {
+          return { Component: (await import('@/pages/move-demo.page')).default }
+        },
+      },
+      {
         path: '/demo',
         async lazy() {
           return { Component: (await import('@/pages/demo.page')).default }
