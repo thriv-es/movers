@@ -2,20 +2,13 @@ import { useCallback, useState } from 'react'
 import { Link, NavLink, type NavLinkProps } from 'react-router'
 import { useWindowScroll, useDebouncedValue } from '@mantine/hooks'
 
-import { cn } from '@workspace/tw-style'
-import {
-  Sheet,
-  SheetTrigger,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from '@workspace/react-ui/components/ui/sheet'
-import { Button } from '@workspace/react-ui/components/ui/button'
-import { MenuIcon } from '@workspace/react-ui/components/icons/nav-icons'
+import { cn } from '#lib/utils'
+import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '#components/ui/sheet'
+import { Button } from '#components/ui/button'
+import { MenuIcon } from '#components/icons/nav-icons'
 import type { AppNavLink } from '@workspace/data'
-import { ThemeMenu } from '@workspace/react-ui/components/layout/theme-menu'
-import { Logo } from '@workspace/react-ui/components/assets/logo'
+import { ThemeMenu } from '#components/layout/theme-menu'
+import { Logo } from '#components/assets/logo'
 
 interface LayoutHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
   navLinks?: AppNavLink[]
@@ -25,7 +18,6 @@ interface LayoutHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
 interface HeaderNavLinkProps extends AppNavLink, Omit<NavLinkProps, 'to'> {
   href: string
   title: string
-
   isAtScrollThreshold?: boolean
   className?: string
 }
@@ -34,7 +26,7 @@ export function LayoutHeader({ navLinks, className }: LayoutHeaderProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false)
 
   const [scroll] = useWindowScroll()
-  const [debouncedScrollY] = useDebouncedValue(scroll.y, 150) // 150ms debounce
+  const [debouncedScrollY] = useDebouncedValue(scroll.y, 150)
 
   const handleMenuLinkClick = useCallback(() => {
     setIsMobileMenuOpen(false)

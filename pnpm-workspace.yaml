@@ -9,3 +9,11 @@ packages:
   - '!**/docs/**'
   - '!**/scripts/**'
   - '!**/workflow/**'
+
+# Allow these packages to run install/build scripts (required for native binaries).
+# pnpm 11+ requires explicit approval; run `pnpm approve-builds` to update interactively.
+allowBuilds:
+  '@biomejs/biome': true
+  esbuild: true
+  sharp: true
+  workerd: true

@@ -3,8 +3,8 @@ import defaultTheme from 'tailwindcss/defaultTheme'
 import plugin from 'tailwindcss/plugin'
 import fluidPlugin, { screens, fontSize, type FluidThemeConfig } from 'fluid-tailwind'
 
-// workspace preset to configure shadcn/ui
-import { createShadcnPreset } from '@workspace/tw-preset-shadcn'
+// shadcn/ui preset (inlined — no longer a separate package)
+import { createShadcnPreset } from './shadcn/factory'
 
 // official and third-party plugins
 import typographyPlugin from '@tailwindcss/typography'

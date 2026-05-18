@@ -1,7 +1,7 @@
 import { useId } from 'react'
 
 import { Heading } from '@workspace/react-ui/components/ui/heading'
-import { cn } from '@workspace/tw-style'
+import { cn } from '@workspace/react-ui/lib/utils'
 import { LandingSectionHeader } from '@/components/landing/SharedComponents'
 
 export interface FeaturesSectionProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> {}

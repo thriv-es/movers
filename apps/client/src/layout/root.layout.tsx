@@ -1,5 +1,5 @@
 import { ScrollRestoration } from 'react-router'
-import { AppLayout } from '@workspace/react-layout/app.layout'
+import { AppLayout } from '@workspace/react-ui/layout'
 
 import { NAV_LINKS } from '@/nav'
 import { CONFIG } from '@/config'

@@ -1,5 +1,5 @@
 import { cva } from 'class-variance-authority'
-import { clsx } from '@workspace/tw-style'
+import { clsx } from '#lib/utils'
 import { focusClassNames, disabledInputClassNames } from '#variants/common.styles'
 
 export const buttonVariants = cva(

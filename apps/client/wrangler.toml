@@ -1,24 +1,30 @@
-name = "client"
-compatibility_date = "2023-12-18"
-pages_build_output_dir = "dist"
+# =============================================================================
+# Wrangler configuration for the client Cloudflare Pages app
+#
+# GETTING STARTED
+# ---------------
+# 1. Set `name` below to match your project name in Cloudflare Pages.
+# 2. Build locally: pnpm build
+# 3. Deploy to Cloudflare Pages: pnpm ship
+#    (or: wrangler pages deploy dist --project-name=<your-project-name>)
+# =============================================================================
 
-[vars]
-ENV = "development"
+name = "my-app-client"      # ← Rename to match your Cloudflare Pages project name
+compatibility_date = "2025-05-01"
+pages_build_output_dir = "dist"
 
 [placement]
 mode = "smart"
 
-[env.development]
-compatibility_date = "2023-12-18"
-logpush = true
-analytics_engine_datasets = [{ binding = "ANALYTICS" }]
-[env.development.vars]
+[vars]
 ENV = "development"
 
+# --- Production environment ---
 [env.production]
 vars = { ENV = "production" }
-# routes = [
-#   { pattern = "your-production-url.com/*", zone_name = "your-zone.com" }
-# ]
 logpush = true
-analytics_engine_datasets = [{ binding = "ANALYTICS" }]
+
+# analytics_engine_datasets = [{ binding = "ANALYTICS" }]
+# routes = [
+#   { pattern = "your-domain.com/*", zone_name = "your-domain.com" }
+# ]

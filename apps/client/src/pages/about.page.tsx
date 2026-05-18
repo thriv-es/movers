@@ -1,5 +1,5 @@
 import { Link } from 'react-router'
-import { PageLayout } from '@workspace/react-layout/page.layout'
+import { PageLayout } from '@workspace/react-ui/layout'
 
 export default function AboutPage(): JSX.Element {
   return (

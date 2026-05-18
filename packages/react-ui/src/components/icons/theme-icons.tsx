@@ -1,5 +1,5 @@
 import { forwardRef } from 'react'
-import { cn } from '@workspace/tw-style'
+import { cn } from '#lib/utils'
 
 /**
  * Lucide SVG 'sun' icon. Default `~size-5/6`.

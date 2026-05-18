@@ -1,7 +1,7 @@
 import { useId } from 'react'
 import { Link } from 'react-router'
 
-import { cn } from '@workspace/tw-style'
+import { cn } from '@workspace/react-ui/lib/utils'
 import { LinkButton } from '@workspace/react-ui/components/ui/link-button'
 import { Heading } from '@workspace/react-ui/components/ui/heading'
 

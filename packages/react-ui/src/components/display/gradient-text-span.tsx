@@ -1,4 +1,4 @@
-import { cn } from '@workspace/tw-style'
+import { cn } from '#lib/utils'
 
 /**
  * Render a `<span>` element with a CSS text gradient effect.

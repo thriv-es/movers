@@ -63,7 +63,7 @@ export const zAppConfig = z.object({
  * This project's config object.
  */
 export const CONFIG: AppConfig = zAppConfig.parse({
-  title: import.meta.env.VITE_APP_TITLE,
+  title: import.meta.env.VITE_TITLE,
   locale: import.meta.env.VITE_LOCALE,
   textDirection: import.meta.env.VITE_TEXT_DIRECTION,
   description: import.meta.env.VITE_META_DESCRIPTION,

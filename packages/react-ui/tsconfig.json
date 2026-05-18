@@ -12,7 +12,8 @@
     // reference: https://github.com/microsoft/TypeScript/issues/52460 (open issue)
     "baseUrl": ".",
     "paths": {
-      "#*": ["./src/*"]
+      "#*": ["./src/*"],
+      "@/*": ["./src/*"]
     },
 
     // targets

@@ -1,5 +1,5 @@
 import { forwardRef } from 'react'
-import { cn } from '@workspace/tw-style'
+import { cn } from '#lib/utils'
 
 /**
  * Hamburger menu SVG icon with current icon from lucide-react.

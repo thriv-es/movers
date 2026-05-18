@@ -1,10 +1,9 @@
 import { useRouteError } from 'react-router'
 
 /**
- * Root error boundary for react-router.
+ * Root error boundary for react-router. Pass as the `errorElement` on your root route.
  *
- * @future consider additional capabilities regarding isRouteErrorResponse, json, Link, Outlet, useLoaderData, etc.
- * @see https://github.com/remix-run/react-router/blob/dev/examples/error-boundaries/src/routes.tsx
+ * @see https://reactrouter.com/en/main/route/error-element
  */
 export function RouterRootErrorBoundary(): JSX.Element {
   const error = useRouteError() as Error

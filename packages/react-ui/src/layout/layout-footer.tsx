@@ -1,9 +1,9 @@
 import type React from 'react'
 import { Link } from 'react-router'
 
-import { cn } from '@workspace/tw-style'
-import { ThemeMenu } from '@workspace/react-ui/components/layout/theme-menu'
-import { GitHubIcon } from '@workspace/react-ui/components/icons/tech-icons'
+import { cn } from '#lib/utils'
+import { ThemeMenu } from '#components/layout/theme-menu'
+import { GitHubIcon } from '#components/icons/tech-icons'
 import { getGitHubUrl, getTwitterUrl, type AppNavLink, type SocialMediaDto } from '@workspace/data'
 
 export interface LayoutFooterProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -13,9 +13,6 @@ export interface LayoutFooterProps extends React.HTMLAttributes<HTMLDivElement> 
 
 interface FooterCapLinkProps extends Omit<AppNavLink, 'title'>, React.PropsWithChildren {}
 
-/**
- * Application layout footer.
- */
 export function LayoutFooter({ socialMedia, className, ...restProps }: LayoutFooterProps) {
   return (
     <footer className={className} {...restProps}>
@@ -40,19 +37,9 @@ export function LayoutFooter({ socialMedia, className, ...restProps }: LayoutFoo
   )
 }
 
-/**
- * Social media icon links for the footer.
- */
 function FooterSocialIcons({ socialMedia }: { socialMedia?: SocialMediaDto }): JSX.Element {
   return (
     <>
-      {/*
-          {!!socialMedia?.twitter && (
-            <Link to={getTwitterUrl(socialMedia.twitter)} target="_blank" rel="noopener noreferrer">
-              <TwitterXIcon className="~size-5/6" />
-            </Link>
-          )}
-          */}
       {!!socialMedia?.github && (
         <Link to={getGitHubUrl(socialMedia.github)} target="_blank" rel="noopener noreferrer" className="group">
           <GitHubIcon className="~size-5/6 group-hover:text-P-link-hover transition-colors" />
@@ -62,9 +49,6 @@ function FooterSocialIcons({ socialMedia }: { socialMedia?: SocialMediaDto }): J
   )
 }
 
-/**
- * A link in the final "cap" row of the footer that opens in a new tab.
- */
 function FooterCapLink({ href, children }: FooterCapLinkProps): JSX.Element {
   return (
     <Link
@@ -77,23 +61,3 @@ function FooterCapLink({ href, children }: FooterCapLinkProps): JSX.Element {
     </Link>
   )
 }
-
-// /**
-//  * Render a title followed by a list of footer links.
-//  */
-// function FooterLinkList({ title, links, className }: FooterLinkListProps): JSX.Element {
-//   return (
-//     <div key={title} className={cn('flex flex-col ~gap-2/4', className)}>
-//       <span className="~text-base/lg font-medium text-foreground">{title}</span>
-//       <ul className="flex flex-col ~gap-0.5/1 list-inside">
-//         {links?.map((link) => (
-//           <li key={link.title}>
-//             <Link to={link.href} className="block ~py-1/2 text-sm text-muted-foreground hover:text-primary">
-//               {link.title}
-//             </Link>
-//           </li>
-//         ))}
-//       </ul>
-//     </div>
-//   )
-// }

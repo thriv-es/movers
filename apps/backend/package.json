@@ -6,18 +6,17 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
-    "db:gen": "drizzle-kit generate:sqlite",
-    "db:push": "drizzle-kit push:sqlite"
+    "db:gen": "drizzle-kit generate",
+    "db:push": "drizzle-kit push"
   },
   "dependencies": {
-    "hono": "^3.12.0",
-    "drizzle-orm": "^0.29.3",
-    "@libsql/client": "^0.4.0-pre.5"
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.19"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20231218.0",
-    "wrangler": "^3.22.1",
-    "drizzle-kit": "^0.20.9",
-    "typescript": "^5.3.3"
+    "@cloudflare/workers-types": "^4.20260517.1",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.92.0"
   }
 }

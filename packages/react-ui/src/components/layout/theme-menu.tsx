@@ -1,4 +1,4 @@
-import { cn } from '@workspace/tw-style'
+import { cn } from '#lib/utils'
 
 import { Button } from '#components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '#components/ui/dropdown-menu'

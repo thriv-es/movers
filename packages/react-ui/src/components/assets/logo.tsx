@@ -1,7 +1,7 @@
 import type React from 'react'
 import { forwardRef } from 'react'
 
-import { cn } from '@workspace/tw-style'
+import { cn } from '#lib/utils'
 
 export const Logo = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function Logo(
   { className, ...restSvgProps },

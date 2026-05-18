@@ -1,62 +1,93 @@
-name = "backend"
-main = "src/index.ts"
-compatibility_date = "2023-12-18"
+# =============================================================================
+# Wrangler configuration for the backend Cloudflare Worker
+#
+# GETTING STARTED
+# ---------------
+# 1. Rename this worker: change `name` below to match your project.
+# 2. For local dev, run: pnpm dev  (no Cloudflare account required)
+# 3. For production, create each resource with the Cloudflare CLI, then paste
+#    the IDs into the [env.production] section at the bottom of this file.
+#
+# PLACEHOLDER IDs
+# ---------------
+# The placeholder IDs below (all zeros) are used by `wrangler dev` to spin up
+# local simulations of each service — no real Cloudflare resources are created.
+# Replace them only when deploying to production.
+# =============================================================================
 
-# Environment variables
+name = "my-worker"          # ← Rename to match your project (used as the Worker's subdomain)
+main = "src/index.ts"
+compatibility_date = "2025-05-01"
+
+# ---------------------------------------------------------------------------
+# Environment variables available in code via `c.env.ENV`
+# ---------------------------------------------------------------------------
 [vars]
 ENV = "development"
 
-# Production Environment
+# ---------------------------------------------------------------------------
+# Cloudflare D1 — SQLite database
+# Create for production: wrangler d1 create my-worker-database
+# Docs: https://developers.cloudflare.com/d1/
+# ---------------------------------------------------------------------------
+[[d1_databases]]
+binding = "DB"                              # Access in worker code as: c.env.DB
+database_name = "my-worker-database-local"  # Local simulation name (can be anything)
+database_id = "00000000-0000-0000-0000-000000000001"  # Placeholder — safe for local dev
+
+# ---------------------------------------------------------------------------
+# Cloudflare KV — key-value store
+# Create for production: wrangler kv namespace create my-worker-cache
+# Docs: https://developers.cloudflare.com/kv/
+# ---------------------------------------------------------------------------
+[[kv_namespaces]]
+binding = "KV"                              # Access in worker code as: c.env.KV
+id = "00000000000000000000000000000001"     # Placeholder — safe for local dev
+
+# ---------------------------------------------------------------------------
+# Cloudflare R2 — object / blob storage
+# Create for production: wrangler r2 bucket create my-worker-storage
+# Docs: https://developers.cloudflare.com/r2/
+# ---------------------------------------------------------------------------
+[[r2_buckets]]
+binding = "BUCKET"                          # Access in worker code as: c.env.BUCKET
+bucket_name = "my-worker-storage-local"    # Local simulation bucket name
+
+# ---------------------------------------------------------------------------
+# Cloudflare Queues — durable background task queue
+# Create for production: wrangler queues create my-worker-tasks
+# Docs: https://developers.cloudflare.com/queues/
+# ---------------------------------------------------------------------------
+[[queues.producers]]
+binding = "QUEUE"                           # Access in worker code as: c.env.QUEUE
+queue = "my-worker-tasks-local"            # Local simulation queue name
+
+# =============================================================================
+# PRODUCTION ENVIRONMENT
+# =============================================================================
+# Uncomment and fill in after creating resources in the Cloudflare dashboard.
+# Deploy with: wrangler deploy --env production
+# =============================================================================
 [env.production]
 vars = { ENV = "production" }
-# routes = [
-#   { pattern = "your-production-url.com/*", zone_name = "your-zone.com" }
-# ]
 logpush = true
 analytics_engine_datasets = [{ binding = "ANALYTICS" }]
 
-# D1 database binding
-[[d1_databases]]
-binding = "DB"
-database_name = "main-db-prod"
-database_id = "" # Add your D1 database ID here for production
+# [[env.production.d1_databases]]
+# binding = "DB"
+# database_name = "my-worker-database"
+# database_id = ""  # ← Paste your D1 database ID here
+#                   #   Get it from: wrangler d1 create my-worker-database
 
-# KV namespace binding
-[[kv_namespaces]]
-binding = "KV"
-id = "" # Add your KV namespace ID here for production
-preview_id = "" # Add your KV preview ID here for dev
+# [[env.production.kv_namespaces]]
+# binding = "KV"
+# id = ""           # ← Paste your KV namespace ID here
+#                   #   Get it from: wrangler kv namespace create my-worker-cache
 
-# R2 bucket binding
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "bucket-prod" # Add your R2 bucket name here
-preview_bucket_name = "bucket-dev" # Add your R2 preview bucket name here for dev
+# [[env.production.r2_buckets]]
+# binding = "BUCKET"
+# bucket_name = "my-worker-storage"  # ← Your R2 bucket name
 
-# Queue binding
-[[queues.producers]]
-binding = "QUEUE"
-queue = "queue-prod" # Add your Queue name here
-
-[env.development]
-logpush = true
-analytics_engine_datasets = [{ binding = "ANALYTICS" }]
-
-[[env.development.d1_databases]]
-binding = "DB"
-database_name = "main-db-dev"
-database_id = ""
-
-[[env.development.kv_namespaces]]
-binding = "KV"
-id = ""
-preview_id = ""
-
-[[env.development.r2_buckets]]
-binding = "BUCKET"
-bucket_name = "bucket-dev"
-preview_bucket_name = "bucket-dev"
-
-[[env.development.queues.producers]]
-binding = "QUEUE"
-queue = "queue-dev"
+# [[env.production.queues.producers]]
+# binding = "QUEUE"
+# queue = "my-worker-tasks"          # ← Your Queue name

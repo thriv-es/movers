@@ -1,6 +1,6 @@
 import type React from 'react'
 
-import { cn } from '@workspace/tw-style'
+import { cn } from '@workspace/react-ui/lib/utils'
 import { GradientTextSpan } from '@workspace/react-ui/components/display/gradient-text-span'
 import { Heading } from '@workspace/react-ui/components/ui/heading'
 

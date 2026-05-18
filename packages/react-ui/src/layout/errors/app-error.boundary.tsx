@@ -1,8 +1,8 @@
 import type React from 'react'
 import { ErrorBoundary, type ErrorBoundaryPropsWithComponent, type FallbackProps } from 'react-error-boundary'
 
-import { Typography } from '@workspace/react-ui/components/ui/typography'
-import { Button } from '@workspace/react-ui/components/ui/button'
+import { Typography } from '#components/ui/typography'
+import { Button } from '#components/ui/button'
 
 export interface AppErrorBoundaryProps
   extends React.PropsWithChildren,
@@ -10,9 +10,6 @@ export interface AppErrorBoundaryProps
   FallbackComponent?: React.ComponentType<FallbackProps>
 }
 
-/**
- * React error boundary custom fallback for use with ErrorBoundary from react-error-boundary.
- */
 export function ErrorFallback({ error, resetErrorBoundary }: FallbackProps): JSX.Element {
   return (
     <div role="alert" className="~p-4/6 ~gap-2/4">
@@ -23,9 +20,6 @@ export function ErrorFallback({ error, resetErrorBoundary }: FallbackProps): JSX
   )
 }
 
-/**
- * React error boundary with custom fallback component and reset/retry.
- */
 export function AppErrorBoundary({
   FallbackComponent = ErrorFallback,
   onError = handleError,
@@ -39,10 +33,6 @@ export function AppErrorBoundary({
   )
 }
 
-/**
- * Log error.
- * Add code to send the error to a telemetry/observability service here.
- */
 const handleError: React.ComponentProps<typeof ErrorBoundary>['onError'] = (error, info) => {
   console.error(error, info)
 }

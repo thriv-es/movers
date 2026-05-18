@@ -1,15 +1,13 @@
 import React from 'react'
-import { cn } from '@workspace/tw-style'
+import { cn } from '#lib/utils'
 
 export interface PageLayoutProps extends React.HTMLAttributes<HTMLDivElement> {
   as?: 'section' | 'div' | 'aside'
 }
 
 /**
- * Page Layout renders a `section` element with standard vertical padding.
- * Specify `as` prop to render an alternative element such as a 'div'.
- *
- * This component is intended to be used as a child of the application layout.
+ * Wrapper for a page's content area. Renders a `section` by default; pass `as` to override.
+ * Intended to be used as a direct child of `AppLayout`.
  */
 export const PageLayout = React.forwardRef<HTMLDivElement, PageLayoutProps>(function PageLayout(
   { as = 'section', className, children, ...restProps },

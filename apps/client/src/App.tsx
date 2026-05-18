@@ -1,7 +1,7 @@
 import { Suspense, type ErrorInfo } from 'react'
 import { RouterProvider } from 'react-router/dom'
 
-import { AppErrorBoundary } from '@workspace/react-layout'
+import { AppErrorBoundary } from '@workspace/react-ui/errors'
 import { ScreenSpinner } from '@workspace/react-ui/components/ui/spinner'
 
 import { router } from '@/router'

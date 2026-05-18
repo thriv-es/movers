@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useId, forwardRef } from 'react'
-import { cn } from '@workspace/tw-style'
+import { cn } from '#lib/utils'
 
 export type HeadingLevelProp = Extract<keyof JSX.IntrinsicElements, 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'>
 

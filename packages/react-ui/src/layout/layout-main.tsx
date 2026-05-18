@@ -1,13 +1,10 @@
 import React, { useId } from 'react'
-import { cn } from '@workspace/tw-style'
+import { cn } from '#lib/utils'
 
 export interface LayoutMainProps extends React.HTMLAttributes<HTMLDivElement> {
   isContainer?: boolean
 }
 
-/**
- * Render `main` component with default min height and vertical padding.
- */
 export const LayoutMain = React.forwardRef<HTMLDivElement, LayoutMainProps>(function LayoutMain(
   { id, isContainer = true, className, children, ...restProps },
   ref,
