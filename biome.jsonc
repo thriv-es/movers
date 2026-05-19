@@ -79,7 +79,7 @@
   "overrides": [
     // computed keys are a common pattern with libraries such as clsx
     {
-      "include": ["apps/**/*.tsx", "functions/**/*.ts", "packages/react-*/**"],
+      "include": ["src/**/*.tsx", "functions/**/*.ts"],
       "linter": {
         "rules": {
           "complexity": {
@@ -92,7 +92,7 @@
     },
     // false positive when putting routes in a tuple with a jsx component
     {
-      "include": ["apps/**/router.tsx"],
+      "include": ["src/**/router.tsx"],
       "linter": {
         "rules": {
           "correctness": {

@@ -1,100 +1,127 @@
-# Movers - AI-Powered Moving Estimates
+<img src="public/favicon.svg" width="36" height="36" alt="movers" />
 
-A mobile-first web app that provides instant moving estimates using AI-powered photo analysis.
+# thriv.es movers
 
-## Features
+> Snap a few photos of your stuff and get an AI-powered moving estimate in minutes.
 
-- 📸 **Photo Analysis**: Upload photos of your items and let AI identify them
-- 💬 **Interactive Chat**: Conversational interface for adding/editing items
-- 💰 **Instant Quotes**: Get pricing estimates in minutes
-- 📅 **Easy Scheduling**: Book your move directly from the app
+A demo project by [thriv.es](https://thriv.es), shared freely with the community. Fork it, learn from it, build on it.
 
-## Tech Stack
+**[Live demo: movers.thriv.es](https://movers.thriv.es/)**
 
-- **Frontend**: React 18 + Vite + TypeScript
-- **Backend**: Cloudflare Workers (Hono.js)
-- **Styling**: TailwindCSS + shadcn/ui components
-- **AI**: OpenAI GPT-4 Vision for image analysis
-- **Monorepo**: pnpm workspaces
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/thriv-es/movers)
 
-## Project Structure
+---
+
+## What it does
+
+Walk through a short five-step flow:
+
+1. **Chat** - Tell the AI about your move: origin, destination, dates, floors, and elevator access
+2. **Photograph** - Upload 1 to 5 photos of your belongings; the vision model builds your inventory
+3. **Review** - Confirm or adjust the detected items
+4. **Estimate** - Get a full itemized price with a confidence rating
+5. **Schedule** - Pick your moving date
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Frontend | React 18 + Vite + TypeScript |
+| Styling | Tailwind CSS + shadcn/ui |
+| API | Hono on Cloudflare Pages Functions |
+| AI | Cloudflare Workers AI (Llama 3.3 70B text + Llama 3.2 11B Vision) |
+| AI Gateway | Cloudflare AI Gateway |
+| Storage | Cloudflare R2 for uploaded photos |
+| Deploy | Cloudflare Pages |
+
+## Project structure
 
 ```
-movers/
-├── apps/
-│   ├── client/          # React SPA (mobile-first)
-│   └── backend/         # Cloudflare Workers API
-├── packages/
-│   ├── data/            # Shared types, schemas, utilities
-│   ├── react-ui/        # UI components (shadcn/ui)
-│   └── react-layout/    # Layout components
+.
+├── src/
+│   ├── data/                 # Zod schemas and shared types
+│   ├── ui/                   # shadcn/ui components and layout
+│   └── ...                   # React app (pages, routes, providers)
+├── functions/
+│   └── api/
+│       ├── [[catchall]].ts   # Hono entry point for /api/*
+│       ├── _lib/             # AI client, prompts, pricing logic
+│       └── _routes/          # Route handlers: chat, analyze, price, images
+├── tailwind/                 # Tailwind preset with thriv.es design tokens
+└── wrangler.toml
 ```
 
-## Prerequisites
+## Getting started
 
-- Node.js (version specified in `.npmrc`)
-- pnpm
-- Cloudflare account (for backend deployment)
+### What you need
 
-## Development
+- Node.js 20+
+- pnpm 11+
+- A [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/) token
 
-Install dependencies:
+### Setup
 
-```sh
+```bash
+git clone https://github.com/thriv-es/movers
+cd movers
 pnpm install
+
+cp .dev.vars.example .dev.vars
+# Open .dev.vars and fill in your CF_AIG_TOKEN
 ```
 
-Set up environment variables:
+### Running locally
 
-```sh
-# Client
-cp apps/client/.env.example apps/client/.env
-
-# Backend
-cp apps/backend/.dev.vars.example apps/backend/.dev.vars
+**Frontend only** (no API calls):
+```bash
+pnpm dev          # Vite on http://localhost:5173
 ```
 
-Build all packages:
+**Full stack** with AI and R2:
+```bash
+# Terminal 1
+pnpm dev          # Vite on http://localhost:5173
 
-```sh
-pnpm build
+# Terminal 2
+pnpm dev:api      # wrangler pages dev on http://localhost:8787
 ```
 
-Start dev server:
+Then open `http://localhost:8787` for the full experience.
 
-```sh
-pnpm dev
+> **Note:** The vision model (`llama-3.2-11b-vision-instruct`) requires a one-time terms acceptance in the Cloudflare dashboard: Workers AI > Model catalog > llama-3.2-11b-vision-instruct > Accept terms.
+
+### Other commands
+
+```bash
+pnpm build        # TypeScript check + production build
+pnpm lint         # Biome lint
+pnpm lint:fix     # Biome lint with auto-fix
 ```
 
-The client app will be available at http://localhost:5173
+## Deploying
 
-## Deployment
+### First time setup
 
-Deploy to Cloudflare Workers and Pages:
+1. Create a Cloudflare Pages project named `movers`
+2. Create an R2 bucket: `wrangler r2 bucket create movers-storage`
+3. Set the production secret: `wrangler pages secret put CF_AIG_TOKEN`
+4. In `wrangler.toml`, uncomment `[env.production.r2_buckets]` and set your bucket name
 
-```sh
-# Quick deployment (from root)
-pnpm deploy:all
+### Ship it
+
+```bash
+pnpm ship         # Build + deploy to Cloudflare Pages
 ```
 
-For detailed deployment instructions, see:
-- **[Quick Start Guide](./DEPLOY_QUICKSTART.md)** - Fast deployment in 5 steps
-- **[Complete Deployment Guide](./DEPLOYMENT.md)** - Detailed guide with troubleshooting, custom domains, and monitoring
+## Environment variables
 
-### Quick Commands
+| Variable | Where | Description |
+|---|---|---|
+| `CF_AIG_TOKEN` | `.dev.vars` / Pages secret | Cloudflare AI Gateway token |
+| `PRICE_PER_BOX` | `wrangler.toml` | Base price per moving box (default: 50) |
+| `ENV` | `wrangler.toml` | `development` or `production` |
+| `VITE_GITHUB` | `.env` | GitHub repo path, e.g. `thriv-es/movers` |
 
-```sh
-# Deploy backend only
-pnpm deploy:backend
+---
 
-# Deploy client only
-pnpm deploy:client
-
-# View logs
-cd apps/backend && pnpm logs
-cd apps/client && pnpm pages:tail
-```
-
-## License
-
-MIT
+Built with care by [thriv.es](https://thriv.es). MIT licensed, open to contributions.

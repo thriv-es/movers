@@ -1,0 +1,54 @@
+# =============================================================================
+# Wrangler configuration for the thriv.es movers Cloudflare Pages app
+#
+# GETTING STARTED
+# ---------------
+# 1. For local dev: copy .dev.vars.example to .dev.vars and fill in secrets
+# 2. Run frontend: pnpm dev  (Vite on port 5173)
+#    Run full-stack: pnpm dev:api  (wrangler pages dev, proxies to Vite)
+# 3. Deploy: pnpm deploy  (builds and deploys to Cloudflare Pages)
+#
+# PRODUCTION SETUP
+# ----------------
+# Create resources in the Cloudflare dashboard, then update [env.production] below.
+# Deploy with: wrangler pages deploy dist --project-name=movers --branch=main
+# =============================================================================
+
+name = "movers"
+compatibility_date = "2025-05-01"
+pages_build_output_dir = "dist"
+
+# ---------------------------------------------------------------------------
+# Environment variables
+# Secrets (CF_AIG_TOKEN) go in .dev.vars for local dev.
+# For production: `wrangler pages secret put CF_AIG_TOKEN`
+# ---------------------------------------------------------------------------
+[vars]
+ENV = "development"
+PRICE_PER_BOX = "50"
+
+# ---------------------------------------------------------------------------
+# Cloudflare R2 - object storage for uploaded move photos
+# Create for production: wrangler r2 bucket create movers-storage
+# Docs: https://developers.cloudflare.com/r2/
+# ---------------------------------------------------------------------------
+[[r2_buckets]]
+binding = "MOVERS_BUCKET"
+bucket_name = "movers"
+
+# =============================================================================
+# PREVIEW ENVIRONMENT
+# =============================================================================
+[env.preview]
+vars = { ENV = "preview" }
+
+# =============================================================================
+# PRODUCTION ENVIRONMENT
+# Uncomment and fill in after creating resources in Cloudflare.
+# =============================================================================
+[env.production]
+vars = { ENV = "production" }
+
+# [[env.production.r2_buckets]]
+# binding = "MOVERS_BUCKET"
+# bucket_name = "movers-storage"

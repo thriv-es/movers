@@ -1,0 +1,4 @@
+# Copy this file to .dev.vars and fill in your values.
+# .dev.vars is gitignored - these secrets are only used during local development.
+
+CF_AIG_TOKEN=your_cloudflare_ai_gateway_token_here

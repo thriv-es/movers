@@ -1,0 +1,174 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── thriv.es design tokens ──────────────────────────────────────────────── */
+/* Override shadcn HSL variables + add native thriv.es palette tokens.        */
+/* These rules are placed after @tailwind base so they win in the cascade.    */
+
+:root {
+  /* thriv.es palette tokens */
+  --thrive: #1F8B5D;
+  --thrive-deep: #136840;
+  --thrive-soft: #D9EDE2;
+  --sun: #F4B23E;
+  --signal: #3D7AFF;
+  --ink-muted: #7B8580;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* shadcn variable overrides – thriv.es light palette */
+  --background: 60 22% 96%;        /* #F8F8F4 */
+  --foreground: 156 26% 7%;        /* #0E1814 */
+  --card: 0 0% 100%;               /* #FFFFFF */
+  --card-foreground: 156 26% 7%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 156 26% 7%;
+  --primary: 154 63% 33%;          /* #1F8B5D */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 60 16% 92%;         /* #EDEDE6 */
+  --secondary-foreground: 156 26% 7%;
+  --muted: 60 16% 92%;             /* #EDEDE6 */
+  --muted-foreground: 147 8% 26%;  /* #3E4943 */
+  --accent: 147 36% 89%;           /* #D9EDE2 */
+  --accent-foreground: 154 63% 25%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 60 12% 84%;            /* #DCDCD3 */
+  --input: 60 12% 84%;
+  --ring: 154 63% 33%;
+  --radius: 0.75rem;
+
+  /* P-palette overrides → thriv.es green */
+  --P-link: 31 139 93;             /* #1F8B5D as R G B */
+  --P-link-hover: 19 104 64;       /* #136840 */
+  --P-brand: 31 139 93;
+  --P-brand-alt: 61 186 130;       /* #3DBA82 */
+}
+
+.dark {
+  /* thriv.es dark palette tokens */
+  --thrive: #3DBA82;
+  --thrive-deep: #1F8B5D;
+  --thrive-soft: #1A2A22;
+
+  /* shadcn variable overrides – thriv.es dark palette */
+  --background: 144 19% 5%;        /* #0B100D */
+  --foreground: 60 17% 93%;        /* #F0F0EA */
+  --card: 146 15% 9%;              /* #131A16 */
+  --card-foreground: 60 17% 93%;
+  --popover: 146 15% 9%;
+  --popover-foreground: 60 17% 93%;
+  --primary: 153 51% 48%;          /* #3DBA82 */
+  --primary-foreground: 144 19% 5%;
+  --secondary: 148 23% 13%;        /* #1A2A22 */
+  --secondary-foreground: 60 17% 93%;
+  --muted: 148 23% 13%;
+  --muted-foreground: 120 5% 79%;  /* #C8CDC8 */
+  --accent: 148 23% 13%;
+  --accent-foreground: 153 51% 48%;
+  --destructive: 0 63% 31%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 150 12% 17%;           /* #26302B */
+  --input: 150 12% 17%;
+  --ring: 153 51% 48%;
+
+  --P-link: 61 186 130;
+  --P-link-hover: 31 139 93;
+}
+
+/* ─── typography ──────────────────────────────────────────────────────────── */
+body {
+  font-family: 'Inter Variable', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 17px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── utility classes ─────────────────────────────────────────────────────── */
+.font-display {
+  font-family: 'Source Serif 4', 'Iowan Old Style', 'Apple Garamond', Georgia, serif;
+}
+
+.font-code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+}
+
+.text-eyebrow {
+  font-family: 'Inter Variable', Inter, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+/* ─── wordmark dot animation ──────────────────────────────────────────────── */
+.dot-bob {
+  display: inline-block;
+  color: var(--thrive);
+  animation: dot-bob 2.4s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot-bob {
+    animation: none;
+  }
+}
+
+@keyframes dot-bob {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-2px); }
+}
+
+/* ─── button lift ─────────────────────────────────────────────────────────── */
+.btn-lift {
+  transition: transform 180ms var(--ease), background-color 180ms var(--ease);
+}
+.btn-lift:hover {
+  transform: translateY(-1px);
+}
+
+/* ─── thrive card ─────────────────────────────────────────────────────────── */
+.card-thrive {
+  background-color: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+}
+.card-thrive:hover {
+  border-color: hsl(var(--foreground));
+}
+
+/* ─── pull quote ──────────────────────────────────────────────────────────── */
+.pull-quote {
+  font-family: 'Source Serif 4', Georgia, serif;
+  font-style: italic;
+  font-size: clamp(22px, 2.8vw, 32px);
+  line-height: 1.3;
+  border-left: 2px solid var(--thrive);
+  padding-left: 20px;
+  color: hsl(var(--foreground));
+}
+
+/* ─── frame / faux IDE ────────────────────────────────────────────────────── */
+.frame {
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  overflow: hidden;
+  background: hsl(var(--card));
+}
+
+.frame-bar {
+  background: hsl(var(--muted));
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.frame-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
