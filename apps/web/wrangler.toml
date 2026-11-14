@@ -38,13 +38,21 @@ bucket_name = "movers"
 
 # ---------------------------------------------------------------------------
 # Workers AI - used by the AI routes when CF_AIG_TOKEN is not set (local dev).
-# The binding is always remote: `wrangler pages dev` calls Workers AI on your
-# Cloudflare account through `wrangler login`, and usage is billed to it.
-# See .dev.vars.example for AI_MODE and for choosing the account.
+#
+# The `AI` binding is deliberately NOT declared here. An AI binding is always
+# remote, and Wrangler refuses to start `pages dev` at all when it cannot open
+# the remote session (not logged in, offline, or several accounts and none
+# chosen). That would also break AI_MODE=mock, which must work offline.
+#
+# Instead `pnpm dev:api` (scripts/dev-api.mjs) adds the binding with `--ai AI`
+# when it is needed, and restarts without it when Workers AI is unreachable, so
+# the API falls back to the offline mock. See .dev.vars.example.
+#
+# To bind it unconditionally (a deployed environment), uncomment:
+# [ai]
+# binding = "AI"
 # Docs: https://developers.cloudflare.com/workers-ai/configuration/bindings/
 # ---------------------------------------------------------------------------
-[ai]
-binding = "AI"
 
 # =============================================================================
 # PREVIEW ENVIRONMENT

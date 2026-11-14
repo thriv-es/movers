@@ -10,6 +10,7 @@ import { ConfirmStep } from '@/components/move-demo/ConfirmStep'
 import { PriceStep } from '@/components/move-demo/PriceStep'
 import { ScheduleStep } from '@/components/move-demo/ScheduleStep'
 
+import { DemoBadge } from '@/components/move-demo/DemoBadge'
 import { PageSeo } from '@/components/seo'
 import { CONFIG } from '@/config'
 
@@ -165,6 +166,8 @@ export default function MoveDemoPage(): JSX.Element {
       />
 
       <div className="container max-w-xl mx-auto flex flex-col gap-8">
+        <DemoBadge />
+
         {/* Progress indicator */}
         {showProgress && (
           <nav aria-label="Estimate progress">

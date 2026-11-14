@@ -1,3 +1,4 @@
+import { recordAiMode } from '@/lib/ai-mode-store'
 import type { ChatMessage, ChatApiResponse, AnalysisResult, PriceResult, MoveInfo, EstimateResult } from '@/data'
 
 /**
@@ -22,6 +23,7 @@ export async function chatApi(messages: ChatMessage[]): Promise<ChatApiResponse>
     throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
   }
 
+  recordAiMode(response)
   return response.json() as Promise<ChatApiResponse>
 }
 
@@ -65,6 +67,7 @@ export async function analyzeApi(imageUrls: string[]): Promise<AnalysisResult> {
     throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
   }
 
+  recordAiMode(response)
   return response.json() as Promise<AnalysisResult>
 }
 
@@ -85,6 +88,7 @@ export async function priceApi(analysis: AnalysisResult, moveInfo: MoveInfo): Pr
     throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
   }
 
+  recordAiMode(response)
   return response.json() as Promise<PriceResult>
 }
 
