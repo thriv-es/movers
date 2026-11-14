@@ -1,0 +1,34 @@
+/* Movers design tokens: the comic-on-kraft palette shared by the landing and the estimator.
+ *
+ * Import this file once per app, before `components.css`. Fonts are installed by each app
+ * (fontsource); this file only names the families.
+ */
+
+:root {
+  /* Palette. The six named colours are fixed by the design spec. */
+  --mv-ink: #12121a;
+  --mv-kraft: #d8a866;
+  --mv-paper: #fff6e0;
+  --mv-tape: #e4572e;
+  --mv-green: #1f8b5d;
+  --mv-sky: #4fa8de;
+  /* Two shades of kraft: lighter for raised panels, darker for footers. */
+  --mv-kraft-lt: #e8c48f;
+  --mv-kraft-dk: #c4914c;
+  /* Small text on green: pure black reaches 4.9:1 (AA). */
+  --mv-on-green: #000;
+  /* Body copy is ink at 82%: 6.2:1 on kraft, 10.3:1 on paper. */
+  --mv-ink-soft: rgba(18, 18, 26, 0.82);
+
+  --mv-border: 3px solid var(--mv-ink);
+  --mv-shadow-sm: 4px 4px 0 var(--mv-ink);
+  --mv-shadow: 6px 6px 0 var(--mv-ink);
+  --mv-shadow-lg: 10px 10px 0 var(--mv-ink);
+
+  --mv-display: "Bowlby One", "Fredoka Variable", "Inter Variable", system-ui, sans-serif;
+  --mv-body: "Fredoka Variable", "Inter Variable", system-ui, sans-serif;
+  --mv-caption: "Inter Variable", system-ui, sans-serif;
+
+  /* Halftone dots: the printed-comic texture. Pair with `background-size: 15px 15px`. */
+  --mv-halftone: radial-gradient(circle at center, rgba(18, 18, 26, 0.14) 1.6px, transparent 1.7px);
+}

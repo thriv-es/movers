@@ -6,8 +6,11 @@
  * Every call to action leads to the estimator at APP_URL.
  */
 
+import { MoversMark } from '@movers/ui'
 import { useRef } from 'react'
 
+import '@movers/ui/tokens.css'
+import '@movers/ui/components.css'
 import './landing.css'
 
 import boxSticker from './assets/landing/box-sticker.png'
@@ -15,7 +18,6 @@ import heroCustomer from './assets/landing/hero-customer.jpg'
 import heroMover from './assets/landing/hero-mover.jpg'
 import streetWide from './assets/landing/street-wide.jpg'
 import { ComicBurst } from './components/ComicBurst'
-import { MoversMark } from './components/MoversMark'
 import { APP_URL, GITHUB_URL } from './config'
 import { useLandingMotion } from './useLandingMotion'
 

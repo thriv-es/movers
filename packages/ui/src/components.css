@@ -1,0 +1,672 @@
+/* Movers components: inked panels, caption boxes, stamp buttons and the rest of the
+ * comic-on-kraft kit. Every rule is namespaced under `.mv` / `.mv-*`.
+ *
+ * Requires `tokens.css` to be loaded first.
+ */
+
+/* ───────────────────────── page ───────────────────────── */
+
+.mv-page {
+  min-height: 100vh;
+  color: var(--mv-ink);
+  font-family: var(--mv-body);
+  font-size: 1rem;
+  line-height: 1.5;
+  background-color: var(--mv-kraft);
+  background-image: var(--mv-halftone);
+  background-size: 15px 15px;
+  /* Rotated panels may poke past the edge. `clip` hides them without turning the page
+     into a scroll container. `hidden` is the fallback for old browsers. */
+  overflow-x: hidden;
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.mv-page *,
+.mv-page *::before,
+.mv-page *::after {
+  box-sizing: border-box;
+}
+
+/* A two-tone ring: ink outside, paper inside. One of the two always contrasts. */
+.mv-page :focus-visible,
+.mv-input:focus-visible,
+.mv-select:focus-visible,
+.mv-textarea:focus-visible {
+  outline: 3px solid var(--mv-ink);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--mv-paper);
+}
+
+.mv-page ::selection {
+  background: var(--mv-ink);
+  color: var(--mv-kraft);
+}
+
+/* ───────────────────────── brand mark ───────────────────────── */
+
+.mv-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--mv-ink);
+}
+
+.mv-mark__box {
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+  filter: drop-shadow(2px 2px 0 var(--mv-ink));
+}
+
+.mv-mark__word {
+  font-family: var(--mv-display);
+  line-height: 1;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.mv-mark--compact .mv-mark__box {
+  filter: none;
+}
+
+/* ───────────────────────── panels ───────────────────────── */
+
+.mv-panel {
+  position: relative;
+  padding: 1.25rem;
+  color: var(--mv-ink);
+  background: var(--mv-paper);
+  border: var(--mv-border);
+  border-radius: 2px;
+  box-shadow: var(--mv-shadow);
+}
+
+.mv-panel--ink {
+  background: var(--mv-ink);
+  color: var(--mv-paper);
+}
+
+.mv-panel--kraft {
+  background: var(--mv-kraft-lt);
+}
+
+.mv-panel--tilt-l {
+  transform: rotate(-1deg);
+}
+
+.mv-panel--tilt-r {
+  transform: rotate(1deg);
+}
+
+.mv-panel--flat {
+  box-shadow: var(--mv-shadow-sm);
+}
+
+/* ───────────────────────── caption boxes ───────────────────────── */
+
+.mv-caption {
+  display: inline-block;
+  margin: 0;
+  padding: 0.3rem 0.6rem;
+  font-family: var(--mv-caption);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.45;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mv-ink);
+  background: var(--mv-paper);
+  border: 2px solid var(--mv-ink);
+  box-shadow: var(--mv-shadow-sm);
+}
+
+/* Caption text stays dark on every accent: paper on tape is only 3.4:1. */
+.mv-caption--tape {
+  background: var(--mv-tape);
+  color: var(--mv-ink);
+}
+
+.mv-caption--green {
+  background: var(--mv-green);
+  color: var(--mv-on-green);
+}
+
+.mv-caption--sky {
+  background: var(--mv-sky);
+  color: var(--mv-ink);
+}
+
+/* ───────────────────────── stamp buttons ───────────────────────── */
+
+.mv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.15rem;
+  font-family: var(--mv-display);
+  font-size: 0.85rem;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  color: var(--mv-ink);
+  background: var(--mv-paper);
+  border: var(--mv-border);
+  border-radius: 0;
+  box-shadow: var(--mv-shadow-sm);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.mv-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--mv-ink);
+}
+
+.mv-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--mv-ink);
+}
+
+/* Keep the paper ring and the hard shadow together while focused. */
+.mv-btn:focus-visible {
+  box-shadow: 0 0 0 3px var(--mv-paper), 7px 7px 0 var(--mv-ink);
+}
+
+.mv-btn--primary {
+  background: var(--mv-green);
+  color: var(--mv-on-green);
+}
+
+.mv-btn--tape {
+  background: var(--mv-tape);
+  color: var(--mv-paper);
+}
+
+.mv-btn--ghost {
+  background: transparent;
+  box-shadow: none;
+}
+
+.mv-btn--ghost:hover {
+  background: var(--mv-paper);
+  box-shadow: none;
+}
+
+.mv-btn--ghost:active {
+  box-shadow: none;
+}
+
+.mv-btn--sm {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.72rem;
+}
+
+.mv-btn--lg {
+  padding: 0.9rem 1.7rem;
+  font-size: 1rem;
+  box-shadow: var(--mv-shadow);
+}
+
+.mv-btn--lg:hover {
+  box-shadow: 8px 8px 0 var(--mv-ink);
+}
+
+.mv-btn--block {
+  display: flex;
+  width: 100%;
+}
+
+.mv-btn:disabled,
+.mv-btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: var(--mv-shadow-sm);
+}
+
+.mv-btn--ghost:disabled {
+  box-shadow: none;
+}
+
+/* ───────────────────────── fields ───────────────────────── */
+
+.mv-field {
+  display: block;
+  margin: 0;
+}
+
+.mv-field__label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-family: var(--mv-caption);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mv-ink);
+}
+
+.mv-field__help {
+  display: block;
+  margin-top: 0.35rem;
+  font-family: var(--mv-caption);
+  font-size: 0.8rem;
+  color: var(--mv-ink-soft);
+}
+
+.mv-field__error {
+  display: block;
+  margin-top: 0.35rem;
+  font-family: var(--mv-caption);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--mv-tape);
+}
+
+.mv-input,
+.mv-select,
+.mv-textarea {
+  display: block;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  font-family: var(--mv-body);
+  font-size: 1rem;
+  line-height: 1.4;
+  color: var(--mv-ink);
+  background: var(--mv-paper);
+  border: 2px solid var(--mv-ink);
+  border-radius: 2px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.mv-textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+.mv-select {
+  padding-right: 2rem;
+  background-image: linear-gradient(45deg, transparent 50%, var(--mv-ink) 50%),
+    linear-gradient(135deg, var(--mv-ink) 50%, transparent 50%);
+  background-position: calc(100% - 1rem) 50%, calc(100% - 0.65rem) 50%;
+  background-size: 0.35rem 0.35rem;
+  background-repeat: no-repeat;
+}
+
+.mv-input::placeholder,
+.mv-textarea::placeholder {
+  color: var(--mv-ink-soft);
+  opacity: 0.6;
+}
+
+.mv-input--invalid,
+.mv-input[aria-invalid="true"],
+.mv-select[aria-invalid="true"],
+.mv-textarea[aria-invalid="true"] {
+  border-color: var(--mv-tape);
+}
+
+/* ───────────────────────── badges ───────────────────────── */
+
+.mv-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  font-family: var(--mv-caption);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--mv-ink);
+  background: var(--mv-paper);
+  border: 2px solid var(--mv-ink);
+  border-radius: 999px;
+}
+
+.mv-badge--ink {
+  background: var(--mv-ink);
+  color: var(--mv-paper);
+}
+
+.mv-badge--green {
+  background: var(--mv-green);
+  color: var(--mv-on-green);
+}
+
+.mv-badge--tape {
+  background: var(--mv-tape);
+  color: var(--mv-ink);
+}
+
+.mv-badge--sky {
+  background: var(--mv-sky);
+  color: var(--mv-ink);
+}
+
+.mv-badge--paper {
+  background: var(--mv-paper);
+  color: var(--mv-ink);
+}
+
+/* ───────────────────────── packing tape ───────────────────────── */
+
+.mv-tape {
+  display: inline-block;
+  padding: 0.25rem 0.9rem;
+  font-family: var(--mv-caption);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mv-paper);
+  background: var(--mv-tape);
+  border: 0;
+  box-shadow: 2px 2px 0 var(--mv-ink);
+  transform: rotate(-2deg);
+}
+
+.mv-tape--green {
+  background: var(--mv-green);
+  color: var(--mv-paper);
+}
+
+/* ───────────────────────── stepper ───────────────────────── */
+
+.mv-stepper {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mv-stepper__item {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  text-align: left;
+  color: var(--mv-ink);
+  background: var(--mv-paper);
+  border: 2px solid var(--mv-ink);
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+.mv-stepper__item--done {
+  background: var(--mv-green);
+  color: var(--mv-on-green);
+}
+
+/* A done step wraps its content in a button so the customer can jump back. */
+.mv-stepper__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: inherit;
+  gap: inherit;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  text-align: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.mv-stepper__item--active {
+  background: var(--mv-ink);
+  color: var(--mv-paper);
+  box-shadow: var(--mv-shadow-sm);
+}
+
+.mv-stepper__item--upcoming {
+  background: var(--mv-kraft-lt);
+  color: var(--mv-ink-soft);
+}
+
+.mv-stepper__num {
+  font-family: var(--mv-display);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.mv-stepper__label {
+  font-family: var(--mv-caption);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* "Step n of N: Label", shown only once the labels collapse on small screens. */
+.mv-stepper__summary {
+  display: none;
+  margin-top: 0.5rem;
+  font-family: var(--mv-caption);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 640px) {
+  .mv-stepper__item {
+    align-items: center;
+    padding: 0.45rem 0.35rem;
+  }
+
+  .mv-stepper__item:not(.mv-stepper__item--active) .mv-stepper__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .mv-stepper__item--active {
+    flex: 2 1 0;
+  }
+
+  .mv-stepper__summary {
+    display: block;
+  }
+}
+
+/* ───────────────────────── chat bubbles ───────────────────────── */
+
+.mv-bubble {
+  max-width: 85%;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-family: var(--mv-body);
+  font-size: 1rem;
+  line-height: 1.45;
+  color: var(--mv-ink);
+  background: var(--mv-paper);
+  border: 2px solid var(--mv-ink);
+  border-radius: 2px;
+  box-shadow: var(--mv-shadow-sm);
+}
+
+.mv-bubble--assistant {
+  background: var(--mv-paper);
+  align-self: flex-start;
+}
+
+.mv-bubble--user {
+  background: var(--mv-tape);
+  color: var(--mv-paper);
+  align-self: flex-end;
+}
+
+.mv-bubble__meta {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-family: var(--mv-caption);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+/* ───────────────────────── tables ───────────────────────── */
+
+.mv-table--wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.mv-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-family: var(--mv-body);
+  font-size: 0.95rem;
+  color: var(--mv-ink);
+  background: var(--mv-paper);
+  border: var(--mv-border);
+  box-shadow: var(--mv-shadow-sm);
+}
+
+.mv-table th {
+  padding: 0.5rem 0.75rem;
+  font-family: var(--mv-caption);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--mv-paper);
+  background: var(--mv-ink);
+}
+
+.mv-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid rgba(18, 18, 26, 0.25);
+  vertical-align: top;
+}
+
+.mv-table tbody tr:hover td {
+  background: var(--mv-kraft-lt);
+}
+
+/* ───────────────────────── progress ───────────────────────── */
+
+.mv-progress {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  background: var(--mv-paper);
+  border: 2px solid var(--mv-ink);
+}
+
+.mv-progress__bar {
+  height: 100%;
+  background: var(--mv-green);
+  transition: width 200ms ease;
+}
+
+/* ───────────────────────── layout and type ───────────────────────── */
+
+.mv-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.mv-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.mv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.mv-title {
+  margin: 0;
+  font-family: var(--mv-display);
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.mv-title--xl {
+  font-size: 2.25rem;
+}
+
+.mv-title--lg {
+  font-size: 1.6rem;
+}
+
+.mv-title--md {
+  font-size: 1.2rem;
+}
+
+.mv-lede {
+  margin: 0;
+  font-family: var(--mv-body);
+  font-size: 1.1rem;
+  line-height: 1.5;
+  color: var(--mv-ink-soft);
+}
+
+.mv-muted {
+  color: var(--mv-ink-soft);
+}
+
+.mv-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ───────────────────────── reduced motion ───────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .mv-btn,
+  .mv-progress__bar {
+    transition-duration: 0.001ms;
+  }
+
+  .mv-btn:hover,
+  .mv-btn:active {
+    transform: none;
+  }
+}

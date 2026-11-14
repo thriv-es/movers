@@ -9,29 +9,27 @@
  */
 
 .lp {
-  /* Palette. The six named tokens are fixed by the design spec. */
-  --lp-ink: #12121a;
-  --lp-kraft: #d8a866;
-  --lp-paper: #fff6e0;
-  --lp-tape: #e4572e;
-  --lp-green: #1f8b5d;
-  --lp-sky: #4fa8de;
-  /* Two shades of kraft: the hero panel sits lighter, the footer darker. */
-  --lp-kraft-lt: #e8c48f;
-  --lp-kraft-dk: #c4914c;
-  /* Small text on thrive green: ink reaches 4.36:1, pure black 4.9:1 (AA). */
-  --lp-on-green: #000;
-  /* Body copy is ink at 82%: 6.2:1 on kraft, 10.3:1 on paper. */
-  --lp-ink-soft: rgba(18, 18, 26, 0.82);
+  /* Tokens are aliases of the shared @movers/ui palette (tokens.css), kept under the
+     --lp-* names so the page-specific rules below stay unchanged. */
+  --lp-ink: var(--mv-ink);
+  --lp-kraft: var(--mv-kraft);
+  --lp-paper: var(--mv-paper);
+  --lp-tape: var(--mv-tape);
+  --lp-green: var(--mv-green);
+  --lp-sky: var(--mv-sky);
+  --lp-kraft-lt: var(--mv-kraft-lt);
+  --lp-kraft-dk: var(--mv-kraft-dk);
+  --lp-on-green: var(--mv-on-green);
+  --lp-ink-soft: var(--mv-ink-soft);
 
-  --lp-border: 3px solid var(--lp-ink);
-  --lp-shadow: 6px 6px 0 var(--lp-ink);
-  --lp-shadow-sm: 4px 4px 0 var(--lp-ink);
-  --lp-shadow-lg: 10px 10px 0 var(--lp-ink);
+  --lp-border: var(--mv-border);
+  --lp-shadow: var(--mv-shadow);
+  --lp-shadow-sm: var(--mv-shadow-sm);
+  --lp-shadow-lg: var(--mv-shadow-lg);
 
-  --lp-display: "Bowlby One", "Fredoka Variable", "Inter Variable", system-ui, sans-serif;
-  --lp-body: "Fredoka Variable", "Inter Variable", system-ui, sans-serif;
-  --lp-caption: "Inter Variable", system-ui, sans-serif;
+  --lp-display: var(--mv-display);
+  --lp-body: var(--mv-body);
+  --lp-caption: var(--mv-caption);
 
   min-height: 100vh;
   color: var(--lp-ink);
@@ -82,33 +80,6 @@
 /* In-page links land below the sticky masthead. */
 .lp [id] {
   scroll-margin-top: 5.5rem;
-}
-
-/* ───────────────────────── brand mark ───────────────────────── */
-
-.lp-mark {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--lp-ink);
-}
-
-.lp-mark__box {
-  display: block;
-  flex: 0 0 auto;
-  overflow: visible;
-  filter: drop-shadow(2px 2px 0 var(--lp-ink));
-}
-
-.lp-mark__word {
-  font-family: var(--lp-display);
-  line-height: 1;
-  letter-spacing: 0.01em;
-  text-transform: uppercase;
-}
-
-.lp-mark--compact .lp-mark__box {
-  filter: none;
 }
 
 /* ───────────────────────── masthead ───────────────────────── */
