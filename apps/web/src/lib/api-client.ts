@@ -1,11 +1,4 @@
-import type { 
-  ChatMessage, 
-  ChatApiResponse, 
-  AnalysisResult, 
-  PriceResult, 
-  MoveInfo,
-  EstimateResult 
-} from '@/data'
+import type { ChatMessage, ChatApiResponse, AnalysisResult, PriceResult, MoveInfo, EstimateResult } from '@/data'
 
 /**
  * API client for Move Estimate Demo endpoints.
@@ -25,7 +18,7 @@ export async function chatApi(messages: ChatMessage[]): Promise<ChatApiResponse>
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string }
+    const error = (await response.json().catch(() => ({ error: 'Unknown error' }))) as { error?: string }
     throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
   }
 
@@ -48,7 +41,7 @@ export async function uploadImages(files: File[]): Promise<string[]> {
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string }
+    const error = (await response.json().catch(() => ({ error: 'Unknown error' }))) as { error?: string }
     throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
   }
 
@@ -68,7 +61,7 @@ export async function analyzeApi(imageUrls: string[]): Promise<AnalysisResult> {
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string }
+    const error = (await response.json().catch(() => ({ error: 'Unknown error' }))) as { error?: string }
     throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
   }
 
@@ -88,7 +81,7 @@ export async function priceApi(analysis: AnalysisResult, moveInfo: MoveInfo): Pr
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string }
+    const error = (await response.json().catch(() => ({ error: 'Unknown error' }))) as { error?: string }
     throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
   }
 
@@ -99,10 +92,7 @@ export async function priceApi(analysis: AnalysisResult, moveInfo: MoveInfo): Pr
  * Full estimate flow: upload → analyze → price
  * This is a convenience function that chains the three steps.
  */
-export async function getEstimate(
-  files: File[],
-  moveInfo: MoveInfo
-): Promise<EstimateResult> {
+export async function getEstimate(files: File[], moveInfo: MoveInfo): Promise<EstimateResult> {
   // Step 1: Upload images
   console.log('getEstimate: Step 1 - Uploading', files.length, 'images...')
   const imageUrls = await uploadImages(files)

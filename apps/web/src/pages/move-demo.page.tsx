@@ -1,9 +1,5 @@
 import { useState, useCallback } from 'react'
-import type {
-  ChatMessage,
-  DetectedItem,
-  EstimateResult,
-} from '@/data'
+import type { ChatMessage, DetectedItem, EstimateResult } from '@/data'
 import { IntroStep } from '@/components/move-demo/IntroStep'
 import { ChatStep } from '@/components/move-demo/ChatStep'
 import { UploadStep } from '@/components/move-demo/UploadStep'
@@ -14,39 +10,38 @@ import { ConfirmStep } from '@/components/move-demo/ConfirmStep'
 import { PriceStep } from '@/components/move-demo/PriceStep'
 import { ScheduleStep } from '@/components/move-demo/ScheduleStep'
 
-import { PageSeo } from "@/components/seo";
-import { CONFIG } from "@/config";
+import { PageSeo } from '@/components/seo'
+import { CONFIG } from '@/config'
 
-export type Step =
-  | 'intro'
-  | 'chat'
-  | 'upload'
-  | 'processing'
-  | 'items'
-  | 'edit'
-  | 'confirm'
-  | 'price'
-  | 'schedule'
+export type Step = 'intro' | 'chat' | 'upload' | 'processing' | 'items' | 'edit' | 'confirm' | 'price' | 'schedule'
 
 const FLOW: Step[] = ['intro', 'chat', 'upload', 'processing', 'items', 'edit', 'confirm', 'price', 'schedule']
 
 const PROGRESS_STEPS = [
-  { key: 'chat',     label: 'Your move' },
-  { key: 'photos',   label: 'Photos' },
-  { key: 'review',   label: 'Review' },
+  { key: 'chat', label: 'Your move' },
+  { key: 'photos', label: 'Photos' },
+  { key: 'review', label: 'Review' },
   { key: 'estimate', label: 'Estimate' },
   { key: 'schedule', label: 'Schedule' },
 ] as const
 
 function getProgressIndex(step: Step): number {
   switch (step) {
-    case 'chat':                   return 0
-    case 'upload':                 return 1
-    case 'items': case 'edit':
-    case 'confirm': case 'processing': return 2
-    case 'price':                  return 3
-    case 'schedule':               return 4
-    default:                       return -1
+    case 'chat':
+      return 0
+    case 'upload':
+      return 1
+    case 'items':
+    case 'edit':
+    case 'confirm':
+    case 'processing':
+      return 2
+    case 'price':
+      return 3
+    case 'schedule':
+      return 4
+    default:
+      return -1
   }
 }
 
@@ -72,25 +67,22 @@ export default function MoveDemoPage(): JSX.Element {
     setCurrentStep('items')
   }, [])
 
-  const handleItemsUpdated = useCallback((items: DetectedItem[]) => {
-    setDetectedItems(items)
-    if (estimateResult) {
-      setEstimateResult({ ...estimateResult, items })
-    }
-  }, [estimateResult])
+  const handleItemsUpdated = useCallback(
+    (items: DetectedItem[]) => {
+      setDetectedItems(items)
+      if (estimateResult) {
+        setEstimateResult({ ...estimateResult, items })
+      }
+    },
+    [estimateResult],
+  )
 
   const renderStep = () => {
     switch (currentStep) {
       case 'intro':
         return <IntroStep onNext={handleNextStep} />
       case 'chat':
-        return (
-          <ChatStep
-            messages={messages}
-            onMessagesChange={setMessages}
-            onNext={handleNextStep}
-          />
-        )
+        return <ChatStep messages={messages} onMessagesChange={setMessages} onNext={handleNextStep} />
       case 'upload':
         return (
           <UploadStep
@@ -112,26 +104,12 @@ export default function MoveDemoPage(): JSX.Element {
         )
       case 'edit':
         return (
-          <EditStep
-            items={detectedItems}
-            onItemsChange={handleItemsUpdated}
-            onNext={() => setCurrentStep('confirm')}
-          />
+          <EditStep items={detectedItems} onItemsChange={handleItemsUpdated} onNext={() => setCurrentStep('confirm')} />
         )
       case 'confirm':
-        return (
-          <ConfirmStep
-            items={detectedItems}
-            onNext={() => setCurrentStep('price')}
-          />
-        )
+        return <ConfirmStep items={detectedItems} onNext={() => setCurrentStep('price')} />
       case 'price':
-        return (
-          <PriceStep
-            estimateResult={estimateResult}
-            onNext={handleNextStep}
-          />
-        )
+        return <PriceStep estimateResult={estimateResult} onNext={handleNextStep} />
       case 'schedule':
         return <ScheduleStep />
       default:
@@ -152,34 +130,34 @@ export default function MoveDemoPage(): JSX.Element {
         index={true}
         follow={true}
         jsonLd={{
-          "@type": "HowTo",
-          name: "Get an AI-Powered Moving Estimate",
+          '@type': 'HowTo',
+          name: 'Get an AI-Powered Moving Estimate',
           description:
-            "How to get an instant itemized moving estimate using thriv.es movers: chat about your move, photograph your items, and receive a full price breakdown.",
+            'How to get an instant itemized moving estimate using thriv.es movers: chat about your move, photograph your items, and receive a full price breakdown.',
           step: [
             {
-              "@type": "HowToStep",
-              name: "Tell us about your move",
-              text: "Chat with our assistant about distance, floors, elevator access, and other details about your move.",
+              '@type': 'HowToStep',
+              name: 'Tell us about your move',
+              text: 'Chat with our assistant about distance, floors, elevator access, and other details about your move.',
             },
             {
-              "@type": "HowToStep",
-              name: "Photograph your items",
-              text: "Upload 1–5 photos of your belongings. Any room, any angle — our AI handles the rest.",
+              '@type': 'HowToStep',
+              name: 'Photograph your items',
+              text: 'Upload 1–5 photos of your belongings. Any room, any angle — our AI handles the rest.',
             },
             {
-              "@type": "HowToStep",
-              name: "Review itemized inventory",
-              text: "Review and edit the AI-generated inventory of detected items.",
+              '@type': 'HowToStep',
+              name: 'Review itemized inventory',
+              text: 'Review and edit the AI-generated inventory of detected items.',
             },
             {
-              "@type": "HowToStep",
-              name: "Get your estimate",
-              text: "Receive a full itemized breakdown with a confidence rating and total moving cost.",
+              '@type': 'HowToStep',
+              name: 'Get your estimate',
+              text: 'Receive a full itemized breakdown with a confidence rating and total moving cost.',
             },
             {
-              "@type": "HowToStep",
-              name: "Schedule your move",
+              '@type': 'HowToStep',
+              name: 'Schedule your move',
               text: "Pick a date and schedule your move when you're ready.",
             },
           ],
@@ -192,37 +170,29 @@ export default function MoveDemoPage(): JSX.Element {
           <nav aria-label="Estimate progress">
             <ol className="flex items-center gap-0">
               {PROGRESS_STEPS.map((s, i) => {
-                const isDone = i < progressIndex;
-                const isActive = i === progressIndex;
-                const isUpcoming = i > progressIndex;
+                const isDone = i < progressIndex
+                const isActive = i === progressIndex
+                const isUpcoming = i > progressIndex
                 return (
-                  <li
-                    key={s.key}
-                    className="flex items-center flex-1 last:flex-none"
-                  >
+                  <li key={s.key} className="flex items-center flex-1 last:flex-none">
                     <div className="flex flex-col items-center gap-1.5">
                       <span
                         className="flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-semibold transition-all duration-200"
                         style={{
                           backgroundColor: isDone
-                            ? "var(--thrive)"
+                            ? 'var(--thrive)'
                             : isActive
-                              ? "hsl(var(--foreground))"
-                              : "hsl(var(--muted))",
-                          color:
-                            isDone || isActive
-                              ? "#fff"
-                              : "hsl(var(--muted-foreground))",
+                              ? 'hsl(var(--foreground))'
+                              : 'hsl(var(--muted))',
+                          color: isDone || isActive ? '#fff' : 'hsl(var(--muted-foreground))',
                         }}
                       >
-                        {isDone ? "✓" : i + 1}
+                        {isDone ? '✓' : i + 1}
                       </span>
                       <span
                         className="text-[10px] font-semibold tracking-wide uppercase whitespace-nowrap"
                         style={{
-                          color: isUpcoming
-                            ? "hsl(var(--muted-foreground))"
-                            : "hsl(var(--foreground))",
+                          color: isUpcoming ? 'hsl(var(--muted-foreground))' : 'hsl(var(--foreground))',
                         }}
                       >
                         {s.label}
@@ -232,39 +202,30 @@ export default function MoveDemoPage(): JSX.Element {
                       <div
                         className="h-px flex-1 mx-2 mb-4"
                         style={{
-                          backgroundColor:
-                            i < progressIndex
-                              ? "var(--thrive)"
-                              : "hsl(var(--border))",
+                          backgroundColor: i < progressIndex ? 'var(--thrive)' : 'hsl(var(--border))',
                         }}
                       />
                     )}
                   </li>
-                );
+                )
               })}
             </ol>
           </nav>
         )}
 
         {/* Step content */}
-        <div
-          className="card-thrive p-6 md:p-8"
-          style={{ fontFamily: "Inter, sans-serif" }}
-        >
+        <div className="card-thrive p-6 md:p-8" style={{ fontFamily: 'Inter, sans-serif' }}>
           {renderStep()}
         </div>
 
         {/* Wordmark footnote */}
         <p className="text-center text-sm text-muted-foreground">
-          <span
-            className="italic font-normal"
-            style={{ fontFamily: DISPLAY_FONT }}
-          >
-            thriv<span style={{ color: "var(--thrive)" }}>.</span>es
-          </span>{" "}
+          <span className="italic font-normal" style={{ fontFamily: DISPLAY_FONT }}>
+            thriv<span style={{ color: 'var(--thrive)' }}>.</span>es
+          </span>{' '}
           movers demo
         </p>
       </div>
     </div>
-  );
+  )
 }
