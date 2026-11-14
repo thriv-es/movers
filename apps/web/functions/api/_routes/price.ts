@@ -1,11 +1,11 @@
 import { Hono } from 'hono'
-import { generateText } from 'ai'
 import type { Bindings } from '../_lib/types'
 import type { PriceRequest, PriceResult, Price } from '../../../src/data'
 import { zPriceRequest, zPriceResult } from '../../../src/data'
 import { calculatePrice } from '../_lib/pricing'
 import { extractAndRepairJSON } from '../_lib/json-utils'
-import { createWorkersAI, TEXT_MODEL } from '../_lib/ai'
+import { runText } from '../_lib/ai-client'
+import { mockPriceReply } from '../_lib/mock'
 import { PRICE_EVALUATION_PROMPT, substituteVars } from '../_lib/prompts'
 
 const price = new Hono<{ Bindings: Bindings }>()
@@ -31,8 +31,8 @@ price.post('/', async (c) => {
       price_per_box: pricePerBox.toString(),
     })
 
-    const ai = createWorkersAI(c.env.CF_AIG_TOKEN)
-    const { text } = await generateText({ model: ai(TEXT_MODEL), prompt })
+    const { text, mode } = await runText(c.env, prompt, () => mockPriceReply(validatedRequest, pricePerBox))
+    c.header('x-movers-ai-mode', mode)
 
     let priceData: {
       total: number

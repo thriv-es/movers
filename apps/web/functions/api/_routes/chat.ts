@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
-import { generateText } from 'ai'
 import type { Bindings } from '../_lib/types'
 import type { ChatApiResponse } from '../../../src/data'
 import { zChatMessage } from '../../../src/data'
-import { createWorkersAI, TEXT_MODEL } from '../_lib/ai'
+import { runText } from '../_lib/ai-client'
+import { mockChatReply } from '../_lib/mock'
 import { SYSTEM_PROMPT, substituteVars } from '../_lib/prompts'
 
 const chat = new Hono<{ Bindings: Bindings }>()
@@ -25,8 +25,8 @@ chat.post('/', async (c) => {
 
     const prompt = substituteVars(SYSTEM_PROMPT, { conversation })
 
-    const ai = createWorkersAI(c.env.CF_AIG_TOKEN)
-    const { text } = await generateText({ model: ai(TEXT_MODEL), prompt })
+    const { text, mode } = await runText(c.env, prompt, () => mockChatReply(validatedMessages))
+    c.header('x-movers-ai-mode', mode)
 
     const jsonBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/)
 

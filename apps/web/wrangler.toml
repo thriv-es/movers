@@ -36,6 +36,16 @@ PRICE_PER_BOX = "50"
 binding = "MOVERS_BUCKET"
 bucket_name = "movers"
 
+# ---------------------------------------------------------------------------
+# Workers AI - used by the AI routes when CF_AIG_TOKEN is not set (local dev).
+# The binding is always remote: `wrangler pages dev` calls Workers AI on your
+# Cloudflare account through `wrangler login`, and usage is billed to it.
+# See .dev.vars.example for AI_MODE and for choosing the account.
+# Docs: https://developers.cloudflare.com/workers-ai/configuration/bindings/
+# ---------------------------------------------------------------------------
+[ai]
+binding = "AI"
+
 # =============================================================================
 # PREVIEW ENVIRONMENT
 # =============================================================================

@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
-import { generateText } from 'ai'
 import type { Bindings } from '../_lib/types'
 import type { AnalysisResult } from '../../../src/data'
 import { zAnalysisResult } from '../../../src/data'
 import { extractAndRepairJSON } from '../_lib/json-utils'
-import { createWorkersAI, VISION_MODEL } from '../_lib/ai'
+import { type AiImage, runVision } from '../_lib/ai-client'
+import { mockAnalysisReply } from '../_lib/mock'
 import { IMAGE_ANALYSIS_PROMPT } from '../_lib/prompts'
 
 const analyze = new Hono<{ Bindings: Bindings }>()
@@ -21,8 +21,7 @@ analyze.post('/', async (c) => {
       return c.json({ error: 'Maximum 10 images allowed' }, 400)
     }
 
-    type ImagePart = { data: Uint8Array; mimeType: string }
-    const images: ImagePart[] = []
+    const images: AiImage[] = []
 
     for (const url of imageUrls) {
       try {
@@ -59,23 +58,8 @@ analyze.post('/', async (c) => {
       return c.json({ error: 'No valid images could be fetched' }, 400)
     }
 
-    const ai = createWorkersAI(c.env.CF_AIG_TOKEN)
-    const { text } = await generateText({
-      model: ai(VISION_MODEL),
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: IMAGE_ANALYSIS_PROMPT },
-            ...images.map((img) => ({
-              type: 'image' as const,
-              image: img.data,
-              mimeType: img.mimeType,
-            })),
-          ],
-        },
-      ],
-    })
+    const { text, mode } = await runVision(c.env, IMAGE_ANALYSIS_PROMPT, images, () => mockAnalysisReply(images.length))
+    c.header('x-movers-ai-mode', mode)
 
     let llmData: {
       items: Array<{ type: string; count: number }>
