@@ -1,4 +1,4 @@
-/* Movers landing page — a printed comic page on kraft cardboard.
+/* Movers landing page: a printed comic page on kraft cardboard.
  *
  * A sibling of the Friday landing page: inked panels, caption boxes, halftone
  * dots and hard offset shadows, in the Movers palette. The one device that is
@@ -39,7 +39,7 @@
   font-size: 1rem;
   line-height: 1.5;
   background-color: var(--lp-kraft);
-  /* Halftone dots — the printed-comic texture. */
+  /* Halftone dots: the printed-comic texture. */
   background-image: radial-gradient(circle at center, rgba(18, 18, 26, 0.14) 1.6px, transparent 1.7px);
   background-size: 15px 15px;
   /* Rotated panels and pasted-on props may poke past the edge. `clip` hides
@@ -297,7 +297,7 @@
   gap: 1.15rem;
   min-width: 0;
   /* The title sizes itself against this column, so it can never be wider
-     than the space it has — whatever the webfont does (or fails to do). */
+     than the space it has, whatever the webfont does (or fails to do). */
   container-type: inline-size;
 }
 
@@ -397,7 +397,7 @@
   color: var(--lp-ink-soft);
 }
 
-/* Hero artwork — two pasted-on comic panels plus props. The mover gets the
+/* Hero artwork: two pasted-on comic panels plus props. The mover gets the
    wide panel on top; the customer's panel overlaps its lower-left corner. */
 .lp-hero__art {
   position: relative;

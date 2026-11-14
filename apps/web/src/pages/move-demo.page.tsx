@@ -124,8 +124,8 @@ export default function MoveDemoPage(): JSX.Element {
   return (
     <div className="min-h-[calc(100vh-8rem)] flex flex-col px-4 py-12 md:py-16">
       <PageSeo
-        title="Get Your Free Moving Estimate — thriv.es movers"
-        description="Start with a quick chat about your move, upload a few photos of your belongings, and get an AI-powered itemized estimate with full cost breakdown in minutes — no in-person visit needed."
+        title="Get Your Free Moving Estimate | thriv.es movers"
+        description="Start with a quick chat about your move, upload a few photos of your belongings, and get an AI-powered itemized estimate with full cost breakdown in minutes. No in-person visit needed."
         canonical={`${CONFIG.canonical}/estimate`}
         ogType="website"
         index={true}
@@ -144,7 +144,7 @@ export default function MoveDemoPage(): JSX.Element {
             {
               '@type': 'HowToStep',
               name: 'Photograph your items',
-              text: 'Upload 1–5 photos of your belongings. Any room, any angle — our AI handles the rest.',
+              text: 'Upload 1–5 photos of your belongings. Any room, any angle. Our AI handles the rest.',
             },
             {
               '@type': 'HowToStep',

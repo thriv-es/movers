@@ -2,7 +2,7 @@ import { CONFIG, IS_CLIENT } from '@/config'
 import { Helmet } from 'react-helmet-async'
 
 /* ──────────────────────────────────────────────────────────────────────────────
-   PageSEO — thin wrapper around react-helmet-async with defaults from CONFIG
+   PageSEO: thin wrapper around react-helmet-async with defaults from CONFIG
    Per-page overrides through props; all meta defaults are opinionated for
    SEO + AEO (Answer Engine Optimization) so AI agents and crawlers can
    extract structured information.

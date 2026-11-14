@@ -12,7 +12,7 @@ export function DemoBadge(): JSX.Element | null {
       data-testid="demo-badge"
       className="mx-auto mb-6 w-fit rounded-full border border-amber-400 bg-amber-50 px-4 py-1.5 text-sm font-medium text-amber-900"
     >
-      Demo data — AI is mocked locally
+      Demo data: AI is mocked locally
     </div>
   )
 }

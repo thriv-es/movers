@@ -11,15 +11,15 @@ export default function IndexPage(): JSX.Element {
   return (
     <div className="flex flex-col">
       <PageSeo
-        title="thriv.es movers — AI-Powered Moving Estimates in Minutes"
-        description="Get AI-powered moving estimates in minutes. Snap a few photos of your belongings and receive an instant, transparent, itemized price breakdown — no in-person visit needed."
+        title="thriv.es movers | AI-Powered Moving Estimates in Minutes"
+        description="Get AI-powered moving estimates in minutes. Snap a few photos of your belongings and receive an instant, transparent, itemized price breakdown. No in-person visit needed."
         canonical={CONFIG.canonical}
         jsonLd={{
           "@type": "WebApplication",
           name: "thriv.es movers",
           url: CONFIG.canonical,
           description:
-            "AI-powered moving estimates. Snap photos of your items and get an instant, itemized moving price — no in-person visit required.",
+            "AI-powered moving estimates. Snap photos of your items and get an instant, itemized moving price. No in-person visit required.",
           applicationCategory: "BusinessApplication",
           operatingSystem: "Web",
           offers: {
