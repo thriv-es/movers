@@ -59,61 +59,67 @@ export function useLandingMotion(root: RefObject<HTMLElement>) {
       // later, matchMedia reverts every tween created inside it.
       const mm = gsap.matchMedia(el)
 
-      mm.add(MOTION_OK, (context) => {
-        const q = <T extends Element>(selector: string) => Array.from(el.querySelectorAll<T>(selector))
+      try {
+        mm.add(MOTION_OK, (context) => {
+          const q = <T extends Element>(selector: string) => Array.from(el.querySelectorAll<T>(selector))
 
-        const timeline = gsap.timeline({ defaults: { ease: 'back.out(1.6)', clearProps: RELEASE } })
+          const timeline = gsap.timeline({ defaults: { ease: 'back.out(1.6)', clearProps: RELEASE } })
 
-        timeline
-          .from(q('[data-lp-nav]'), {
-            yPercent: -110,
-            autoAlpha: 0,
-            duration: 0.5,
-            ease: 'power3.out',
-          })
-          .from(q('[data-lp-hero-panel]'), { y: 52, rotation: 1.8, autoAlpha: 0, duration: 0.8 }, 0.08)
-          .from(
-            q('[data-lp-figure]'),
-            { y: 70, rotation: -4, scale: 0.93, autoAlpha: 0, duration: 0.72, stagger: 0.12 },
-            0.22,
-          )
-          .from(
-            q('[data-lp-letter]'),
-            {
-              y: -52,
-              rotation: -9,
+          timeline
+            .from(q('[data-lp-nav]'), {
+              yPercent: -110,
               autoAlpha: 0,
-              duration: 0.44,
-              stagger: 0.05,
-              ease: 'back.out(2.6)',
-            },
-            0.34,
-          )
-          .from(q('[data-lp-copy]'), { y: 22, autoAlpha: 0, duration: 0.52, stagger: 0.08, ease: 'power2.out' }, 0.3)
-          .from(
-            q('[data-lp-burst]'),
-            // The burst keeps its transform: the ambient tween below takes over from it.
-            { scale: 0.25, autoAlpha: 0, duration: 0.62, ease: 'back.out(3)', clearProps: 'opacity,visibility' },
-            0.78,
-          )
-          .from(
-            q('[data-lp-sticker]'),
-            { scale: 0.45, rotation: -28, autoAlpha: 0, duration: 0.58, ease: 'back.out(2.8)' },
-            0.9,
-          )
+              duration: 0.5,
+              ease: 'power3.out',
+            })
+            .from(q('[data-lp-hero-panel]'), { y: 52, rotation: 1.8, autoAlpha: 0, duration: 0.8 }, 0.08)
+            .from(
+              q('[data-lp-figure]'),
+              { y: 70, rotation: -4, scale: 0.93, autoAlpha: 0, duration: 0.72, stagger: 0.12 },
+              0.22,
+            )
+            .from(
+              q('[data-lp-letter]'),
+              {
+                y: -52,
+                rotation: -9,
+                autoAlpha: 0,
+                duration: 0.44,
+                stagger: 0.05,
+                ease: 'back.out(2.6)',
+              },
+              0.34,
+            )
+            .from(q('[data-lp-copy]'), { y: 22, autoAlpha: 0, duration: 0.52, stagger: 0.08, ease: 'power2.out' }, 0.3)
+            .from(
+              q('[data-lp-burst]'),
+              // The burst keeps its transform: the ambient tween below takes over from it.
+              { scale: 0.25, autoAlpha: 0, duration: 0.62, ease: 'back.out(3)', clearProps: 'opacity,visibility' },
+              0.78,
+            )
+            .from(
+              q('[data-lp-sticker]'),
+              { scale: 0.45, rotation: -28, autoAlpha: 0, duration: 0.58, ease: 'back.out(2.8)' },
+              0.9,
+            )
 
-        // Ambient: the burst keeps breathing so the hero is never static.
-        gsap.to(q('[data-lp-burst]'), {
-          scale: 1.07,
-          duration: 1.7,
-          repeat: -1,
-          yoyo: true,
-          ease: 'sine.inOut',
-          delay: 1.6,
+          // Ambient: the burst keeps breathing so the hero is never static.
+          gsap.to(q('[data-lp-burst]'), {
+            scale: 1.07,
+            duration: 1.7,
+            repeat: -1,
+            yoyo: true,
+            ease: 'sine.inOut',
+            delay: 1.6,
+          })
+
+          return revealOnScroll(q<HTMLElement>('[data-lp-reveal]'), context)
         })
-
-        return revealOnScroll(q<HTMLElement>('[data-lp-reveal]'), context)
-      })
+      } catch (error) {
+        // Motion is decoration: if it throws, undo every tween so no element stays hidden, and keep the page.
+        console.error('[landing] motion disabled:', error)
+        mm.revert()
+      }
 
       // Also reverted with the useGSAP context on unmount; explicit so the dependency is plain.
       return () => mm.revert()

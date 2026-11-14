@@ -177,8 +177,8 @@ export function LandingPage() {
                 data-lp-sticker
                 src={boxSticker}
                 alt=""
-                width={700}
-                height={700}
+                width={360}
+                height={360}
                 decoding="async"
               />
             </div>
