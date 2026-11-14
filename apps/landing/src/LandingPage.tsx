@@ -6,6 +6,10 @@
  * Every call to action leads to the estimator at APP_URL.
  */
 
+import { useRef } from 'react'
+
+import './landing.css'
+
 import boxSticker from './assets/landing/box-sticker.png'
 import heroCustomer from './assets/landing/hero-customer.jpg'
 import heroMover from './assets/landing/hero-mover.jpg'
@@ -13,6 +17,7 @@ import streetWide from './assets/landing/street-wide.jpg'
 import { ComicBurst } from './components/ComicBurst'
 import { MoversMark } from './components/MoversMark'
 import { APP_URL, GITHUB_URL } from './config'
+import { useLandingMotion } from './useLandingMotion'
 
 const FEATURES = [
   {
@@ -68,8 +73,12 @@ const STACK = [
 ]
 
 export function LandingPage() {
+  const root = useRef<HTMLDivElement>(null)
+
+  useLandingMotion(root)
+
   return (
-    <div className="lp">
+    <div className="lp" ref={root}>
       <header className="lp-nav" data-lp-nav>
         <div className="lp-nav__brand">
           <MoversMark size={30} title="Movers" />
