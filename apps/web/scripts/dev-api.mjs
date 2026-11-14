@@ -9,7 +9,8 @@
  * and labels every response as demo data.
  *
  * Binding is skipped when AI_MODE=mock, or when a real CF_AIG_TOKEN is configured and AI_MODE is not `binding`.
- * Settings are read from the process environment first, then from `.dev.vars`.
+ * `AI_MODE` is read from the shell first, then `.dev.vars` (the shell value is passed to the worker). `CF_AIG_TOKEN` is read
+ * from `.dev.vars` only, because that is the only place the worker can see it.
  *
  * Plain Node 22+, no dependencies.
  */
@@ -41,7 +42,7 @@ const devVars = readDevVars()
 const setting = (name) => (process.env[name] ?? devVars[name] ?? '').trim()
 
 const aiMode = setting('AI_MODE').toLowerCase()
-const token = setting('CF_AIG_TOKEN')
+const token = (devVars.CF_AIG_TOKEN ?? '').trim()
 const hasRealToken = token !== '' && token !== PLACEHOLDER_TOKEN
 
 const wantsBinding = aiMode === 'binding' || (aiMode !== 'mock' && aiMode !== 'gateway' && !hasRealToken)
@@ -84,7 +85,7 @@ function start(withBinding) {
     const earlyFailure = withBinding && !ready && code !== 0 && Date.now() - startedAt < STARTUP_WINDOW_MS
     if (earlyFailure) {
       console.warn(
-        '\n[dev-api] Wrangler could not start with the Workers AI binding (not logged in, offline, or no account chosen).\n' +
+        '\n[dev-api] Wrangler exited early while starting with the Workers AI binding (usually: not logged in, offline, or no account chosen; check the output above for the real reason).\n' +
           '[dev-api] Restarting without it: AI answers will be the offline mock, shown in the app as "Demo data".\n' +
           '[dev-api] To use real AI: run `wrangler login` (set CLOUDFLARE_ACCOUNT_ID if you have several accounts), or set CF_AIG_TOKEN in .dev.vars.\n',
       )

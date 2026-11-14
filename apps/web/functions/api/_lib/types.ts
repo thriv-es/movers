@@ -1,6 +1,6 @@
 export type Bindings = {
   MOVERS_BUCKET: R2Bucket
-  ENV: 'development' | 'production'
+  ENV: 'development' | 'preview' | 'production'
   CF_AIG_TOKEN: string
   PRICE_PER_BOX: string
   /** Workers AI binding (`[ai]` in wrangler.toml). In local dev it calls Workers AI through `wrangler login`. */

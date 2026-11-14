@@ -3,7 +3,7 @@
  *
  * - gateway: Cloudflare AI Gateway with `CF_AIG_TOKEN` (the production path)
  * - binding: Workers AI through the `AI` binding (local dev uses the `wrangler login` session)
- * - mock: deterministic offline answers, always labelled as demo data
+ * - mock: deterministic offline answers, always labelled as demo data; local dev only (`ENV === 'development'`)
  */
 export type AiMode = 'gateway' | 'binding' | 'mock'
 
@@ -30,15 +30,22 @@ function isTokenSet(token: string | undefined): boolean {
   return !!value && value !== PLACEHOLDER_TOKEN
 }
 
+/**
+ * The offline mock is demo data, so it fails closed: it is reachable only when `ENV` is explicitly `development`
+ * (`wrangler.toml` sets that for local dev). A preview or production deploy, or one where `ENV` is missing, never
+ * serves mocked quotes: a failed call is an error, and a forced `AI_MODE=mock` is ignored.
+ */
 export function resolveAiMode(env: AiEnv): AiModeDecision {
+  const isLocalDev = env.ENV === 'development'
+
   const requested = env.AI_MODE?.trim().toLowerCase()
   const forced = FORCED_MODES.find((mode) => mode === requested)
-  if (forced) return { mode: forced, allowMockFallback: false }
+  if (forced === 'gateway' || forced === 'binding') return { mode: forced, allowMockFallback: false }
+  if (forced === 'mock' && isLocalDev) return { mode: 'mock', allowMockFallback: false }
 
-  // auto: the mock is never a fallback in production
-  const isProduction = env.ENV === 'production'
-  if (isTokenSet(env.CF_AIG_TOKEN)) return { mode: 'gateway', allowMockFallback: !isProduction }
-  if (env.AI) return { mode: 'binding', allowMockFallback: !isProduction }
-  if (isProduction) return { mode: 'gateway', allowMockFallback: false }
-  return { mode: 'mock', allowMockFallback: false }
+  // auto (also: a forced mock outside local dev)
+  if (isTokenSet(env.CF_AIG_TOKEN)) return { mode: 'gateway', allowMockFallback: isLocalDev }
+  if (env.AI) return { mode: 'binding', allowMockFallback: isLocalDev }
+  if (isLocalDev) return { mode: 'mock', allowMockFallback: false }
+  return { mode: 'gateway', allowMockFallback: false }
 }
