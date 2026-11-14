@@ -1,0 +1,40 @@
+{
+  "name": "movers",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Open source demo: snap photos of your stuff, get a moving estimate. Monorepo: estimator app + landing page.",
+  "homepage": "https://movers.thriv.es",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thriv-es/movers"
+  },
+  "packageManager": "pnpm@10.18.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n web,api,landing -c green,magenta,yellow \"pnpm --filter @movers/web dev:vite\" \"pnpm --filter @movers/web dev:api\" \"pnpm --filter @movers/landing dev\"",
+    "dev:web": "pnpm --filter @movers/web dev",
+    "dev:landing": "pnpm --filter @movers/landing dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "smoke": "pnpm --filter @movers/web smoke"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@biomejs/biome",
+      "esbuild",
+      "workerd"
+    ]
+  }
+}

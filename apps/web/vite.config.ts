@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tsconfigPaths from 'vite-tsconfig-paths'
@@ -33,7 +34,8 @@ export default defineConfig(({ mode }) => {
       postcss: {
         plugins: [
           tailwindcssNesting(),
-          tailwindcss({ config: new URL('./tailwind.config.ts', import.meta.url).pathname }),
+          // fileURLToPath (not URL.pathname) so the config resolves when the repo path contains spaces
+          tailwindcss({ config: fileURLToPath(new URL('./tailwind.config.ts', import.meta.url)) }),
           postCssOklabPolyfill({ preserve: true }),
           autoprefixer(),
           cssDiscardComments({ removeAll: true }),
@@ -42,11 +44,16 @@ export default defineConfig(({ mode }) => {
     },
 
     // configure development server
+    // Fixed, strict ports: 4611 = this Vite server, 4610 = wrangler pages dev (the full-stack entry point).
+    // strictPort makes a collision fail loudly instead of silently moving and breaking the wrangler proxy.
     server: {
       open: false,
+      host: '127.0.0.1',
+      port: 4611,
+      strictPort: true,
       proxy: {
         '/api': {
-          target: 'http://localhost:8787',
+          target: 'http://127.0.0.1:4610',
           changeOrigin: true,
           secure: false,
         },
