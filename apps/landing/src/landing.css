@@ -1,0 +1,1041 @@
+/* Movers landing page — a printed comic page on kraft cardboard.
+ *
+ * A sibling of the Friday landing page: inked panels, caption boxes, halftone
+ * dots and hard offset shadows, in the Movers palette. The one device that is
+ * Movers' own is packing tape: the title card and the street panel are taped
+ * to the page.
+ *
+ * Every rule is namespaced under `.lp` / `.lp-*`.
+ */
+
+.lp {
+  /* Palette. The six named tokens are fixed by the design spec. */
+  --lp-ink: #12121a;
+  --lp-kraft: #d8a866;
+  --lp-paper: #fff6e0;
+  --lp-tape: #e4572e;
+  --lp-green: #1f8b5d;
+  --lp-sky: #4fa8de;
+  /* Two shades of kraft: the hero panel sits lighter, the footer darker. */
+  --lp-kraft-lt: #e8c48f;
+  --lp-kraft-dk: #c4914c;
+  /* Small text on thrive green: ink reaches 4.36:1, pure black 4.9:1 (AA). */
+  --lp-on-green: #000;
+  /* Body copy is ink at 82%: 6.2:1 on kraft, 10.3:1 on paper. */
+  --lp-ink-soft: rgba(18, 18, 26, 0.82);
+
+  --lp-border: 3px solid var(--lp-ink);
+  --lp-shadow: 6px 6px 0 var(--lp-ink);
+  --lp-shadow-sm: 4px 4px 0 var(--lp-ink);
+  --lp-shadow-lg: 10px 10px 0 var(--lp-ink);
+
+  --lp-display: "Bowlby One", "Fredoka Variable", "Inter Variable", system-ui, sans-serif;
+  --lp-body: "Fredoka Variable", "Inter Variable", system-ui, sans-serif;
+  --lp-caption: "Inter Variable", system-ui, sans-serif;
+
+  min-height: 100vh;
+  color: var(--lp-ink);
+  font-family: var(--lp-body);
+  font-size: 1rem;
+  line-height: 1.5;
+  background-color: var(--lp-kraft);
+  /* Halftone dots — the printed-comic texture. */
+  background-image: radial-gradient(circle at center, rgba(18, 18, 26, 0.14) 1.6px, transparent 1.7px);
+  background-size: 15px 15px;
+  /* Rotated panels and pasted-on props may poke past the edge. `clip` hides
+     them without turning the page into a scroll container, which would stop
+     the masthead from sticking. `hidden` is the fallback for old browsers. */
+  overflow-x: hidden;
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.lp *,
+.lp *::before,
+.lp *::after {
+  box-sizing: border-box;
+}
+
+.lp a {
+  text-decoration: none;
+}
+
+.lp img {
+  max-width: 100%;
+}
+
+/* A two-tone ring: ink outside, paper inside. One of the two always contrasts,
+   whether the control sits on kraft, on paper or on the ink panel. */
+.lp :focus-visible {
+  outline: 3px solid var(--lp-ink);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--lp-paper);
+}
+
+.lp ::selection {
+  background: var(--lp-ink);
+  color: var(--lp-kraft);
+}
+
+/* In-page links land below the sticky masthead. */
+.lp [id] {
+  scroll-margin-top: 5.5rem;
+}
+
+/* ───────────────────────── brand mark ───────────────────────── */
+
+.lp-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--lp-ink);
+}
+
+.lp-mark__box {
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+  filter: drop-shadow(2px 2px 0 var(--lp-ink));
+}
+
+.lp-mark__word {
+  font-family: var(--lp-display);
+  line-height: 1;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.lp-mark--compact .lp-mark__box {
+  filter: none;
+}
+
+/* ───────────────────────── masthead ───────────────────────── */
+
+.lp-nav {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem clamp(1rem, 4vw, 3rem);
+  background: var(--lp-kraft);
+  border-bottom: var(--lp-border);
+  box-shadow: 0 4px 0 var(--lp-ink);
+}
+
+.lp-nav__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-shrink: 0;
+}
+
+.lp-nav__links {
+  display: none;
+  align-items: center;
+  gap: 1.5rem;
+  font-family: var(--lp-caption);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.lp-nav__links a {
+  color: var(--lp-ink);
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
+}
+
+.lp-nav__links a:hover {
+  border-bottom-color: var(--lp-ink);
+}
+
+.lp-nav__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+/* ───────────────────────── buttons ───────────────────────── */
+
+.lp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.15rem;
+  font-family: var(--lp-caption);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--lp-ink);
+  background: var(--lp-paper);
+  border: var(--lp-border);
+  border-radius: 0;
+  box-shadow: var(--lp-shadow-sm);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.lp-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--lp-ink);
+}
+
+.lp-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--lp-ink);
+}
+
+/* Keep the paper ring and the hard shadow together while focused. */
+.lp-btn:focus-visible {
+  box-shadow: 0 0 0 3px var(--lp-paper), 7px 7px 0 var(--lp-ink);
+}
+
+.lp-btn--primary {
+  background: var(--lp-ink);
+  color: var(--lp-kraft);
+}
+
+.lp-btn--primary:hover {
+  background: var(--lp-tape);
+  color: var(--lp-ink);
+}
+
+.lp-btn--ghost {
+  background: transparent;
+}
+
+.lp-btn--ghost:hover {
+  background: var(--lp-paper);
+}
+
+.lp-btn--lg {
+  padding: 0.9rem 1.7rem;
+  font-size: 0.88rem;
+  box-shadow: var(--lp-shadow);
+}
+
+.lp-btn--lg:hover {
+  box-shadow: 8px 8px 0 var(--lp-ink);
+}
+
+/* ───────────────────────── panels ───────────────────────── */
+
+.lp-panel {
+  position: relative;
+  background: var(--lp-paper);
+  border: var(--lp-border);
+  box-shadow: var(--lp-shadow);
+}
+
+.lp-panel--hero {
+  background: var(--lp-kraft-lt);
+  border-width: 4px;
+  box-shadow: var(--lp-shadow-lg);
+}
+
+/* A comic caption box: cream card, ink rule, hard offset shadow. */
+.lp-caption {
+  display: inline-block;
+  margin: 0;
+  padding: 0.42rem 0.7rem;
+  font-family: var(--lp-caption);
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1.45;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lp-ink);
+  background: var(--lp-paper);
+  border: var(--lp-border);
+  box-shadow: var(--lp-shadow-sm);
+}
+
+/* Caption text stays dark on every accent: paper on tape is only 3.4:1. */
+.lp-caption--tape {
+  background: var(--lp-tape);
+  color: var(--lp-ink);
+}
+
+.lp-caption--green {
+  background: var(--lp-green);
+  color: var(--lp-on-green);
+}
+
+.lp-caption--sky {
+  background: var(--lp-sky);
+  color: var(--lp-ink);
+}
+
+/* ───────────────────────── hero ───────────────────────── */
+
+.lp-hero {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: clamp(1.75rem, 4vw, 3.5rem) clamp(1rem, 4vw, 3rem) clamp(2rem, 5vw, 4rem);
+}
+
+.lp-hero__panel {
+  display: grid;
+  gap: clamp(1.75rem, 4vw, 3rem);
+  align-items: center;
+  padding: clamp(1.5rem, 3.5vw, 2.75rem);
+}
+
+.lp-hero__copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.15rem;
+  min-width: 0;
+  /* The title sizes itself against this column, so it can never be wider
+     than the space it has — whatever the webfont does (or fails to do). */
+  container-type: inline-size;
+}
+
+.lp-hero__title {
+  position: relative;
+  display: inline-block;
+  margin: 0.6rem 0 0;
+  padding: 0.35rem 1.1rem 0.5rem;
+  font-family: var(--lp-display);
+  font-weight: 400;
+  /* Never wrap: "MOVERS" split across two lines breaks the title card. */
+  white-space: nowrap;
+  font-size: clamp(2.6rem, 10vw, 6.25rem);
+  /* Then cap it against the column, so it fits even when Bowlby One is
+     unavailable and a wider fallback font takes its place. */
+  font-size: min(clamp(2.6rem, 10vw, 6.25rem), 15.5cqi);
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+  color: var(--lp-ink);
+  background: var(--lp-paper);
+  border: 4px solid var(--lp-ink);
+  box-shadow: 8px 8px 0 var(--lp-tape);
+  transform: rotate(-1.6deg);
+}
+
+/* A strip of packing tape holds the title card to the page. */
+.lp-hero__title::before {
+  content: "";
+  position: absolute;
+  top: -0.85rem;
+  left: 50%;
+  width: clamp(3.5rem, 28%, 6rem);
+  height: 1.4rem;
+  background: var(--lp-tape);
+  border: 2px solid var(--lp-ink);
+  transform: translateX(-50%) rotate(3.5deg);
+}
+
+.lp-hero__letter {
+  display: inline-block;
+}
+
+.lp-hero__lede {
+  margin: 0;
+  font-size: clamp(1.25rem, 2.4vw, 1.65rem);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--lp-ink);
+}
+
+.lp-hero__sub {
+  margin: 0;
+  max-width: 34rem;
+  font-size: 1.02rem;
+  line-height: 1.6;
+  color: var(--lp-ink-soft);
+}
+
+.lp-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.lp-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.75rem;
+  width: 100%;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lp-fact {
+  padding: 0.7rem 0.8rem;
+  background: var(--lp-paper);
+  border: var(--lp-border);
+  box-shadow: var(--lp-shadow-sm);
+}
+
+.lp-fact__term {
+  display: block;
+  margin-bottom: 0.2rem;
+  font-family: var(--lp-caption);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.lp-fact__desc {
+  display: block;
+  font-size: 0.86rem;
+  line-height: 1.35;
+  color: var(--lp-ink-soft);
+}
+
+/* Hero artwork — two pasted-on comic panels plus props. The mover gets the
+   wide panel on top; the customer's panel overlaps its lower-left corner. */
+.lp-hero__art {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding-bottom: 1rem;
+}
+
+.lp-figure {
+  margin: 0;
+  background: var(--lp-paper);
+  border: var(--lp-border);
+  box-shadow: var(--lp-shadow);
+  overflow: hidden;
+}
+
+.lp-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+}
+
+.lp-figure--mover {
+  position: relative;
+  width: min(100%, 27rem);
+  transform: rotate(1.2deg);
+  /* The narration caption hangs over the panel's edge, so the figure must not
+     clip it. The image crops itself through object-fit. */
+  overflow: visible;
+}
+
+/* A close crop on the top of the drawing: the mover's face, his cap and the
+   boxes on his shoulder. The gloves sit lower down and stay out of frame. */
+.lp-figure--mover img {
+  aspect-ratio: 13 / 10;
+  object-position: 50% 0%;
+}
+
+.lp-figure--customer {
+  position: relative;
+  z-index: 1;
+  align-self: flex-start;
+  width: min(48%, 12.5rem);
+  margin-top: -3rem;
+  transform: rotate(-4deg);
+  box-shadow: var(--lp-shadow-sm);
+}
+
+.lp-figure--customer img {
+  aspect-ratio: 3 / 4;
+}
+
+.lp-burst {
+  position: absolute;
+  z-index: 2;
+  top: -1.75rem;
+  right: -0.75rem;
+  width: clamp(7rem, 18vw, 9.5rem);
+  pointer-events: none;
+}
+
+.lp-burst__art {
+  display: block;
+  width: 100%;
+  height: auto;
+  transform: rotate(7deg);
+}
+
+/* Paper lettering with an ink outline, as on a printed sound effect. */
+.lp-burst__word {
+  font-family: var(--lp-caption);
+  font-size: 25px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  fill: var(--lp-paper);
+  stroke: var(--lp-ink);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
+}
+
+.lp-sticker {
+  position: absolute;
+  z-index: 1;
+  right: 0.5rem;
+  bottom: 0;
+  width: clamp(6.5rem, 15vw, 10rem);
+  height: auto;
+  transform: rotate(-9deg);
+  filter: drop-shadow(4px 4px 0 rgba(18, 18, 26, 0.9));
+  pointer-events: none;
+}
+
+/* The narration caption hangs off the lower-right corner of the mover's
+   panel, clear of his face. */
+.lp-hero__note {
+  position: absolute;
+  z-index: 2;
+  right: 0.85rem;
+  bottom: -1.1rem;
+  max-width: 13.5rem;
+  text-align: left;
+}
+
+/* ───────────────────────── establishing strip ───────────────────────── */
+
+.lp-strip {
+  position: relative;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 3rem) clamp(2.5rem, 6vw, 4.5rem);
+}
+
+.lp-strip__frame {
+  position: relative;
+  margin: 0;
+  background: var(--lp-paper);
+  border: var(--lp-border);
+  box-shadow: var(--lp-shadow);
+}
+
+/* The whole scene on a phone; a wider cut on desktop that keeps the truck,
+   the ramp and everything waiting on the pavement. */
+.lp-strip__frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  object-position: center 62%;
+}
+
+/* Two strips of packing tape across the top corners. */
+.lp-strip__frame::before,
+.lp-strip__frame::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: 0.35rem;
+  width: clamp(3.75rem, 9vw, 6rem);
+  height: 1.4rem;
+  background: var(--lp-tape);
+  border: 2px solid var(--lp-ink);
+}
+
+.lp-strip__frame::before {
+  left: -1.5rem;
+  transform: rotate(-38deg);
+}
+
+.lp-strip__frame::after {
+  right: -1.5rem;
+  transform: rotate(38deg);
+}
+
+.lp-strip__caption {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  max-width: calc(100% - 2rem);
+}
+
+/* ───────────────────────── feature panels ───────────────────────── */
+
+.lp-features {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 3rem) clamp(2.5rem, 6vw, 4.5rem);
+  display: grid;
+  gap: clamp(1.25rem, 3vw, 2rem);
+}
+
+.lp-feature {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.9rem;
+  padding: clamp(1.35rem, 3vw, 2rem);
+  background: var(--lp-paper);
+  border: var(--lp-border);
+  box-shadow: var(--lp-shadow);
+}
+
+.lp-feature--offset {
+  transform: rotate(-0.8deg);
+}
+
+/* The panel's heading is its caption box; the big line under it is the pitch. */
+.lp-feature__title {
+  margin: 0;
+  font-family: var(--lp-display);
+  font-size: clamp(1.4rem, 2.6vw, 1.85rem);
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  color: var(--lp-ink);
+}
+
+.lp-feature__body {
+  margin: 0;
+  font-size: 0.98rem;
+  line-height: 1.6;
+  color: var(--lp-ink-soft);
+}
+
+.lp-feature__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.lp-feature__list li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  color: var(--lp-ink-soft);
+}
+
+.lp-feature__list li::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-top: 0.28rem;
+  background: var(--lp-tape);
+  border: 2px solid var(--lp-ink);
+}
+
+/* ───────────────────────── how it works ───────────────────────── */
+
+.lp-how {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 3rem) clamp(2.5rem, 6vw, 4.5rem);
+}
+
+.lp-how__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 1.25rem;
+  margin-bottom: clamp(1.1rem, 2.5vw, 1.6rem);
+}
+
+.lp-how__title {
+  margin: 0;
+  font-family: var(--lp-display);
+  font-weight: 400;
+  font-size: clamp(1.9rem, 5vw, 3.25rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--lp-ink);
+}
+
+.lp-how__lede {
+  margin: 0;
+  font-size: clamp(1.02rem, 1.8vw, 1.2rem);
+  font-weight: 600;
+  color: var(--lp-ink);
+}
+
+/* The five steps read as one comic strip: tight gutters, numbered panels. */
+.lp-steps {
+  display: grid;
+  gap: 0.9rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lp-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 1rem;
+  align-content: start;
+  padding: 1.1rem 1.15rem 1.2rem;
+  background: var(--lp-paper);
+  border: var(--lp-border);
+  box-shadow: var(--lp-shadow-sm);
+}
+
+.lp-step__num {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  font-family: var(--lp-display);
+  font-size: 1.9rem;
+  line-height: 1;
+  color: var(--lp-ink);
+  background: var(--lp-tape);
+  border: var(--lp-border);
+  box-shadow: 3px 3px 0 var(--lp-ink);
+  transform: rotate(-4deg);
+}
+
+/* The last panel is where the job is done. */
+.lp-step:last-child .lp-step__num {
+  background: var(--lp-green);
+  color: var(--lp-on-green);
+}
+
+.lp-step__title {
+  margin: 0;
+  font-family: var(--lp-display);
+  font-weight: 400;
+  font-size: 1.3rem;
+  line-height: 1.1;
+  color: var(--lp-ink);
+}
+
+.lp-step__body {
+  margin: 0.35rem 0 0;
+  font-size: 0.94rem;
+  line-height: 1.5;
+  color: var(--lp-ink-soft);
+}
+
+/* ───────────────────────── open source ───────────────────────── */
+
+.lp-open {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 3rem) clamp(2.5rem, 6vw, 4.5rem);
+}
+
+.lp-open__panel {
+  display: grid;
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: center;
+  padding: clamp(1.5rem, 3.5vw, 2.75rem);
+  background: var(--lp-paper);
+  border: 4px solid var(--lp-ink);
+  box-shadow: 10px 10px 0 var(--lp-green);
+}
+
+.lp-open__copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.lp-open__title {
+  margin: 0;
+  font-family: var(--lp-display);
+  font-weight: 400;
+  font-size: clamp(1.6rem, 3.6vw, 2.5rem);
+  line-height: 1.04;
+  letter-spacing: -0.015em;
+  color: var(--lp-ink);
+}
+
+.lp-open__body {
+  margin: 0;
+  max-width: 34rem;
+  font-size: 1.02rem;
+  line-height: 1.6;
+  color: var(--lp-ink-soft);
+}
+
+.lp-open__actions {
+  margin-top: 0.35rem;
+}
+
+.lp-stack {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.lp-stack__row {
+  padding: 0.75rem 0.9rem;
+  background: var(--lp-kraft-lt);
+  border: var(--lp-border);
+  box-shadow: var(--lp-shadow-sm);
+}
+
+.lp-stack__name {
+  font-family: var(--lp-caption);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.lp-stack__role {
+  margin: 0.15rem 0 0;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  color: var(--lp-ink-soft);
+}
+
+/* ───────────────────────── closing call to action ───────────────────────── */
+
+.lp-cta {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 3rem) clamp(2.5rem, 6vw, 4.5rem);
+}
+
+.lp-cta__panel {
+  display: grid;
+  gap: 1.5rem;
+  align-items: center;
+  padding: clamp(1.75rem, 4vw, 3rem);
+  background: var(--lp-ink);
+  border: 4px solid var(--lp-ink);
+  box-shadow: 10px 10px 0 var(--lp-tape);
+  color: var(--lp-kraft);
+}
+
+.lp-cta__panel .lp-caption {
+  background: var(--lp-kraft);
+  color: var(--lp-ink);
+  border-color: var(--lp-kraft);
+  box-shadow: 4px 4px 0 var(--lp-tape);
+}
+
+.lp-cta__title {
+  margin: 0.9rem 0 0;
+  font-family: var(--lp-display);
+  font-weight: 400;
+  font-size: clamp(2.2rem, 6vw, 3.75rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--lp-kraft);
+}
+
+.lp-cta__body {
+  margin: 0.75rem 0 0;
+  max-width: 32rem;
+  font-size: 1.02rem;
+  line-height: 1.55;
+  color: var(--lp-paper);
+}
+
+.lp-cta__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.lp-cta__actions .lp-btn {
+  background: var(--lp-kraft);
+  color: var(--lp-ink);
+  border-color: var(--lp-kraft);
+  box-shadow: 6px 6px 0 var(--lp-tape);
+}
+
+.lp-cta__actions .lp-btn:hover {
+  background: var(--lp-paper);
+  border-color: var(--lp-paper);
+  box-shadow: 8px 8px 0 var(--lp-tape);
+}
+
+/* On the ink panel the ring swaps over: paper outside, ink between. */
+.lp-cta__actions .lp-btn:focus-visible {
+  outline-color: var(--lp-paper);
+  box-shadow: 0 0 0 3px var(--lp-ink), 9px 9px 0 var(--lp-tape);
+}
+
+/* ───────────────────────── footer ───────────────────────── */
+
+.lp-foot {
+  padding: 1.5rem clamp(1rem, 4vw, 3rem) 2.25rem;
+  border-top: var(--lp-border);
+  background: var(--lp-kraft-dk);
+}
+
+.lp-foot__inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  font-family: var(--lp-caption);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--lp-ink);
+}
+
+.lp-foot__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+}
+
+.lp-foot__links a {
+  color: var(--lp-ink);
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
+}
+
+.lp-foot__links a:hover {
+  border-bottom-color: var(--lp-ink);
+}
+
+/* ───────────────────────── responsive ───────────────────────── */
+
+@media (min-width: 640px) {
+  /* Three panels over two: a strip that still reads left to right. */
+  .lp-steps {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .lp-step {
+    grid-column: span 2;
+  }
+
+  .lp-step:nth-child(n + 4) {
+    grid-column: span 3;
+  }
+}
+
+@media (min-width: 900px) {
+  .lp-nav__links {
+    display: flex;
+  }
+
+  .lp-hero__panel {
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  }
+
+  .lp-strip__frame img {
+    aspect-ratio: 21 / 9;
+  }
+
+  .lp-features {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lp-open__panel {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  }
+
+  .lp-cta__panel {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+@media (min-width: 1100px) {
+  /* One row of five. The number sits on top of each panel. */
+  .lp-steps {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .lp-step,
+  .lp-step:nth-child(n + 4) {
+    grid-column: auto;
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.2rem;
+  }
+
+  .lp-step__num {
+    grid-row: auto;
+    margin-bottom: 0.7rem;
+  }
+}
+
+@media (max-width: 899px) {
+  /* The art sits under the copy here, so it needs room for the burst that
+     pokes out of its top edge. */
+  .lp-hero__art {
+    margin-top: 0.75rem;
+  }
+
+  .lp-burst {
+    top: -1.5rem;
+    right: -0.5rem;
+    width: clamp(5.5rem, 22vw, 8rem);
+  }
+
+  .lp-hero__note {
+    right: 0.6rem;
+    max-width: 11.5rem;
+    padding: 0.32rem 0.5rem;
+    font-size: 0.6rem;
+  }
+
+  .lp-strip__caption {
+    left: 0.6rem;
+    bottom: 0.6rem;
+    max-width: calc(100% - 1.2rem);
+    padding: 0.32rem 0.5rem;
+    font-size: 0.6rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .lp-nav {
+    padding: 0.6rem 0.85rem;
+    gap: 0.5rem;
+  }
+
+  .lp-nav__actions {
+    gap: 0.4rem;
+  }
+
+  .lp-nav__actions .lp-btn {
+    padding: 0.45rem 0.7rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+  }
+
+  .lp-hero__actions .lp-btn,
+  .lp-open__actions .lp-btn,
+  .lp-cta__actions .lp-btn {
+    padding: 0.8rem 1.15rem;
+    font-size: 0.8rem;
+  }
+}
+
+/* ───────────────────────── reduced motion ───────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .lp *,
+  .lp *::before,
+  .lp *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .lp-btn:hover,
+  .lp-btn:active {
+    transform: none;
+  }
+}
