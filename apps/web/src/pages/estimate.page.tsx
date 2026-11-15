@@ -13,6 +13,7 @@ import { CONFIG } from '@/config'
 import type { AnalysisResult, ChatMessage, Contact, DetectedItem, MoveDetails, Price } from '@/data'
 import {
   EMPTY_SESSION,
+  EMPTY_FOLLOW_UPS,
   ESTIMATE_STEPS,
   type EstimateStep as StepKey,
   type FollowUpKey,
@@ -49,6 +50,10 @@ export default function EstimatePage(): JSX.Element {
   }, [wantsSample, navigate])
 
   const activeIndex = ESTIMATE_STEPS.indexOf(session.step)
+  const review = useMemo(
+    () => ({ followUps: session.followUps, wholeMoveCovered: session.wholeMoveCovered }),
+    [session.followUps, session.wholeMoveCovered],
+  )
 
   const goTo = useCallback((step: StepKey) => update({ step }), [update])
 
@@ -78,13 +83,19 @@ export default function EstimatePage(): JSX.Element {
 
   const onPhotosChange = useCallback(
     (photoUrls: string[]) =>
-      update({ photoUrls, analysis: null, items: [], price: null, estimateId: null, contact: null }),
+      update({
+        photoUrls, analysis: null, items: [], followUps: { ...EMPTY_FOLLOW_UPS }, wholeMoveCovered: null,
+        price: null, estimateId: null, contact: null,
+      }),
     [update],
   )
 
   const onAnalyzed = useCallback(
     (analysis: AnalysisResult) =>
-      update({ analysis, items: analysis.items, step: 'review', price: null, estimateId: null, contact: null }),
+      update({
+        analysis, items: analysis.items, step: 'review', followUps: { ...EMPTY_FOLLOW_UPS },
+        wholeMoveCovered: null, price: null, estimateId: null, contact: null,
+      }),
     [update],
   )
 
@@ -109,6 +120,11 @@ export default function EstimatePage(): JSX.Element {
     [update],
   )
 
+  const onWholeMoveCovered = useCallback(
+    (wholeMoveCovered: boolean) => update({ wholeMoveCovered, price: null, estimateId: null, contact: null }),
+    [update],
+  )
+
   const onPriced = useCallback((price: Price, estimateId: string) => update({ price, estimateId }), [update])
 
   const onScheduled = useCallback((contact: Contact) => update({ contact }), [update])
@@ -117,7 +133,10 @@ export default function EstimatePage(): JSX.Element {
   const startSample = useCallback(() => reset(sampleSession(window.location.origin)), [reset])
   const useOwnPhotos = useCallback(
     () =>
-      update({ sample: false, photoUrls: [], analysis: null, items: [], price: null, estimateId: null, contact: null }),
+      update({
+        sample: false, photoUrls: [], analysis: null, items: [], followUps: { ...EMPTY_FOLLOW_UPS },
+        wholeMoveCovered: null, price: null, estimateId: null, contact: null,
+      }),
     [update],
   )
 
@@ -158,6 +177,8 @@ export default function EstimatePage(): JSX.Element {
             analysis={session.analysis}
             items={session.items}
             followUps={session.followUps}
+            wholeMoveCovered={session.wholeMoveCovered}
+            onWholeMoveCovered={onWholeMoveCovered}
             onItemsChange={onItemsChange}
             onFollowUp={onFollowUp}
             onBack={() => goTo('upload')}
@@ -171,6 +192,7 @@ export default function EstimatePage(): JSX.Element {
             analysis={session.analysis}
             items={session.items}
             moveDetails={session.moveDetails}
+            review={review}
             price={session.price}
             estimateId={session.estimateId}
             photoUrls={session.photoUrls}
@@ -204,6 +226,8 @@ export default function EstimatePage(): JSX.Element {
     onAnalyzed,
     onItemsChange,
     onFollowUp,
+    onWholeMoveCovered,
+    review,
     onPriced,
     onScheduled,
     startOver,

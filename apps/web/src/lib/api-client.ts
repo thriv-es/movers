@@ -6,6 +6,7 @@ import type {
   CreateEstimateRequest,
   MoveDetails,
   PriceResult,
+  ReviewCoverage,
   PublicMover,
   QuoteRequestRecord,
 } from '@/data'
@@ -98,8 +99,8 @@ export function analyzeApi(imageUrls: string[], sample = false): Promise<Analysi
 }
 
 /** Prices the confirmed inventory for the given move details. */
-export function priceApi(analysis: AnalysisResult, moveDetails: MoveDetails, sample = false): Promise<PriceResult> {
-  return postJson<PriceResult>('/api/price', { analysis, moveDetails, sample }, { ai: true })
+export function priceApi(analysis: AnalysisResult, moveDetails: MoveDetails, review: ReviewCoverage, sample = false): Promise<PriceResult> {
+  return postJson<PriceResult>('/api/price', { analysis, moveDetails, review, sample }, { ai: true })
 }
 
 export interface CreatedEstimate {

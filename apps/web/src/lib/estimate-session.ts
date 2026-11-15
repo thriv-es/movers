@@ -1,4 +1,4 @@
-import type { AnalysisResult, ChatMessage, Contact, DetectedItem, MoveDetails, Price } from '@/data'
+import type { AnalysisResult, ChatMessage, Contact, DetectedItem, MoveDetails, Price, ReviewCoverage } from '@/data'
 import { EMPTY_MOVE_DETAILS } from '@/data'
 
 /**
@@ -10,15 +10,15 @@ export type EstimateStep = 'chat' | 'details' | 'upload' | 'review' | 'estimate'
 
 export const ESTIMATE_STEPS: EstimateStep[] = ['chat', 'details', 'upload', 'review', 'estimate', 'schedule']
 
-/** Bump when the shape changes; older sessions are discarded instead of half-parsed. */
-export const SESSION_VERSION = 3
+/** Bump when the shape changes; v3 drafts are migrated below. */
+export const SESSION_VERSION = 4
 
 export const SESSION_KEY = 'movers.estimate'
 
 export type FollowUpKey = 'garage' | 'closets' | 'appliances'
 
 /** Answers to the three review follow-ups; null until answered. */
-export type FollowUpAnswers = Record<FollowUpKey, boolean | null>
+export type FollowUpAnswers = ReviewCoverage['followUps']
 
 export const EMPTY_FOLLOW_UPS: FollowUpAnswers = { garage: null, closets: null, appliances: null }
 
@@ -34,6 +34,7 @@ export interface EstimateSession {
   /** The inventory as the customer confirmed it; starts as the detected items. */
   items: DetectedItem[]
   followUps: FollowUpAnswers
+  wholeMoveCovered: boolean | null
   price: Price | null
   estimateId: string | null
   contact: Contact | null
@@ -51,6 +52,7 @@ export const EMPTY_SESSION: EstimateSession = {
   analysis: null,
   items: [],
   followUps: EMPTY_FOLLOW_UPS,
+  wholeMoveCovered: null,
   price: null,
   estimateId: null,
   contact: null,
@@ -90,8 +92,8 @@ function isStep(value: unknown): value is EstimateStep {
 }
 
 /**
- * Reads a saved session. Anything that is not an object with the current version and a known step is
- * discarded, so a schema change never leaves the customer on a broken screen.
+ * Reads a saved session. v3 drafts keep the inventory and photos but must be repriced after review;
+ * unsupported versions and invalid steps are discarded.
  */
 export function loadSession(store: StorageLike | null = storage()): EstimateSession {
   if (!store) return EMPTY_SESSION
@@ -99,7 +101,18 @@ export function loadSession(store: StorageLike | null = storage()): EstimateSess
   if (!raw) return EMPTY_SESSION
   try {
     const parsed = JSON.parse(raw) as Partial<EstimateSession> | null
-    if (!parsed || typeof parsed !== 'object' || parsed.version !== SESSION_VERSION || !isStep(parsed.step)) {
+    if (!parsed || typeof parsed !== 'object' || !isStep(parsed.step)) {
+      store.removeItem(SESSION_KEY)
+      return EMPTY_SESSION
+    }
+    if (parsed.version === 3) {
+      return {
+        ...EMPTY_SESSION, ...parsed, version: SESSION_VERSION,
+        step: parsed.analysis ? 'review' : 'upload',
+        price: null, estimateId: null, wholeMoveCovered: null,
+      }
+    }
+    if (parsed.version !== SESSION_VERSION) {
       store.removeItem(SESSION_KEY)
       return EMPTY_SESSION
     }

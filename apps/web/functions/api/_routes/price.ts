@@ -1,8 +1,9 @@
 import { Hono } from 'hono'
 import type { Bindings } from '../_lib/types'
-import type { Confidence, PriceRequest, PriceResult } from '../../../src/data'
+import type { PriceResult } from '../../../src/data'
 import { zPriceRequest, zPriceResult } from '../../../src/data'
 import { withRange } from '../_lib/pricing'
+import { priceConfidence } from '../_lib/price-confidence'
 import { extractAndRepairJSON } from '../_lib/json-utils'
 import { normalizePriceReply, PriceFormatError } from '../_lib/price-normalization'
 import { runText } from '../_lib/ai-client'
@@ -13,23 +14,6 @@ import { withSampleCache } from '../_lib/sample-cache'
 const price = new Hono<{ Bindings: Bindings }>()
 
 const show = (value: number | boolean | string | null) => (value === null ? 'null' : String(value))
-
-/** The number of move details the customer left unknown decides the confidence, and so the width of the range. */
-function confidenceFromDetails(request: PriceRequest, suggested: unknown): Confidence {
-  const { moveDetails } = request
-  const unknown = [
-    moveDetails.distanceMiles,
-    moveDetails.originFloor,
-    moveDetails.destinationFloor,
-    moveDetails.originElevator,
-    moveDetails.destinationElevator,
-  ].filter((v) => v === null).length
-  const byFields: Confidence = unknown === 0 ? 'high' : unknown <= 2 ? 'medium' : 'low'
-  const order: Confidence[] = ['high', 'medium', 'low']
-  const model = suggested === 'high' || suggested === 'medium' || suggested === 'low' ? suggested : byFields
-  // the less confident of the two wins
-  return order[Math.max(order.indexOf(byFields), order.indexOf(model))] ?? 'low'
-}
 
 price.post('/', async (c) => {
   try {
@@ -76,15 +60,11 @@ price.post('/', async (c) => {
       return c.json({ code: 'PRICE_UNAVAILABLE', error: 'Pricing is temporarily unavailable. Please retry.' }, 503)
     }
 
-    const confidence = confidenceFromDetails(validatedRequest, priceData.confidence)
+    const verdict = priceConfidence(validatedRequest, priceData.confidence)
+    const { currency, total, breakdown, explanation } = priceData
     const priced = withRange(
-      {
-        currency: priceData.currency,
-        total: priceData.total,
-        breakdown: priceData.breakdown,
-        explanation: priceData.explanation,
-      },
-      confidence,
+      { currency, total, breakdown, explanation, confidenceReasons: verdict.reasons },
+      verdict.level,
     )
 
     return c.json(zPriceResult.parse({ price: priced } satisfies PriceResult))

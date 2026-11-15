@@ -1,6 +1,6 @@
 import { Badge, Button, Caption, Field, Panel, Textarea } from '@movers/ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AnalysisResult, DetectedItem, MoveDetails, Price, PublicMover } from '@/data'
+import type { AnalysisResult, DetectedItem, MoveDetails, Price, PublicMover, ReviewCoverage } from '@/data'
 import { createEstimate, listMovers, priceApi, requestQuotes } from '@/lib/api-client'
 import { formatMoney, titleCase } from './format'
 
@@ -8,6 +8,7 @@ interface EstimateStepProps {
   analysis: AnalysisResult
   items: DetectedItem[]
   moveDetails: MoveDetails
+  review: ReviewCoverage
   price: Price | null
   estimateId: string | null
   photoUrls: string[]
@@ -19,9 +20,9 @@ interface EstimateStepProps {
 }
 
 const CONFIDENCE_COPY: Record<NonNullable<Price['confidence']>, string> = {
-  high: 'High confidence: the photos and details covered the whole move.',
-  medium: 'Medium confidence: a few details or rooms were missing, so the range is wider.',
-  low: 'Low confidence: several details were missing or the photos were unclear, so treat this as a rough range.',
+  high: 'This range uses the inventory and move details you confirmed; a mover will verify the final scope.',
+  medium: 'Some coverage or move details remain uncertain, so the range is wider.',
+  low: 'Important coverage or move details remain uncertain; treat this as a rough range.',
 }
 
 /** Step 5: the price range, saved as a lead, with the option to ask up to three movers for quotes. */
@@ -29,6 +30,7 @@ export function EstimateStep({
   analysis,
   items,
   moveDetails,
+  review,
   price,
   estimateId,
   photoUrls,
@@ -47,6 +49,12 @@ export function EstimateStep({
   const [quoteError, setQuoteError] = useState<string | null>(null)
   // survives StrictMode's double effect run, so one confirmation means one price call and one saved lead
   const inFlight = useRef(false)
+  const active = useRef(true)
+
+  useEffect(() => {
+    active.current = true
+    return () => { active.current = false }
+  }, [])
 
   const runPricing = useCallback(async () => {
     if (inFlight.current) return
@@ -55,7 +63,8 @@ export function EstimateStep({
     setError(null)
     try {
       const analysisWithItems = { ...analysis, items }
-      const { price: fresh } = await priceApi(analysisWithItems, moveDetails, sample)
+      const { price: fresh } = await priceApi(analysisWithItems, moveDetails, review, sample)
+      if (!active.current) return
       const created = await createEstimate({
         source: sample ? 'sample' : 'own',
         moveDetails,
@@ -64,14 +73,14 @@ export function EstimateStep({
         price: fresh,
         photoKeys: photoUrls,
       })
-      onPriced(fresh, created.id)
+      if (active.current) onPriced(fresh, created.id)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Pricing failed. Try again.')
+      if (active.current) setError(caught instanceof Error ? caught.message : 'Pricing failed. Try again.')
     } finally {
       inFlight.current = false
-      setLoading(false)
+      if (active.current) setLoading(false)
     }
-  }, [analysis, items, moveDetails, sample, photoUrls, onPriced])
+  }, [analysis, items, moveDetails, review, sample, photoUrls, onPriced])
 
   useEffect(() => {
     if (price === null) void runPricing()
@@ -168,7 +177,7 @@ export function EstimateStep({
           <Badge tone={confidence === 'high' ? 'green' : confidence === 'medium' ? 'tape' : 'paper'}>
             {titleCase(confidence)} confidence
           </Badge>{' '}
-          {CONFIDENCE_COPY[confidence]}
+          {price.confidenceReasons?.length ? price.confidenceReasons.join(' ') : CONFIDENCE_COPY[confidence]}
         </p>
       </Panel>
 

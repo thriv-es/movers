@@ -75,6 +75,20 @@ export const zPriceBreakdown = z.record(z.string(), z.number().nonnegative())
 
 export const zConfidence = z.enum(['high', 'medium', 'low'])
 
+export const zReviewCoverage = z.object({
+  followUps: z.object({
+    garage: z.boolean().nullable(),
+    closets: z.boolean().nullable(),
+    appliances: z.boolean().nullable(),
+  }),
+  wholeMoveCovered: z.boolean().nullable(),
+})
+
+export const EMPTY_REVIEW_COVERAGE: z.infer<typeof zReviewCoverage> = {
+  followUps: { garage: null, closets: null, appliances: null },
+  wholeMoveCovered: null,
+}
+
 export const zPrice = z
   .object({
     currency: z.string().default('USD'),
@@ -84,6 +98,7 @@ export const zPrice = z
     breakdown: zPriceBreakdown,
     explanation: z.string().optional(),
     confidence: zConfidence.optional(),
+    confidenceReasons: z.array(z.string()).optional(),
   })
   .refine((p) => p.low <= p.total && p.total <= p.high, { message: 'low <= total <= high' })
 
@@ -116,6 +131,10 @@ export const zAnalyzeRequest = z.object({
 export const zPriceRequest = z.object({
   analysis: zAnalysisResult,
   moveDetails: zMoveDetails,
+  review: zReviewCoverage.default(() => ({
+    followUps: { ...EMPTY_REVIEW_COVERAGE.followUps },
+    wholeMoveCovered: null,
+  })),
   sample: z.boolean().optional(),
 })
 

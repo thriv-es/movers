@@ -21,6 +21,8 @@ interface ReviewStepProps {
   analysis: AnalysisResult
   items: DetectedItem[]
   followUps: FollowUpAnswers
+  wholeMoveCovered: boolean | null
+  onWholeMoveCovered: (answer: boolean) => void
   onItemsChange: (items: DetectedItem[]) => void
   onFollowUp: (key: FollowUpKey, answer: boolean) => void
   onBack: () => void
@@ -34,6 +36,8 @@ export function ReviewStep({
   analysis,
   items,
   followUps,
+  wholeMoveCovered,
+  onWholeMoveCovered,
   onItemsChange,
   onFollowUp,
   onBack,
@@ -175,7 +179,7 @@ export function ReviewStep({
       ) : null}
 
       <Panel as="section" aria-label="A few more questions">
-        <Caption accent="green">Three quick questions</Caption>
+        <Caption accent="green">Check what we missed</Caption>
         {analysis.unseenAreas.length > 0 ? (
           <p className="mv-muted">The photos did not show: {analysis.unseenAreas.join(', ')}.</p>
         ) : null}
@@ -209,6 +213,27 @@ export function ReviewStep({
             Answer {unanswered === 3 ? 'these' : `the remaining ${unanswered}`} to get the most accurate price.
           </p>
         ) : null}
+        <div className="est-followup">
+          <span>Does this inventory cover everything in the whole move, including areas not shown in the photos?</span>
+          <div className="mv-actions" role="group" aria-label="Does the inventory cover the whole move?">
+            <Button
+              size="sm"
+              variant={wholeMoveCovered === true ? 'primary' : 'default'}
+              aria-pressed={wholeMoveCovered === true}
+              onClick={() => onWholeMoveCovered(true)}
+            >
+              Yes
+            </Button>
+            <Button
+              size="sm"
+              variant={wholeMoveCovered === false ? 'primary' : 'default'}
+              aria-pressed={wholeMoveCovered === false}
+              onClick={() => onWholeMoveCovered(false)}
+            >
+              No
+            </Button>
+          </div>
+        </div>
       </Panel>
 
       <div className="mv-actions">

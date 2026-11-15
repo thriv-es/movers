@@ -28,6 +28,7 @@ import type {
   zPriceBreakdown,
   zPriceRequest,
   zPriceResult,
+  zReviewCoverage,
   zPublicMover,
   zQuoteRequestInput,
   zQuoteRequestRecord,
@@ -52,6 +53,7 @@ export type EstimateResult = z.infer<typeof zEstimateResult>
 export type AnalysisResult = z.infer<typeof zAnalysisResult>
 export type AnalyzeRequest = z.infer<typeof zAnalyzeRequest>
 export type PriceRequest = z.infer<typeof zPriceRequest>
+export type ReviewCoverage = z.infer<typeof zReviewCoverage>
 export type PriceResult = z.infer<typeof zPriceResult>
 
 export type EstimateSource = z.infer<typeof zEstimateSource>

@@ -70,6 +70,13 @@ describe('price route model reply', () => {
     })
     const res = await request()
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ price: { currency: 'USD', total: 2970, breakdown: { labor: 1500, travel: 1470 }, low: 2650, high: 3250 } })
+    // A legacy caller omitted review answers, so server-owned confidence is low despite the model's high suggestion.
+    expect(await res.json()).toMatchObject({
+      price: {
+        currency: 'USD', total: 2970, breakdown: { labor: 1500, travel: 1470 },
+        confidence: 'low', low: 2100, high: 3850,
+        confidenceReasons: expect.arrayContaining([expect.stringMatching(/whole move/i)]),
+      },
+    })
   })
 })
