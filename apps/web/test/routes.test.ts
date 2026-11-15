@@ -164,7 +164,7 @@ describe('local development with no AI credentials (offline mock)', () => {
         env(),
       )
     ).json()) as { price: { total: number; low: number; high: number; confidence: string } }
-    // the mock always says low, and the fewer fields are known the lower confidence may go, never higher
+    // the mock says medium, and the fewer fields are known the lower confidence may go, never higher
     expect(['high', 'medium', 'low']).toContain(known.price.confidence)
     expect(unknown.price.confidence).toBe('low')
     const spread = (p: { total: number; low: number; high: number }) => (p.high - p.low) / p.total

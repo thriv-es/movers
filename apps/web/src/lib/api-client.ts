@@ -1,129 +1,141 @@
+import type {
+  AnalysisResult,
+  ChatApiResponse,
+  ChatMessage,
+  Contact,
+  CreateEstimateRequest,
+  MoveDetails,
+  PriceResult,
+  PublicMover,
+  QuoteRequestRecord,
+} from '@/data'
 import { recordAiMode } from '@/lib/ai-mode-store'
-import type { ChatMessage, ChatApiResponse, AnalysisResult, PriceResult, MoveInfo, EstimateResult } from '@/data'
 
 /**
- * API client for Move Estimate Demo endpoints.
- * Uses relative URLs that will be proxied to the backend.
+ * API client for the estimator. Relative URLs are proxied to the Functions backend in dev and served
+ * from the same origin in production.
  */
 
-/**
- * Calls the chat API endpoint.
- */
-export async function chatApi(messages: ChatMessage[]): Promise<ChatApiResponse> {
-  const response = await fetch('/api/chat', {
+async function readError(response: Response): Promise<Error> {
+  const body = (await response.json().catch(() => null)) as { error?: string } | null
+  return new Error(body?.error || `HTTP ${response.status}: ${response.statusText}`)
+}
+
+async function postJson<T>(path: string, body: unknown, options: { ai?: boolean } = {}): Promise<T> {
+  const response = await fetch(path, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ messages }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   })
+  if (!response.ok) throw await readError(response)
+  if (options.ai) recordAiMode(response)
+  return response.json() as Promise<T>
+}
 
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: 'Unknown error' }))) as { error?: string }
-    throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
-  }
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw await readError(response)
+  return response.json() as Promise<T>
+}
 
-  recordAiMode(response)
-  return response.json() as Promise<ChatApiResponse>
+async function getJson<T>(path: string): Promise<T> {
+  const response = await fetch(path)
+  if (!response.ok) throw await readError(response)
+  return response.json() as Promise<T>
+}
+
+/** One chat turn: the server replies with plain text plus the structured move details it has so far. */
+export function chatApi(messages: ChatMessage[], moveDetails?: Partial<MoveDetails>): Promise<ChatApiResponse> {
+  return postJson<ChatApiResponse>('/api/chat', { messages, moveDetails }, { ai: true })
 }
 
 /**
- * Uploads images to the backend R2 storage.
- * Returns an array of URLs for the uploaded images.
+ * Uploads one photo and returns its public URL. One request per photo so each card can show its own progress.
  */
-export async function uploadImages(files: File[]): Promise<string[]> {
-  const formData = new FormData()
-  for (const file of files) {
-    formData.append('images', file)
-  }
-
-  const response = await fetch('/api/images/upload', {
-    method: 'POST',
-    body: formData,
+export function uploadImage(file: File, onProgress?: (percent: number) => void): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const form = new FormData()
+    form.append('images', file)
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/images/upload')
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) onProgress(Math.round((event.loaded / event.total) * 100))
+    }
+    xhr.onerror = () => reject(new Error('Upload failed. Check your connection and try again.'))
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        let message = `Upload failed (HTTP ${xhr.status})`
+        try {
+          const body = JSON.parse(xhr.responseText) as { error?: string }
+          if (body.error) message = body.error
+        } catch {
+          // keep the generic message
+        }
+        reject(new Error(message))
+        return
+      }
+      try {
+        const urls = JSON.parse(xhr.responseText) as string[]
+        const url = urls[0]
+        if (!url) throw new Error('Upload returned no URL')
+        onProgress?.(100)
+        resolve(url)
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error('Upload returned an unexpected response'))
+      }
+    }
+    xhr.send(form)
   })
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: 'Unknown error' }))) as { error?: string }
-    throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
-  }
-
-  return response.json() as Promise<string[]>
 }
 
-/**
- * Analyzes images (by URL) to detect items and estimate volume/boxes.
- */
-export async function analyzeApi(imageUrls: string[]): Promise<AnalysisResult> {
-  const response = await fetch('/api/analyze', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ imageUrls }),
-  })
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: 'Unknown error' }))) as { error?: string }
-    throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
-  }
-
-  recordAiMode(response)
-  return response.json() as Promise<AnalysisResult>
+/** Detects items in the uploaded photos. `sample` marks the bundled sample move so the server can cache it. */
+export function analyzeApi(imageUrls: string[], sample = false): Promise<AnalysisResult> {
+  return postJson<AnalysisResult>('/api/analyze', { imageUrls, sample }, { ai: true })
 }
 
-/**
- * Gets pricing based on analysis results and move information.
- */
-export async function priceApi(analysis: AnalysisResult, moveInfo: MoveInfo): Promise<PriceResult> {
-  const response = await fetch('/api/price', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ analysis, moveInfo }),
-  })
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: 'Unknown error' }))) as { error?: string }
-    throw new Error(error.error || `HTTP ${response.status}: ${response.statusText}`)
-  }
-
-  recordAiMode(response)
-  return response.json() as Promise<PriceResult>
+/** Prices the confirmed inventory for the given move details. */
+export function priceApi(analysis: AnalysisResult, moveDetails: MoveDetails, sample = false): Promise<PriceResult> {
+  return postJson<PriceResult>('/api/price', { analysis, moveDetails, sample }, { ai: true })
 }
 
-/**
- * Full estimate flow: upload → analyze → price
- * This is a convenience function that chains the three steps.
- */
-export async function getEstimate(files: File[], moveInfo: MoveInfo): Promise<EstimateResult> {
-  // Step 1: Upload images
-  console.log('getEstimate: Step 1 - Uploading', files.length, 'images...')
-  const imageUrls = await uploadImages(files)
-  console.log('getEstimate: Upload complete, got', imageUrls.length, 'URLs')
+export interface CreatedEstimate {
+  id: string
+  storage: 'd1' | 'memory'
+}
 
-  // Step 2: Analyze images
-  console.log('getEstimate: Step 2 - Analyzing images...')
-  const analysis = await analyzeApi(imageUrls)
-  console.log('getEstimate: Analysis complete:', {
-    itemCount: analysis.items.length,
-    volume: analysis.totalVolumeCubicFeet,
-    boxes: analysis.estimatedBoxes,
-  })
+/** Saves the estimate as a lead. */
+export function createEstimate(request: CreateEstimateRequest): Promise<CreatedEstimate> {
+  return postJson<CreatedEstimate>('/api/estimates', request)
+}
 
-  // Step 3: Get pricing
-  console.log('getEstimate: Step 3 - Getting price...')
-  const priceResult = await priceApi(analysis, moveInfo)
-  console.log('getEstimate: Price complete:', {
-    total: priceResult.price.total,
-    confidence: priceResult.price.confidence,
-  })
+export interface ContactResult {
+  reference: string
+  requestedDate: string
+  note: string
+}
 
-  // Combine into EstimateResult
-  return {
-    items: analysis.items,
-    estimatedBoxes: analysis.estimatedBoxes,
-    boxesExplanation: analysis.boxesExplanation,
-    price: priceResult.price,
-  }
+/** Attaches the customer's contact details and requested date to a saved estimate. */
+export function attachContact(estimateId: string, contact: Contact): Promise<ContactResult> {
+  return patchJson<ContactResult>(`/api/estimates/${encodeURIComponent(estimateId)}/contact`, contact)
+}
+
+/** Movers the customer can ask for quotes. */
+export async function listMovers(): Promise<PublicMover[]> {
+  const body = await getJson<{ movers: PublicMover[] }>('/api/movers')
+  return body.movers
+}
+
+export interface QuoteRequestsResult {
+  requests: QuoteRequestRecord[]
+  /** Delivery channel per mover id. v1 only logs the email, so every value is `logged`. */
+  delivery: Record<string, 'logged' | string>
+}
+
+/** Asks up to three movers for a quote on a saved estimate. */
+export function requestQuotes(estimateId: string, moverIds: string[], note = ''): Promise<QuoteRequestsResult> {
+  return postJson<QuoteRequestsResult>('/api/quote-requests', { estimateId, moverIds, note })
 }

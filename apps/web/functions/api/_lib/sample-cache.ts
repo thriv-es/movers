@@ -6,7 +6,8 @@
  * for real while the untouched sample is served from cache.
  */
 
-export const SAMPLE_VERSION = 'v1'
+/** Bump when the sample answers change shape or content, so stale cache entries are not served. */
+export const SAMPLE_VERSION = 'v2'
 
 const ORIGIN = 'https://sample.movers.invalid'
 const TTL_SECONDS = 60 * 60 * 24 * 30

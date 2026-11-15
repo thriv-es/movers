@@ -84,15 +84,24 @@ importers:
       '@fluid-tailwind/tailwind-merge':
         specifier: ^0.0.3
         version: 0.0.3(tailwind-merge@2.6.1)
+      '@fontsource-variable/fredoka':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource-variable/inter':
         specifier: ^5.2.8
         version: 5.2.8
+      '@fontsource/bowlby-one':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@hookform/resolvers':
         specifier: ^3.10.0
         version: 3.10.0(react-hook-form@7.76.0(react@18.3.1))
       '@mantine/hooks':
         specifier: ^7.17.8
         version: 7.17.8(react@18.3.1)
+      '@movers/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@radix-ui/react-dialog':
         specifier: ^1.1.15
         version: 1.1.15(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)

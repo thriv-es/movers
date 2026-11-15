@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { DemoBadge } from '../src/components/move-demo/DemoBadge'
+import { DemoBadge } from '../src/components/estimate/DemoBadge'
 import { recordAiMode, resetAiModeStore } from '../src/lib/ai-mode-store'
 
 const responseWithMode = (mode: string) => ({ headers: new Headers({ 'x-movers-ai-mode': mode }) })

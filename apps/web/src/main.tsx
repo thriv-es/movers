@@ -1,12 +1,18 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { HelmetProvider } from "react-helmet-async";
+import { HelmetProvider } from 'react-helmet-async'
 
+// Self-hosted fonts: display, body and captions, the same set as the landing.
+import '@fontsource/bowlby-one'
+import '@fontsource-variable/fredoka'
 import '@fontsource-variable/inter'
-import '@fontsource-variable/inter/opsz-italic.css'
 import './style/tailwind.css'
+// The comic design system shared with the landing, then the estimator's own layout rules.
+import '@movers/ui/tokens.css'
+import '@movers/ui/components.css'
+import './style/estimator.css'
 
-import "@/lib/posthog";
+import '@/lib/posthog'
 
 import App from './App'
 import { IS_CLIENT } from '@/config'
@@ -33,4 +39,4 @@ ReactDOM.createRoot(mountNode).render(
       <App />
     </HelmetProvider>
   </React.StrictMode>,
-);
+)

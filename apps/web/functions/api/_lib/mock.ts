@@ -25,8 +25,24 @@ interface Access {
   hasElevator: boolean
 }
 
+/** "<number> <street>, <city>, <ST>" with an optional ZIP, anywhere in a sentence. */
+const STREET_ADDRESS =
+  /\d+[A-Za-z]?\s+[A-Za-z0-9.' -]+?,\s*[A-Za-z.' -]+?,\s*[A-Za-z]{2}(?:\s+\d{5}(?:-\d{4})?)?(?=[\s,.;)!?]|$)/g
+
+/**
+ * Pulls a street address out of a chatty answer. When the customer writes a whole sentence ("I'm moving to X from
+ * Y"), prefer the address after "from" or "at"; otherwise take the last one mentioned. Short answers pass through.
+ */
+function extractAddress(answer: string): string {
+  const matches = [...answer.matchAll(STREET_ADDRESS)]
+  const last = matches[matches.length - 1]
+  if (!last) return answer
+  const preferred = matches.find((match) => /\b(from|at)\s*$/i.test(answer.slice(0, match.index)))
+  return (preferred ?? last)[0]
+}
+
 function parsePlace(answer: string): Place {
-  const address = answer.trim()
+  const address = extractAddress(answer.trim())
   const parts = address
     .split(',')
     .map((part) => part.trim())
@@ -181,7 +197,8 @@ export function mockPriceReply(request: PriceRequest, pricePerBox: number): stri
       total,
       breakdown,
       explanation: `${DEMO_NOTE}, so this is a demo estimate and not a real quote. It adds the box cost, $${DOLLARS_PER_MILE} per mile over ${miles} miles${distanceNote} and $${DOLLARS_PER_FLIGHT} per flight of stairs where there is no elevator.${specialNote}`,
-      confidence: 'low',
+      // medium: the route lowers it further when move details are missing, never raises it
+      confidence: 'medium',
     },
     null,
     2,

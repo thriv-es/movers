@@ -1,3 +1,4 @@
+import { Badge } from '@movers/ui'
 import { useSyncExternalStore } from 'react'
 import { getAnyMocked, subscribeAiMode } from '@/lib/ai-mode-store'
 
@@ -7,12 +8,8 @@ export function DemoBadge(): JSX.Element | null {
   if (!mocked) return null
 
   return (
-    <div
-      role="status"
-      data-testid="demo-badge"
-      className="mx-auto mb-6 w-fit rounded-full border border-amber-400 bg-amber-50 px-4 py-1.5 text-sm font-medium text-amber-900"
-    >
+    <Badge tone="tape" role="status" data-testid="demo-badge" title="The AI models are mocked locally">
       Demo data: AI is mocked locally
-    </div>
+    </Badge>
   )
 }

@@ -7,6 +7,9 @@ export const IS_CLIENT = typeof globalThis?.window !== 'undefined'
 export const IS_PRODUCTION = import.meta.env.PROD
 export const IS_DEVELOPMENT = import.meta.env.DEV
 
+/** The marketing site. `/` on this app redirects there; the masthead links back to it. */
+export const LANDING_URL: string = import.meta.env.VITE_LANDING_URL ?? 'http://localhost:4600/'
+
 /**
  * Zod schema for this app's config object.
  * Do not store sensitive information in this object because it is publicly exposed to the client.
@@ -37,38 +40,38 @@ export const IS_DEVELOPMENT = import.meta.env.DEV
  */
 export const zAppConfig = z.object({
   // ── Identity ──────────────────────────────────────────────────────────
-  title: z.string().default("App"),
-  locale: z.string().default("en"),
-  textDirection: z.enum(["ltr", "rtl"]).default("ltr"),
-  description: z.string().default(""),
-  author: z.string().default(""),
-  keywords: z.string().default(""),
-  canonical: z.string().default(""),
+  title: z.string().default('App'),
+  locale: z.string().default('en'),
+  textDirection: z.enum(['ltr', 'rtl']).default('ltr'),
+  description: z.string().default(''),
+  author: z.string().default(''),
+  keywords: z.string().default(''),
+  canonical: z.string().default(''),
 
   // ── OpenGraph / Social ─────────────────────────────────────────────────
-  ogImage: z.string().default("/og-image.png"),
-  ogImageAlt: z.string().default(""),
-  ogType: z.string().default("website"),
-  ogSiteName: z.string().default(""),
+  ogImage: z.string().default('/og-image.png'),
+  ogImageAlt: z.string().default(''),
+  ogType: z.string().default('website'),
+  ogSiteName: z.string().default(''),
 
   // ── Twitter ────────────────────────────────────────────────────────────
-  twitterCard: z.string().default("summary_large_image"),
-  twitterHandle: z.string().default(""),
-  twitterImage: z.string().default("/og-image.png"),
-  twitterImageAlt: z.string().default(""),
+  twitterCard: z.string().default('summary_large_image'),
+  twitterHandle: z.string().default(''),
+  twitterImage: z.string().default('/og-image.png'),
+  twitterImageAlt: z.string().default(''),
 
   // ── Theme / UX ─────────────────────────────────────────────────────────
-  colorScheme: z.string().default("light dark"),
-  themeColor: z.string().default("#ffffff"),
+  colorScheme: z.string().default('light dark'),
+  themeColor: z.string().default('#ffffff'),
 
   // ── Contacts ───────────────────────────────────────────────────────────
   contacts: z.object({
-    legal: z.string().default("contact@example.com"),
+    legal: z.string().default('contact@example.com'),
   }),
 
   // ── Social media handles ───────────────────────────────────────────────
   socialMedia: zSocialMediaDto.optional(),
-});
+})
 
 /**
  * This project's config object.
@@ -99,7 +102,7 @@ export const CONFIG: AppConfig = zAppConfig.parse({
     legal: import.meta.env.VITE_LEGAL_CONTACT,
   },
   socialMedia: {
-    github: import.meta.env.VITE_GITHUB || "thriv-es/movers",
+    github: import.meta.env.VITE_GITHUB || 'thriv-es/movers',
     twitter: import.meta.env.VITE_TWITTER,
   },
-});
+})

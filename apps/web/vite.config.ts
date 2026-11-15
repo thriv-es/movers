@@ -24,10 +24,7 @@ export default defineConfig(({ mode }) => {
   return {
     base: '/',
 
-    plugins: [
-      tsconfigPaths(),
-      react(),
-    ],
+    plugins: [tsconfigPaths(), react()],
 
     // configure tailwindcss in the vite config instead of external postcss.config.js
     css: {
@@ -44,17 +41,20 @@ export default defineConfig(({ mode }) => {
     },
 
     // configure development server
-    // Fixed, strict ports: 4611 = this Vite server, 4610 = wrangler pages dev (the full-stack entry point).
-    // strictPort makes a collision fail loudly instead of silently moving and breaking the wrangler proxy.
+    // Fixed, strict ports: 4610 = this Vite server (the full-stack entry point), 4611 = wrangler pages dev (the API).
+    // Vite proxies /api to wrangler. The reverse (wrangler `--proxy` to Vite) is not used because wrangler ignores
+    // `--proxy` whenever `pages_build_output_dir` is set and serves the stale dist/ build instead.
+    // strictPort makes a collision fail loudly instead of silently moving and breaking the proxy.
     server: {
       open: false,
       host: '127.0.0.1',
-      port: 4611,
+      port: 4610,
       strictPort: true,
       proxy: {
         '/api': {
-          target: 'http://127.0.0.1:4610',
-          changeOrigin: true,
+          target: 'http://127.0.0.1:4611',
+          // keep the Host header so URLs the API builds from it (uploaded photos) stay on this origin
+          changeOrigin: false,
           secure: false,
         },
       },

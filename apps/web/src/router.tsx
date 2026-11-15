@@ -1,12 +1,13 @@
-import { createBrowserRouter, type RouteObject } from 'react-router'
+import { Navigate, type RouteObject, createBrowserRouter } from 'react-router'
 import { ScreenSpinner } from '@/ui/components/ui/spinner'
 
 import RootLayout from '@/layout/root.layout'
-import IndexPage from '@/pages/index.page'
 import ErrorPage from '@/pages/error.page'
+import IndexPage from '@/pages/index.page'
 
 /**
  * App routes as an array of React Router `RouteObject`s.
+ * `/` redirects to the landing site; `/estimate` is the customer flow; `/admin/*` is the local admin.
  */
 const routes: RouteObject[] = [
   {
@@ -22,10 +23,36 @@ const routes: RouteObject[] = [
       {
         path: '/estimate',
         async lazy() {
-          return { Component: (await import('@/pages/move-demo.page')).default }
+          return { Component: (await import('@/pages/estimate.page')).default }
         },
       },
-
+      {
+        path: '/admin',
+        async lazy() {
+          return { Component: (await import('@/pages/admin/admin.layout')).default }
+        },
+        children: [
+          { index: true, element: <Navigate to="/admin/leads" replace /> },
+          {
+            path: 'leads',
+            async lazy() {
+              return { Component: (await import('@/pages/admin/leads.page')).default }
+            },
+          },
+          {
+            path: 'movers',
+            async lazy() {
+              return { Component: (await import('@/pages/admin/movers.page')).default }
+            },
+          },
+          {
+            path: 'quote-requests',
+            async lazy() {
+              return { Component: (await import('@/pages/admin/quote-requests.page')).default }
+            },
+          },
+        ],
+      },
     ],
   },
 ]

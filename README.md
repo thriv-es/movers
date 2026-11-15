@@ -88,7 +88,7 @@ One command starts both apps:
 | Landing page | http://localhost:4600 |
 | Estimator, full stack (UI + API) | http://localhost:4610 |
 
-The estimator is served by `wrangler pages dev` on 4610, which runs the API and proxies the UI from Vite on 4611. Open 4610, not 4611.
+The estimator UI is served by Vite on 4610, which proxies `/api` to `wrangler pages dev` on 4611. Open 4610, not 4611. (Wrangler cannot be the entry point: with `pages_build_output_dir` set it ignores `--proxy` and serves the stale `dist/` build.)
 
 To run one app only: `pnpm dev:web` or `pnpm dev:landing`.
 
@@ -134,7 +134,7 @@ To target one app: `pnpm --filter @movers/web <script>` or `pnpm --filter @mover
 | `pnpm: Cannot find module .../pnpm.cjs` | A broken corepack shim. Run `corepack enable && corepack prepare pnpm@10.18.3 --activate`, or install pnpm another way. |
 | The estimator shows the **Demo data** badge | The mock answered. Check `wrangler whoami`, the account selection in `apps/web/.dev.vars.example`, and the API log lines from `pnpm dev`. |
 | `We couldn't analyze these images` with real AI | The vision model terms are not accepted on the account (see the note above), or the photo shows nothing recognisable. |
-| The page at 4610 is blank or 502 right after start | Vite on 4611 is not up yet. Wait a second and reload. |
+| `/api` calls on 4610 fail with 502 right after start | Wrangler on 4611 is not up yet (it applies D1 migrations first). Wait a few seconds and retry. |
 
 ## Deploying
 

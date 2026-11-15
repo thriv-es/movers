@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * Starts the estimator API (`wrangler pages dev`) on the fixed port 4610, proxying the Vite dev server on 4611.
+ * Starts the estimator API (`wrangler pages dev`) on the fixed port 4611. Vite on 4610 is the entry point and proxies
+ * /api here (see vite.config.ts). Wrangler is given a placeholder static directory rather than dist/, because with
+ * `pages_build_output_dir` set it would otherwise serve a stale production build (and ignore `--proxy`).
  *
  * Why this is a script and not a plain `wrangler pages dev ...`: a Workers AI binding is always remote, and Wrangler
  * refuses to start at all when it cannot open the remote session (not logged in, offline, several accounts and none
@@ -22,8 +24,8 @@ import { fileURLToPath } from 'node:url'
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const WRANGLER = join(ROOT, 'node_modules', '.bin', 'wrangler')
 const PLACEHOLDER_TOKEN = 'your_cloudflare_ai_gateway_token_here'
-const PORT = '4610'
-const PROXY_PORT = '4611'
+const PORT = '4611'
+const STATIC_DIR = join(ROOT, 'scripts', 'dev-static')
 /** If Wrangler exits non-zero before it is ready within this window, treat it as "binding unavailable". */
 const STARTUP_WINDOW_MS = 45_000
 
@@ -63,7 +65,7 @@ function applyMigrations() {
 function baseArgs() {
   // The D1 binding comes from wrangler.toml ([[d1_databases]]), so `pages dev` and `d1 migrations apply` share the
   // same local database. Passing `--d1` here would create a second, empty one.
-  const args = ['pages', 'dev', '--proxy', PROXY_PORT, '--port', PORT]
+  const args = ['pages', 'dev', STATIC_DIR, '--port', PORT]
   // Wrangler reads .dev.vars itself; only a value that came from the shell needs to be passed on.
   if (process.env.AI_MODE) args.push('--binding', `AI_MODE=${process.env.AI_MODE}`)
   return args

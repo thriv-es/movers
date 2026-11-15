@@ -117,6 +117,22 @@ describe('mockChatReply', () => {
     expect(details.originFloor).toBe(3)
   })
 
+  it('pulls the street address out of a chatty first answer', () => {
+    const chatty = [
+      "I'm moving on 2027-01-15 to 456 Oak Ave, Dallas, TX (1st floor, with an elevator) from a 3rd-floor apartment that has no elevator at 123 Main St, Austin, TX 78701",
+      'Going to 456 Oak Ave, Dallas, TX.',
+    ]
+    const { replies } = converse(chatty)
+    const d = sessionData(replies[replies.length - 1] ?? '').data_collected
+    expect(d).toMatchObject({
+      origin_address: '123 Main St, Austin, TX 78701',
+      origin_city: 'Austin',
+      origin_state: 'TX',
+      destination_address: '456 Oak Ave, Dallas, TX',
+      destination_city: 'Dallas',
+    })
+  })
+
   it('is not ready on the first reply, nor before the fifth answer', () => {
     const { replies } = converse(FIVE_ANSWERS.slice(0, 4))
     expect(replies).toHaveLength(5)
