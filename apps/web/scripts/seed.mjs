@@ -23,9 +23,9 @@ const SEED_TAG = 'Seed:'
 
 const MOVERS = [
   {
-    name: 'Harbor Line Moving',
-    email: 'quotes@harborline.example',
-    website: 'https://harborline.example',
+    name: 'Bay State Relocation',
+    email: 'quotes@baystate-relo.example',
+    website: 'https://baystate-relo.example',
     serviceArea: 'Boston and the North Shore',
   },
   {
@@ -248,7 +248,7 @@ const LEADS = [
     elevators: [false, false],
     status: 'quoted',
     contact: { name: 'Marcus Lee', email: 'marcus.lee@example.com', phone: '+1 415 555 0123' },
-    quotes: ['Golden Gate Movers', 'Harbor Line Moving'],
+    quotes: ['Golden Gate Movers', 'Bay State Relocation'],
     replied: ['Golden Gate Movers'],
   },
   {
@@ -335,7 +335,7 @@ const LEADS = [
     elevators: [false, true],
     status: 'won',
     contact: { name: 'Sample Customer', email: 'sample@example.com', phone: '' },
-    quotes: ['Lone Star Relocation', 'Harbor Line Moving'],
+    quotes: ['Lone Star Relocation', 'Bay State Relocation'],
     replied: ['Lone Star Relocation'],
     notes: 'Sample move used for the demo walkthrough.',
   },
