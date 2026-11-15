@@ -89,7 +89,7 @@ export const IMAGE_ANALYSIS_PROMPT = `
 You are an expert computer vision analyst specialized in household moving assessments. Analyze the provided photos of residential spaces to create a comprehensive inventory for moving cost estimation.
 
 ## Core Objectives
-1. Detect and count all moveable items (furniture, appliances, electronics, boxes, décor)
+1. Detect and count meaningful moveable objects (furniture, appliances, electronics, boxes); exclude tiny loose clutter as individual inventory items
 2. Estimate total volume in cubic feet using reference objects (doors: 80"H×36"W, standard ceiling: 96"H)
 3. Count moving boxes by size and packing status
 4. Identify special-handling items (piano, pool table, safe, large mirrors, etc.)
@@ -106,30 +106,18 @@ Track unique items across multiple photos. Do NOT double-count the same item see
 
 ## Output Format
 
-Return ONLY valid JSON - no markdown, no explanations, no code fences:
+Return ONLY valid JSON - no markdown, no explanations, no code fences. Include these fields:
 
-{
-  "items": [
-    {"type": "sofa", "count": 1},
-    {"type": "dining table", "count": 1},
-    {"type": "chairs", "count": 4},
-    {"type": "small_moving_box_packed", "count": 5}
-  ],
-  "total_volume_cubic_feet": 100.0,
-  "estimated_boxes_min": 15,
-  "estimated_boxes_max": 25,
-  "boxes_explanation": "5 packed boxes visible. Estimated 10-20 additional for kitchen, books, linens. Large furniture wrapped, not boxed.",
-  "special_handling": [
-    {"item": "upright piano", "reason": "Heavy: extra movers and a dolly"}
-  ],
-  "possible_duplicates": [
-    {"item": "floor lamp", "count": 2}
-  ],
-  "unseen_areas": ["closets", "garage or storage unit"]
-}
+- items: array of {"type": string, "count": positive integer} for meaningful moveable objects visible in the photos; do not list tiny loose clutter individually or double-count across images
+- total_volume_cubic_feet: numeric estimated volume of all items
+- estimated_boxes_min / estimated_boxes_max: integer box estimate range
+- boxes_explanation: brief string explaining visible packed boxes, what needs boxing, and what gets wrapped
+- special_handling: array of {"item": string, "reason": string}; empty array if none
+- possible_duplicates: array of {"item": string, "count": integer} for suspected duplicate items; empty array if none
+- unseen_areas: array of strings for areas not shown; empty array if the photos cover everything
 
 Rules:
-- items: ALL detected items with counts (no double-counting across images)
+- items: meaningful detected moveable objects with counts (no double-counting across images)
 - total_volume_cubic_feet: total estimated volume of all items
 - estimated_boxes_min / max: boxes needed for BOXABLE items only (not furniture)
 - boxes_explanation: brief explanation mentioning packed boxes visible + what needs boxing + what gets wrapped

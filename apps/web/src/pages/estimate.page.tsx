@@ -20,6 +20,7 @@ import {
   loadSession,
   sampleSession,
 } from '@/lib/estimate-session'
+import { canonicalItemType } from '@/lib/item-aliases'
 import { useEstimateSession } from '@/lib/useEstimateSession'
 
 const STEP_LABELS: Record<StepKey, string> = {
@@ -33,7 +34,7 @@ const STEP_LABELS: Record<StepKey, string> = {
 
 const STEPS = ESTIMATE_STEPS.map((key) => ({ key, label: STEP_LABELS[key] }))
 
-const sameType = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+const sameType = (a: string, b: string) => canonicalItemType(a) === canonicalItemType(b)
 
 /** The estimator: six steps, one session, refresh-safe. */
 export default function EstimatePage(): JSX.Element {

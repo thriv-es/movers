@@ -2,6 +2,7 @@
  * Parses and merges the vision model's per-photo inventories into one (see `runVision`: the model takes one image
  * per request). Pure functions, so the merge rules are unit tested without a model.
  */
+import { canonicalItemType } from '../../../src/lib/item-aliases'
 import { extractAndRepairJSON } from './json-utils'
 
 export interface ModelAnalysis {
@@ -42,19 +43,18 @@ function uniqueBy<T>(entries: T[], by: (entry: T) => string): T[] {
  */
 export function mergeAnalyses(parts: ModelAnalysis[]): ModelAnalysis {
   if (parts.length === 0) throw new Error('No analyses to merge')
-  if (parts.length === 1) return parts[0] as ModelAnalysis
-
   const items = new Map<string, { type: string; count: number }>()
   for (const part of parts) {
     for (const item of part.items) {
-      const k = key(item?.type)
+      const k = typeof item?.type === 'string' ? canonicalItemType(item.type) : ''
       if (!k) continue
       const count = typeof item.count === 'number' && item.count > 0 ? item.count : 1
       const existing = items.get(k)
       if (existing) existing.count += count
-      else items.set(k, { type: item.type.trim(), count })
+      else items.set(k, { type: k, count })
     }
   }
+  if (parts.length === 1) return { ...parts[0]!, items: [...items.values()] }
 
   const everyHas = (field: 'estimated_boxes_min' | 'estimated_boxes_max') =>
     parts.every((part) => typeof part[field] === 'number')

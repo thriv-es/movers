@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { ReviewStep } from '../src/components/estimate/ReviewStep'
 import { type ModelAnalysis, mergeAnalyses, parseModelAnalysis } from '../functions/api/_lib/analysis-merge'
+import { IMAGE_ANALYSIS_PROMPT } from '../functions/api/_lib/prompts'
 
 const livingRoom: ModelAnalysis = {
   items: [
@@ -50,14 +54,29 @@ describe('parseModelAnalysis', () => {
 })
 
 describe('mergeAnalyses', () => {
-  it('returns a single inventory untouched', () => {
-    expect(mergeAnalyses([livingRoom])).toBe(livingRoom)
+  it('normalizes a single inventory by value without changing its totals or notes', () => {
+    expect(mergeAnalyses([livingRoom])).toEqual({
+      ...livingRoom,
+      items: [{ type: 'sofa', count: 1 }, { type: 'floor lamp', count: 2 }],
+    })
+  })
+
+  it('normalizes a one-photo couch alias without changing its count', () => {
+    expect(mergeAnalyses([{ items: [{ type: ' couch ', count: 3 }], total_volume_cubic_feet: 10 }]).items)
+      .toEqual([{ type: 'sofa', count: 3 }])
+  })
+
+  it('combines couch and sofa across photos without losing counts', () => {
+    expect(mergeAnalyses([
+      { items: [{ type: 'couch', count: 1 }], total_volume_cubic_feet: 10 },
+      { items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 10 },
+    ]).items).toEqual([{ type: 'sofa', count: 2 }])
   })
 
   it('adds up items by type (case-insensitive), volumes and box estimates', () => {
     const merged = mergeAnalyses([livingRoom, bedroom])
     expect(merged.items).toEqual([
-      { type: 'Sofa', count: 2 },
+      { type: 'sofa', count: 2 },
       { type: 'floor lamp', count: 3 },
       { type: 'bed', count: 1 },
     ])
@@ -100,5 +119,35 @@ describe('mergeAnalyses', () => {
 
   it('refuses an empty set', () => {
     expect(() => mergeAnalyses([])).toThrow()
+  })
+})
+
+describe('review inventory aliases', () => {
+  it('adds a couch to the edited sofa row without replacing its name or count', () => {
+    const onItemsChange = vi.fn()
+    render(createElement(ReviewStep, {
+      analysis: {
+        items: [{ type: 'sofa', count: 1 }], totalVolumeCubicFeet: 10,
+        estimatedBoxes: { min: 1, max: 2 }, boxesExplanation: '',
+        specialHandling: [], possibleDuplicates: [], unseenAreas: [],
+      },
+      items: [{ type: 'Sofa', count: 2 }],
+      followUps: { garage: false, closets: false, appliances: false },
+      wholeMoveCovered: true,
+      onWholeMoveCovered: vi.fn(), onItemsChange, onFollowUp: vi.fn(), onBack: vi.fn(), onConfirm: vi.fn(),
+    }))
+    fireEvent.change(screen.getByLabelText('Add something we missed'), { target: { value: ' couch ' } })
+    fireEvent.change(screen.getByLabelText('Count'), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(onItemsChange).toHaveBeenCalledWith([{ type: 'Sofa', count: 5 }])
+  })
+})
+
+describe('image inventory prompt', () => {
+  it('does not seed the model with a concrete sample inventory and excludes tiny loose clutter', () => {
+    expect(IMAGE_ANALYSIS_PROMPT).not.toContain('{"type": "sofa", "count": 1}')
+    expect(IMAGE_ANALYSIS_PROMPT).toMatch(/tiny loose clutter/i)
+    expect(IMAGE_ANALYSIS_PROMPT).toContain('possible_duplicates')
+    expect(IMAGE_ANALYSIS_PROMPT).toContain('unseen_areas')
   })
 })

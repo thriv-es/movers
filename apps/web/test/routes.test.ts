@@ -7,6 +7,7 @@
 import type { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Bindings } from '../functions/api/_lib/types'
+import { sampleCacheKey } from '../functions/api/_lib/sample-cache'
 import analyze from '../functions/api/_routes/analyze'
 import chat from '../functions/api/_routes/chat'
 import price from '../functions/api/_routes/price'
@@ -193,6 +194,10 @@ describe('local development with no AI credentials (offline mock)', () => {
     expect(spread(unknown.price)).toBeGreaterThanOrEqual(spread(known.price) - 0.01)
   })
 
+  it('uses a new sample cache namespace after the analysis changes', async () => {
+    expect(await sampleCacheKey('analyze', { count: 1 })).toContain('/v4/analyze/')
+  })
+
   it('serves the sample move from cache on the second call (MOVERS-16)', async () => {
     const body = { imageUrls: ['http://localhost/api/images/sample-1.png'], sample: true }
     const first = await post(analyze, body, env())
@@ -261,7 +266,7 @@ describe('photo analysis through the Workers AI binding (one image per call)', (
     JSON.stringify({ items: [{ type, count: 1 }], total_volume_cubic_feet: volume, unseen_areas: ['garage'] })
 
   it('analyzes each photo separately, retries a photo whose answer is not JSON, and merges the inventories', async () => {
-    const answers = [inventory('sofa', 100), 'Sorry, I cannot see a kitchen here.', inventory('fridge', 60)]
+    const answers = [inventory('couch', 100), 'Sorry, I cannot see a kitchen here.', inventory('fridge', 60)]
     const AI = { run: vi.fn(async () => ({ response: answers.shift() ?? '' })) }
     const bindings = env({ ENV: 'preview', AI })
 
@@ -280,6 +285,13 @@ describe('photo analysis through the Workers AI binding (one image per call)', (
     ])
     expect(body.totalVolumeCubicFeet).toBe(160)
     expect(body.unseenAreas).toEqual(['garage'])
+  })
+
+  it('validates a normalized one-photo alias in the response', async () => {
+    const AI = { run: vi.fn(async () => ({ response: inventory('couch', 100) })) }
+    const res = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env({ ENV: 'preview', AI }))
+    expect(res.status).toBe(200)
+    expect((await res.json()) as { items: unknown }).toMatchObject({ items: [{ type: 'sofa', count: 1 }] })
   })
 
   it('reports ANALYSIS_FAILED when a photo is still not analyzed after the retry', async () => {

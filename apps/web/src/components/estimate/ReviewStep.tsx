@@ -2,6 +2,7 @@ import { Badge, Button, Caption, Field, Input, Panel } from '@movers/ui'
 import { type FormEvent, useState } from 'react'
 import type { AnalysisResult, DetectedItem } from '@/data'
 import type { FollowUpAnswers, FollowUpKey } from '@/lib/estimate-session'
+import { canonicalItemType } from '@/lib/item-aliases'
 import { titleCase } from './format'
 
 /** What a "yes" adds to the inventory, so the price covers it. */
@@ -29,7 +30,7 @@ interface ReviewStepProps {
   onConfirm: () => void
 }
 
-const sameType = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+const sameType = (a: string, b: string) => canonicalItemType(a) === canonicalItemType(b)
 
 /** Step 4: the inventory the model saw, with flags, a duplicate check and three follow-up questions. */
 export function ReviewStep({
