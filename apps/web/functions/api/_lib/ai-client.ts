@@ -3,7 +3,7 @@
  * model's text together with the mode that actually answered, so routes can label the response.
  */
 import { generateText } from 'ai'
-import { TEXT_MODEL, VISION_MODEL, createWorkersAI } from './ai'
+import { type TextPurpose, VISION_MODEL, createWorkersAI, textModel } from './ai'
 import { type AiMode, resolveAiMode } from './ai-mode'
 import type { Bindings } from './types'
 
@@ -61,17 +61,24 @@ async function run(env: Bindings, backends: Record<Backend, () => Promise<string
   }
 }
 
-export function runText(env: Bindings, prompt: string, mock: () => string): Promise<AiResult> {
+/** `purpose` picks the model: `CHAT_MODEL` for chat turns, `PRICE_MODEL` for the pricing call (see `ai.ts`). */
+export function runText(
+  env: Bindings,
+  prompt: string,
+  mock: () => string,
+  purpose: TextPurpose = 'chat',
+): Promise<AiResult> {
+  const model = textModel(env, purpose)
   return run(
     env,
     {
       gateway: async () => {
         const ai = createWorkersAI(env.CF_AIG_TOKEN)
-        const { text } = await generateText({ model: ai(TEXT_MODEL), prompt })
+        const { text } = await generateText({ model: ai(model), prompt })
         return text
       },
       binding: async () => {
-        const output = await requireBinding(env).run(TEXT_MODEL, {
+        const output = await requireBinding(env).run(model, {
           messages: [{ role: 'user', content: prompt }],
           max_tokens: BINDING_MAX_TOKENS,
         })

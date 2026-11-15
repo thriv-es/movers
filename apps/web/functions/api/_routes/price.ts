@@ -56,7 +56,7 @@ price.post('/', async (c) => {
     })
 
     const { value, cached } = await withSampleCache(sample, 'price', { analysis, moveDetails, pricePerBox }, () =>
-      runText(c.env, prompt, () => mockPriceReply(validatedRequest, pricePerBox)),
+      runText(c.env, prompt, () => mockPriceReply(validatedRequest, pricePerBox), 'price'),
     )
     c.header('x-movers-ai-mode', value.mode)
     if (cached) c.header('x-movers-sample-cache', 'hit')

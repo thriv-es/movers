@@ -1,6 +1,6 @@
 import { generateText } from 'ai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { TEXT_MODEL, VISION_MODEL } from '../functions/api/_lib/ai'
+import { TEXT_MODEL, VISION_MODEL, textModel } from '../functions/api/_lib/ai'
 import { runText, runVision } from '../functions/api/_lib/ai-client'
 import type { Bindings } from '../functions/api/_lib/types'
 
@@ -170,5 +170,30 @@ describe('gateway mode', () => {
     expect(mock).not.toHaveBeenCalled()
 
     expect(await runText(env({ CF_AIG_TOKEN: 'token' }), 'PROMPT', mock)).toEqual({ text: 'MOCK ANSWER', mode: 'mock' })
+  })
+})
+
+describe('model selection', () => {
+  it('uses CHAT_MODEL for chat turns and PRICE_MODEL for pricing, falling back to TEXT_MODEL', async () => {
+    const AI = binding(async () => ({ response: 'ok' }))
+    const cheap = '@cf/meta/llama-3.1-8b-instruct-fp8-fast'
+
+    await runText(env({ AI, CHAT_MODEL: cheap }), 'PROMPT', mock)
+    expect(AI.run).toHaveBeenLastCalledWith(cheap, expect.anything())
+
+    await runText(env({ AI, CHAT_MODEL: cheap }), 'PROMPT', mock, 'price')
+    expect(AI.run).toHaveBeenLastCalledWith(TEXT_MODEL, expect.anything())
+
+    await runText(env({ AI, PRICE_MODEL: cheap }), 'PROMPT', mock, 'price')
+    expect(AI.run).toHaveBeenLastCalledWith(cheap, expect.anything())
+
+    await runText(env({ AI, CHAT_MODEL: '   ' }), 'PROMPT', mock)
+    expect(AI.run).toHaveBeenLastCalledWith(TEXT_MODEL, expect.anything())
+  })
+
+  it('resolves the model without env vars', () => {
+    expect(textModel({}, 'chat')).toBe(TEXT_MODEL)
+    expect(textModel({ PRICE_MODEL: 'x' }, 'chat')).toBe(TEXT_MODEL)
+    expect(textModel({ PRICE_MODEL: 'x' }, 'price')).toBe('x')
   })
 })

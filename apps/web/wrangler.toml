@@ -4,8 +4,10 @@
 # GETTING STARTED
 # ---------------
 # 1. For local dev: copy .dev.vars.example to .dev.vars and fill in secrets
-# 2. Run the stack: pnpm dev  (Vite on 4611, wrangler pages dev on 4610)
-# 3. Deploy: pnpm deploy  (builds and deploys to Cloudflare Pages)
+# 2. Run the stack: pnpm dev  (Vite on 4610 is the entry point, wrangler pages dev on 4611)
+# 3. Deploy: push a branch. The Pages project "movers" is connected to GitHub and
+#    builds every branch as a preview (root dir apps/web, `pnpm build`, output dist);
+#    `main` is production. `pnpm deploy` is the manual fallback.
 #
 # PRODUCTION SETUP
 # ----------------
@@ -46,7 +48,7 @@ bucket_name = "movers"
 [[d1_databases]]
 binding = "MOVERS_DB"
 database_name = "movers"
-database_id = "local-movers"
+database_id = "348b7021-674d-4437-9ad0-faa96fd0fc31"
 migrations_dir = "migrations"
 
 # ---------------------------------------------------------------------------
@@ -70,8 +72,27 @@ migrations_dir = "migrations"
 # =============================================================================
 # PREVIEW ENVIRONMENT
 # =============================================================================
+# Preview deployments (every non-production branch, e.g. https://dev.movers-ee0.pages.dev).
+# Bindings here override the Pages dashboard. The admin UI and API stay open on
+# previews (ENV != production) and there is no auth, so previews are for testing.
+# CHAT_MODEL/PRICE_MODEL: Workers AI models for the chat and pricing calls; empty
+# means TEXT_MODEL in functions/api/_lib/ai.ts (llama-3.3-70b). The 8B model is
+# about 6x cheaper and faster, so previews use it for the chat.
 [env.preview]
-vars = { ENV = "preview" }
+vars = { ENV = "preview", PRICE_PER_BOX = "50", CHAT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8-fast", PRICE_MODEL = "" }
+
+[[env.preview.r2_buckets]]
+binding = "MOVERS_BUCKET"
+bucket_name = "movers"
+
+[[env.preview.d1_databases]]
+binding = "MOVERS_DB"
+database_name = "movers"
+database_id = "348b7021-674d-4437-9ad0-faa96fd0fc31"
+migrations_dir = "migrations"
+
+[env.preview.ai]
+binding = "AI"
 
 # =============================================================================
 # PRODUCTION ENVIRONMENT
