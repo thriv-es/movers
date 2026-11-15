@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { extractAndRepairJSON } from '../functions/api/_lib/json-utils'
 import { mockAnalysisReply, mockChatReply, mockPriceReply } from '../functions/api/_lib/mock'
-import { zMoveInfo, zPrice } from '../src/data'
+import { zMoveDetails, zPrice } from '../src/data'
+import { sessionDataToMoveDetails } from '../functions/api/_lib/move-details'
 import type { PriceRequest } from '../src/data'
 
 type Turn = { role: 'user' | 'assistant'; content: string }
 
-/** Same extraction as the chat route and the client (`ChatStep` / `UploadStep`). */
+/** Same extraction as the chat route (`parseAssistantTurn`); the client never sees this block. */
 function sessionData(reply: string) {
   const match = reply.match(/```json\s*([\s\S]*?)\s*```/)
   expect(match, 'reply must contain a fenced json block').not.toBeNull()
@@ -44,18 +45,26 @@ const request: PriceRequest = {
     totalVolumeCubicFeet: 200,
     estimatedBoxes: { min: 6, max: 10 },
     boxesExplanation: 'test',
+    specialHandling: [],
+    possibleDuplicates: [],
+    unseenAreas: [],
   },
-  moveInfo: {
-    distance_miles: 120,
-    origin_floor: 1,
-    destination_floor: 1,
-    origin_has_elevator: true,
-    destination_has_elevator: true,
+  moveDetails: {
+    from: '123 Main St, Austin, TX',
+    to: '456 Oak Ave, Dallas, TX',
+    date: '2027-01-15',
+    distanceMiles: 120,
+    originFloor: 1,
+    destinationFloor: 1,
+    originElevator: true,
+    destinationElevator: true,
   },
 }
 
+/** The mock answers without a range; the route adds `low`/`high`. Here the total stands in for both. */
 function priceOf(req: PriceRequest, pricePerBox = 50) {
-  return zPrice.parse(extractAndRepairJSON(mockPriceReply(req, pricePerBox)))
+  const raw = extractAndRepairJSON(mockPriceReply(req, pricePerBox))
+  return zPrice.parse({ ...raw, low: raw.total, high: raw.total })
 }
 
 function sum(breakdown: Record<string, number>): number {
@@ -69,7 +78,7 @@ describe('mockChatReply', () => {
     const d = data.data_collected
 
     expect(data.readiness_for_next_stage).toBe(true)
-    // mirrors `isReadyByFields` in functions/api/_routes/chat.ts
+    // every field `sessionDataToMoveDetails` reads
     for (const field of [
       'origin_address',
       'origin_city',
@@ -99,18 +108,13 @@ describe('mockChatReply', () => {
     })
   })
 
-  it('collects move info the client can send to /api/price', () => {
+  it('collects move details the route can send to /api/price', () => {
     const { replies } = converse(FIVE_ANSWERS)
     const d = sessionData(replies[replies.length - 1] ?? '').data_collected
-    // mirrors `extractMoveInfo` in src/components/move-demo/UploadStep.tsx
-    const moveInfo = zMoveInfo.parse({
-      distance_miles: d.estimated_distance_miles,
-      origin_floor: d.origin_floor,
-      destination_floor: d.destination_floor,
-      origin_has_elevator: d.origin_has_elevator,
-      destination_has_elevator: d.destination_has_elevator,
-    })
-    expect(moveInfo.distance_miles).toBeGreaterThan(0)
+    const details = zMoveDetails.parse(sessionDataToMoveDetails(d))
+    expect(details.distanceMiles).toBeGreaterThan(0)
+    expect(details.from).toContain('Austin')
+    expect(details.originFloor).toBe(3)
   })
 
   it('is not ready on the first reply, nor before the fifth answer', () => {
@@ -165,6 +169,14 @@ describe('mockAnalysisReply', () => {
     expect(typeof data.boxes_explanation).toBe('string')
   })
 
+  it('flags a special item, a possible duplicate and unseen areas (MOVERS-23)', () => {
+    const data = extractAndRepairJSON(mockAnalysisReply(2))
+    expect(data.special_handling).toEqual([{ item: 'upright piano', reason: expect.any(String) }])
+    expect(data.possible_duplicates).toEqual([{ item: 'floor lamp', count: 2 }])
+    expect(data.unseen_areas.length).toBeGreaterThan(0)
+    expect(extractAndRepairJSON(mockAnalysisReply(1)).possible_duplicates).toEqual([])
+  })
+
   it('says it is demo data and names the photo count', () => {
     expect(extractAndRepairJSON(mockAnalysisReply(2)).boxes_explanation).toMatch(/demo/i)
     expect(extractAndRepairJSON(mockAnalysisReply(2)).boxes_explanation).toContain('2 photos')
@@ -189,16 +201,16 @@ describe('mockPriceReply', () => {
     const base = priceOf(request)
     const originStairs = priceOf({
       ...request,
-      moveInfo: { ...request.moveInfo, origin_floor: 3, origin_has_elevator: false },
+      moveDetails: { ...request.moveDetails, originFloor: 3, originElevator: false },
     })
     const bothStairs = priceOf({
       ...request,
-      moveInfo: {
-        ...request.moveInfo,
-        origin_floor: 3,
-        origin_has_elevator: false,
-        destination_floor: 2,
-        destination_has_elevator: false,
+      moveDetails: {
+        ...request.moveDetails,
+        originFloor: 3,
+        originElevator: false,
+        destinationFloor: 2,
+        destinationElevator: false,
       },
     })
     expect(originStairs.total).toBeGreaterThan(base.total)
@@ -209,26 +221,38 @@ describe('mockPriceReply', () => {
   it('does not charge for stairs when there is an elevator', () => {
     const withElevator = priceOf({
       ...request,
-      moveInfo: { ...request.moveInfo, origin_floor: 5, origin_has_elevator: true },
+      moveDetails: { ...request.moveDetails, originFloor: 5, originElevator: true },
     })
     expect(withElevator.total).toBe(priceOf(request).total)
   })
 
   it('rises with distance and copes with unknown move info', () => {
-    const far = priceOf({ ...request, moveInfo: { ...request.moveInfo, distance_miles: 600 } })
+    const far = priceOf({ ...request, moveDetails: { ...request.moveDetails, distanceMiles: 600 } })
     expect(far.total).toBeGreaterThan(priceOf(request).total)
 
     const unknown = priceOf({
       ...request,
-      moveInfo: {
-        distance_miles: null,
-        origin_floor: null,
-        destination_floor: null,
-        origin_has_elevator: null,
-        destination_has_elevator: null,
+      moveDetails: {
+        from: null,
+        to: null,
+        date: null,
+        distanceMiles: null,
+        originFloor: null,
+        destinationFloor: null,
+        originElevator: null,
+        destinationElevator: null,
       },
     })
     expect(unknown.total).toBe(sum(unknown.breakdown))
+  })
+
+  it('adds a surcharge line per special item', () => {
+    const withPiano = priceOf({
+      ...request,
+      analysis: { ...request.analysis, specialHandling: [{ item: 'upright piano', reason: 'heavy' }] },
+    })
+    expect(withPiano.breakdown['Special handling: upright piano']).toBe(150)
+    expect(withPiano.total).toBe(priceOf(request).total + 150)
   })
 
   it('says it is a demo estimate', () => {

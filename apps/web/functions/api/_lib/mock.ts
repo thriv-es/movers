@@ -5,7 +5,7 @@
  * single parsing path. Everything here is demo data: the routes label it with `x-movers-ai-mode: mock`.
  */
 import type { PriceRequest } from '../../../src/data'
-import { calculatePrice } from './pricing'
+import { calculatePrice, specialHandlingLines } from './pricing'
 
 const FENCE = '```'
 
@@ -125,12 +125,16 @@ export function mockAnalysisReply(imageCount: number): string {
         { type: 'floor lamp', count: 2 },
         { type: 'dining table', count: 1 },
         { type: 'chairs', count: 4 },
+        { type: 'upright piano', count: 1 },
         { type: 'small_moving_box_packed', count: 6 },
       ],
-      total_volume_cubic_feet: 320,
+      total_volume_cubic_feet: 360,
       estimated_boxes_min: 12,
       estimated_boxes_max: 18,
       boxes_explanation: `${DEMO_NOTE}. This is a sample inventory, not an analysis of your ${photos}. 6 packed boxes plus an estimated 6-12 more for books, kitchenware and linens. Large furniture is wrapped, not boxed.`,
+      special_handling: [{ item: 'upright piano', reason: 'Needs two extra movers and a piano board' }],
+      possible_duplicates: imageCount > 1 ? [{ item: 'floor lamp', count: 2 }] : [],
+      unseen_areas: ['kitchen', 'bedroom closets', 'garage or storage'],
     },
     null,
     2,
@@ -146,31 +150,37 @@ function stairsSurcharge(floor: number | null, hasElevator: boolean | null): num
   return (floor - 1) * DOLLARS_PER_FLIGHT
 }
 
-/** The existing `calculatePrice` box cost plus flat distance and stairs surcharges. */
+/** The existing `calculatePrice` box cost plus flat distance, stairs and special-item surcharges. */
 export function mockPriceReply(request: PriceRequest, pricePerBox: number): string {
-  const { analysis, moveInfo } = request
+  const { analysis, moveDetails } = request
   const boxes = calculatePrice({ items: analysis.items, estimatedBoxes: analysis.estimatedBoxes, pricePerBox })
   const breakdown: Record<string, number> = { ...boxes.breakdown }
 
-  const miles = moveInfo.distance_miles ?? ASSUMED_DISTANCE_MILES
+  const miles = moveDetails.distanceMiles ?? ASSUMED_DISTANCE_MILES
   const transportation = Math.round(miles * DOLLARS_PER_MILE)
   if (transportation > 0) breakdown['Transportation (distance)'] = transportation
 
-  const originStairs = stairsSurcharge(moveInfo.origin_floor, moveInfo.origin_has_elevator)
+  const originStairs = stairsSurcharge(moveDetails.originFloor, moveDetails.originElevator)
   if (originStairs > 0) breakdown['Stairs surcharge (origin)'] = originStairs
 
-  const destinationStairs = stairsSurcharge(moveInfo.destination_floor, moveInfo.destination_has_elevator)
+  const destinationStairs = stairsSurcharge(moveDetails.destinationFloor, moveDetails.destinationElevator)
   if (destinationStairs > 0) breakdown['Stairs surcharge (destination)'] = destinationStairs
 
+  Object.assign(breakdown, specialHandlingLines(analysis.specialHandling))
+
   const total = Object.values(breakdown).reduce((sum, value) => sum + value, 0)
-  const distanceNote = moveInfo.distance_miles === null ? ` (distance unknown, ${ASSUMED_DISTANCE_MILES} assumed)` : ''
+  const distanceNote =
+    moveDetails.distanceMiles === null ? ` (distance unknown, ${ASSUMED_DISTANCE_MILES} assumed)` : ''
+  const specialNote = analysis.specialHandling.length
+    ? ` Special handling adds a flat fee per item (${analysis.specialHandling.map((entry) => entry.item).join(', ')}).`
+    : ''
 
   return JSON.stringify(
     {
       currency: boxes.currency,
       total,
       breakdown,
-      explanation: `${DEMO_NOTE}, so this is a demo estimate and not a real quote. It adds the box cost, $${DOLLARS_PER_MILE} per mile over ${miles} miles${distanceNote} and $${DOLLARS_PER_FLIGHT} per flight of stairs where there is no elevator.`,
+      explanation: `${DEMO_NOTE}, so this is a demo estimate and not a real quote. It adds the box cost, $${DOLLARS_PER_MILE} per mile over ${miles} miles${distanceNote} and $${DOLLARS_PER_FLIGHT} per flight of stairs where there is no elevator.${specialNote}`,
       confidence: 'low',
     },
     null,

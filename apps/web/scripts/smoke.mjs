@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * HTTP smoke test of the whole estimate flow against a running dev stack:
- * chat (until finished) -> upload -> analyze -> price.
+ * chat (until finished) -> upload -> analyze -> price -> save estimate -> contact -> movers -> quote requests ->
+ * admin lists (the admin API is expected to answer 404 when the stack runs with ENV=production).
  *
  *   pnpm dev                                  # in another terminal
  *   pnpm smoke                                # http://localhost:4610
@@ -159,7 +160,7 @@ function fail(message) {
 
 const modes = []
 
-async function request(label, path, init, { ai = false } = {}) {
+async function request(label, path, init, { ai = false, expectStatus = null } = {}) {
   const started = Date.now()
   let response
   try {
@@ -174,7 +175,9 @@ async function request(label, path, init, { ai = false } = {}) {
   const text = await response.text()
   console.log(`  ${label.padEnd(10)} ${response.status}  ${ai ? `mode=${mode ?? '(none)'}` : ''}  ${seconds}s`)
 
-  if (!response.ok) fail(`${label}: HTTP ${response.status} ${text.slice(0, 500)}`)
+  if (expectStatus !== null) {
+    if (response.status !== expectStatus) fail(`${label}: HTTP ${response.status}, expected ${expectStatus}`)
+  } else if (!response.ok) fail(`${label}: HTTP ${response.status} ${text.slice(0, 500)}`)
   if (ai) {
     if (!AI_MODES.includes(mode)) fail(`${label}: missing or unknown ${MODE_HEADER} header: ${mode}`)
     if (EXPECT_MODE && mode !== EXPECT_MODE) fail(`${label}: answered by "${mode}", expected "${EXPECT_MODE}"`)
@@ -188,38 +191,27 @@ async function request(label, path, init, { ai = false } = {}) {
   }
 }
 
-function postJson(label, path, body, options) {
-  const init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
+function sendJson(method, label, path, body, options) {
+  const init = { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
   return request(label, path, init, options)
 }
 
-/** Same extraction as the browser (`extractMoveInfo` in src/components/move-demo/UploadStep.tsx). */
-function extractMoveInfo(messages) {
-  const last = messages.filter((message) => message.role === 'assistant').at(-1)
-  const match = last?.content.match(/```json\s*([\s\S]*?)\s*```/)
-  let collected = {}
-  try {
-    collected = JSON.parse(match?.[1] ?? '{}').data_collected ?? {}
-  } catch {
-    /* same as the browser: fall through to nulls */
-  }
-  return {
-    distance_miles: collected.estimated_distance_miles ?? null,
-    origin_floor: collected.origin_floor ?? null,
-    destination_floor: collected.destination_floor ?? null,
-    origin_has_elevator: collected.origin_has_elevator ?? null,
-    destination_has_elevator: collected.destination_has_elevator ?? null,
-  }
-}
+const postJson = (label, path, body, options) => sendJson('POST', label, path, body, options)
+const patchJson = (label, path, body, options) => sendJson('PATCH', label, path, body, options)
 
+/** Walks the chat until the server says it has every detail; returns the structured move details (MOVERS-11). */
 async function chat() {
   const messages = []
+  let moveDetails = {}
   for (let turn = 0; turn <= MAX_CHAT_TURNS; turn++) {
-    const reply = await postJson(`chat[${turn}]`, '/api/chat', { messages }, { ai: true })
-    if (typeof reply.content !== 'string' || !reply.content.trim()) fail(`chat[${turn}]: empty content`)
+    const reply = await postJson(`chat[${turn}]`, '/api/chat', { messages, moveDetails }, { ai: true })
+    if (typeof reply.reply !== 'string' || !reply.reply.trim()) fail(`chat[${turn}]: empty reply`)
+    if (/```|"data_collected"/.test(reply.reply)) fail(`chat[${turn}]: the reply still contains the JSON block`)
     if (typeof reply.finished !== 'boolean') fail(`chat[${turn}]: "finished" is not a boolean`)
-    messages.push({ id: `smoke-${turn}-assistant`, role: 'assistant', content: reply.content })
-    if (reply.finished) return messages
+    if (!reply.moveDetails || typeof reply.moveDetails !== 'object') fail(`chat[${turn}]: no moveDetails`)
+    moveDetails = reply.moveDetails
+    messages.push({ id: `smoke-${turn}-assistant`, role: 'assistant', content: reply.reply })
+    if (reply.finished) return moveDetails
     messages.push({ id: `smoke-${turn}-user`, role: 'user', content: ANSWERS[turn] ?? EVERYTHING })
   }
   fail(`chat: not finished after ${MAX_CHAT_TURNS} answers`)
@@ -247,9 +239,9 @@ async function upload() {
 async function main() {
   console.log(`Movers smoke test against ${BASE_URL}${EXPECT_MODE ? ` (expecting mode "${EXPECT_MODE}")` : ''}`)
 
-  const messages = await chat()
-  const moveInfo = extractMoveInfo(messages)
-  console.log(`             move info: ${JSON.stringify(moveInfo)}`)
+  const moveDetails = await chat()
+  if (!moveDetails.from || !moveDetails.to) fail('chat: finished without from/to')
+  console.log(`             move details: ${JSON.stringify(moveDetails)}`)
 
   const imageUrls = await upload()
 
@@ -257,13 +249,77 @@ async function main() {
   if (!Array.isArray(analysis.items) || analysis.items.length === 0) fail('analyze: no items')
   if (typeof analysis.totalVolumeCubicFeet !== 'number') fail('analyze: totalVolumeCubicFeet is not a number')
   if (typeof analysis.estimatedBoxes?.max !== 'number') fail('analyze: estimatedBoxes.max is not a number')
+  for (const key of ['specialHandling', 'possibleDuplicates', 'unseenAreas']) {
+    if (!Array.isArray(analysis[key])) fail(`analyze: ${key} is not an array`)
+  }
   const items = analysis.items.map((item) => `${item.count} ${item.type}`).join(', ')
   console.log(`             ${analysis.items.length} item types (${items}), ${analysis.totalVolumeCubicFeet} cu ft`)
 
-  const { price } = await postJson('price', '/api/price', { analysis, moveInfo }, { ai: true })
+  const { price } = await postJson('price', '/api/price', { analysis, moveDetails }, { ai: true })
   if (typeof price?.total !== 'number' || !(price.total > 0)) fail('price: total is not a positive number')
   if (!price.breakdown || typeof price.breakdown !== 'object') fail('price: no breakdown')
-  console.log(`             ${price.currency} ${price.total} (${Object.keys(price.breakdown).length} lines)`)
+  if (!(price.low <= price.total && price.total <= price.high)) fail('price: range does not bracket the total')
+  console.log(
+    `             ${price.currency} ${price.low} to ${price.high} (mid ${price.total}, ${Object.keys(price.breakdown).length} lines, ${price.confidence})`,
+  )
+
+  // the sample move is served from cache the second time (MOVERS-16)
+  await postJson('sample[1]', '/api/analyze', { imageUrls, sample: true }, { ai: true })
+  const sampleAgain = await fetch(`${BASE_URL}/api/analyze`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ imageUrls, sample: true }),
+  })
+  if (sampleAgain.headers.get('x-movers-sample-cache') !== 'hit')
+    fail('sample: second analyze call was not a cache hit')
+  console.log('  sample[2]  200  cache=hit')
+
+  // saved estimate (lead), contact, movers and quote requests
+  const saved = await postJson('estimate', '/api/estimates', {
+    moveDetails,
+    analysis,
+    items: analysis.items,
+    price,
+    photoKeys: imageUrls.map((url) => url.split('/api/images/')[1] ?? url),
+  })
+  if (typeof saved.id !== 'string' || saved.id.length < 10) fail('estimate: no id')
+  console.log(`             estimate ${saved.id} (${saved.storage})`)
+
+  const contact = await patchJson('contact', `/api/estimates/${saved.id}/contact`, {
+    name: 'Smoke Tester',
+    email: 'smoke@example.com',
+    phone: '555-0100',
+    requestedDate: '2027-01-20',
+  })
+  if (contact.reference !== saved.id) fail('contact: reference does not match the estimate id')
+
+  const { movers } = await request('movers', '/api/movers', {})
+  if (!Array.isArray(movers) || movers.length === 0) fail('movers: no active movers')
+  const picked = movers.slice(0, 2).map((mover) => mover.id)
+  const quotes = await postJson('quotes', '/api/quote-requests', {
+    estimateId: saved.id,
+    moverIds: picked,
+    note: 'Smoke',
+  })
+  if (!Array.isArray(quotes.requests) || quotes.requests.length !== picked.length) fail('quotes: wrong request count')
+  console.log(`             ${quotes.requests.length} quote request(s) logged to ${picked.length} mover(s)`)
+
+  // admin lists; a production stack must hide them
+  const status = await fetch(`${BASE_URL}/api/admin/status`)
+  if (status.status === 404) {
+    console.log('  admin      404  (ENV=production, admin disabled as designed)')
+  } else {
+    const leads = await request('admin', '/api/admin/leads', {})
+    if (!leads.leads?.some((lead) => lead.id === saved.id)) fail('admin: the saved estimate is not in the leads list')
+    const lead = await request('lead', `/api/admin/leads/${saved.id}`, {})
+    if (lead.lead?.status !== 'quoted') fail(`lead: expected status "quoted", got ${lead.lead?.status}`)
+    if (lead.quoteRequests?.length !== picked.length) fail('lead: quote requests missing from the detail')
+    await request('admin-mv', '/api/admin/movers', {})
+    await request('admin-qr', '/api/admin/quote-requests', {})
+    const csv = await fetch(`${BASE_URL}/api/admin/leads.csv`)
+    if (!csv.ok || !(await csv.text()).includes(saved.id)) fail('admin: CSV export does not contain the lead')
+    console.log('  csv        200  contains the lead')
+  }
 
   const chatModes = [...new Set(modes.filter(([label]) => label.startsWith('chat')).map(([, mode]) => mode))]
   const modeOf = (name) => modes.find(([label]) => label === name)?.[1]

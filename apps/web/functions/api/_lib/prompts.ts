@@ -1,7 +1,7 @@
 // Prompt templates for Cloudflare AI Gateway.
 // Variables use {{double_braces}} and are substituted at call time.
 // FENCE is defined to allow ``` inside template literals without escaping.
-const FENCE = '```';
+const FENCE = '```'
 
 // ---------------------------------------------------------------------------
 // Chat - Move East AI moving consultant
@@ -79,7 +79,7 @@ ${FENCE}
 Do NOT include headers like "Your Response to Customer:" - just the message text followed by the JSON block.
 
 Set readiness_for_next_stage: true ONLY when ALL of these are collected: origin_address, origin_city, origin_state, destination_address, destination_city, destination_state, move_date, origin_floor, origin_has_elevator, destination_floor, destination_has_elevator.
-`.trim();
+`.trim()
 
 // ---------------------------------------------------------------------------
 // Analyze - Visual inventory analysis for moving estimation
@@ -118,7 +118,14 @@ Return ONLY valid JSON - no markdown, no explanations, no code fences:
   "total_volume_cubic_feet": 100.0,
   "estimated_boxes_min": 15,
   "estimated_boxes_max": 25,
-  "boxes_explanation": "5 packed boxes visible. Estimated 10-20 additional for kitchen, books, linens. Large furniture wrapped, not boxed."
+  "boxes_explanation": "5 packed boxes visible. Estimated 10-20 additional for kitchen, books, linens. Large furniture wrapped, not boxed.",
+  "special_handling": [
+    {"item": "upright piano", "reason": "Heavy: extra movers and a dolly"}
+  ],
+  "possible_duplicates": [
+    {"item": "floor lamp", "count": 2}
+  ],
+  "unseen_areas": ["closets", "garage or storage unit"]
 }
 
 Rules:
@@ -126,8 +133,11 @@ Rules:
 - total_volume_cubic_feet: total estimated volume of all items
 - estimated_boxes_min / max: boxes needed for BOXABLE items only (not furniture)
 - boxes_explanation: brief explanation mentioning packed boxes visible + what needs boxing + what gets wrapped
+- special_handling: items that need extra movers, crating, disassembly or a specialist (piano, safe, pool table, large glass, appliances); empty array if none
+- possible_duplicates: items you may have counted twice across photos, with the count you reported; empty array if none
+- unseen_areas: rooms or storage the photos do not show but a home like this usually has (closets, garage, basement, attic); empty array if the photos cover everything
 - Return ONLY the JSON object
-`.trim();
+`.trim()
 
 // ---------------------------------------------------------------------------
 // Price - Moving cost estimation engine
@@ -138,6 +148,7 @@ You are a professional moving cost analyst for Move East. Generate an accurate, 
 
 ## Input Variables
 - items: {{items}} - JSON array of detected items with "type" and "count"
+- special_handling: {{special_handling}} - JSON array of items needing extra movers, crating or a specialist, with "item" and "reason"; add a surcharge line per entry from the Special Items table (empty array = none)
 - total_volume_cubic_feet: {{total_volume_cubic_feet}}
 - estimated_boxes_min: {{estimated_boxes_min}}
 - estimated_boxes_max: {{estimated_boxes_max}}
@@ -211,11 +222,11 @@ Rules:
 - total must equal the sum of all breakdown values
 - explanation: 2–3 sentences, customer-friendly, note any null assumptions made
 - Return ONLY the JSON object
-`.trim();
+`.trim()
 
 // ---------------------------------------------------------------------------
 // Helper - substitute {{variable}} placeholders in a prompt template
 // ---------------------------------------------------------------------------
 export function substituteVars(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? 'null');
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? 'null')
 }

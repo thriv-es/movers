@@ -1,68 +1,41 @@
 import { Hono } from 'hono'
 import type { Bindings } from '../_lib/types'
 import type { ChatApiResponse } from '../../../src/data'
-import { zChatMessage } from '../../../src/data'
+import { zChatApiRequest } from '../../../src/data'
 import { runText } from '../_lib/ai-client'
 import { mockChatReply } from '../_lib/mock'
+import { parseAssistantTurn } from '../_lib/move-details'
 import { SYSTEM_PROMPT, substituteVars } from '../_lib/prompts'
 
 const chat = new Hono<{ Bindings: Bindings }>()
 
+/**
+ * One chat turn. The model answers with prose plus a JSON session block; the server strips the block and returns
+ * `{ reply, moveDetails, finished }`, so a chat bubble never contains JSON and the client never parses message text.
+ */
 chat.post('/', async (c) => {
   try {
-    const body = await c.req.json()
-    const { messages } = body
-
-    if (!Array.isArray(messages)) {
-      return c.json({ error: 'messages must be an array' }, 400)
+    const parsed = zChatApiRequest.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) {
+      return c.json({ error: 'messages must be an array of chat messages' }, 400)
     }
+    const { messages, moveDetails: previous } = parsed.data
 
-    const validatedMessages = zChatMessage.array().parse(messages)
-
-    const conversation = validatedMessages
+    const conversation = messages
       .map((msg) => `${msg.role === 'user' ? 'Customer' : 'Assistant'}: ${msg.content}`)
       .join('\n\n')
 
     const prompt = substituteVars(SYSTEM_PROMPT, { conversation })
 
-    const { text, mode } = await runText(c.env, prompt, () => mockChatReply(validatedMessages))
+    const { text, mode } = await runText(c.env, prompt, () => mockChatReply(messages))
     c.header('x-movers-ai-mode', mode)
 
-    const jsonBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/)
-
-    let parsedSessionData: {
-      current_stage?: string
-      data_collected?: Record<string, unknown>
-      next_expected_action?: string
-      readiness_for_next_stage?: boolean
-    } | null = null
-
-    if (jsonBlockMatch) {
-      try {
-        parsedSessionData = JSON.parse(jsonBlockMatch[1]!)
-      } catch (e) {
-        console.error('Failed to parse JSON block:', e)
-      }
+    const turn = parseAssistantTurn(text, previous)
+    const apiResponse: ChatApiResponse = {
+      reply: turn.reply,
+      moveDetails: turn.moveDetails,
+      finished: turn.finished,
     }
-
-    const dataCollected = parsedSessionData?.data_collected
-    const isReadyByFields = !!(
-      dataCollected?.origin_address &&
-      dataCollected?.origin_city &&
-      dataCollected?.origin_state &&
-      dataCollected?.destination_address &&
-      dataCollected?.destination_city &&
-      dataCollected?.destination_state &&
-      dataCollected?.move_date &&
-      dataCollected?.origin_floor != null &&
-      dataCollected?.origin_has_elevator != null &&
-      dataCollected?.destination_floor != null &&
-      dataCollected?.destination_has_elevator != null
-    )
-
-    const finished = parsedSessionData?.readiness_for_next_stage === true || isReadyByFields
-
-    const apiResponse: ChatApiResponse = { content: text.trim(), finished }
     return c.json(apiResponse)
   } catch (error) {
     console.error('Chat API error:', error)

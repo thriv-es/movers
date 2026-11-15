@@ -4,7 +4,9 @@
  * every AI answer is labelled with `x-movers-ai-mode`, the mock is served only in local development, and a
  * production-like environment without AI credentials returns an error instead of mocked data.
  */
+import type { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Bindings } from '../functions/api/_lib/types'
 import analyze from '../functions/api/_routes/analyze'
 import chat from '../functions/api/_routes/chat'
 import price from '../functions/api/_routes/price'
@@ -22,8 +24,7 @@ function env(overrides: Record<string, unknown> = {}) {
   return { ENV: 'development', PRICE_PER_BOX: '50', CF_AIG_TOKEN: '', MOVERS_BUCKET: bucket, ...overrides }
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: Hono's app type is not needed for these calls
-function post(app: any, body: unknown, bindings: unknown) {
+function post(app: Hono<{ Bindings: Bindings }>, body: unknown, bindings: unknown) {
   return app.request(
     '/',
     { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
@@ -38,12 +39,15 @@ const ANSWERS = [
   '3rd floor, no elevator',
   '1st floor, elevator',
 ]
-const moveInfo = (floor: number, elevator: boolean) => ({
-  distance_miles: 50,
-  origin_floor: floor,
-  origin_has_elevator: elevator,
-  destination_floor: 1,
-  destination_has_elevator: true,
+const moveDetails = (floor: number, elevator: boolean) => ({
+  from: '123 Main St, Austin, TX',
+  to: '9 Oak Ave, Dallas, TX',
+  date: '2027-01-15',
+  distanceMiles: 50,
+  originFloor: floor,
+  originElevator: elevator,
+  destinationFloor: 1,
+  destinationElevator: true,
 })
 
 beforeEach(() => {
@@ -62,25 +66,49 @@ describe('local development with no AI credentials (offline mock)', () => {
 
     let finished = false
     const finishedFlags: boolean[] = []
+    let details: Record<string, unknown> = {}
     for (const answer of ANSWERS) {
       messages.push({ id: String(messages.length), role: 'user', content: answer })
-      res = await post(chat, { messages }, env())
+      res = await post(chat, { messages, moveDetails: details }, env())
       expect(res.status).toBe(200)
       expect(res.headers.get(MODE_HEADER)).toBe('mock')
-      const json = (await res.json()) as { content: string; finished: boolean }
+      const json = (await res.json()) as { reply: string; moveDetails: Record<string, unknown>; finished: boolean }
+      // MOVERS-11: the bubble text never carries the JSON block
+      expect(json.reply).not.toMatch(/[{}]|```/)
       finished = json.finished
+      details = json.moveDetails
       finishedFlags.push(finished)
-      messages.push({ id: String(messages.length), role: 'assistant', content: json.content })
+      messages.push({ id: String(messages.length), role: 'assistant', content: json.reply })
     }
     expect(finishedFlags.slice(0, -1).every((f) => f === false)).toBe(true)
     expect(finished).toBe(true)
+    expect(details).toMatchObject({
+      from: expect.stringContaining('Austin'),
+      to: expect.stringContaining('Dallas'),
+      date: '2027-01-15',
+      originFloor: 3,
+      originElevator: false,
+      destinationFloor: 1,
+      destinationElevator: true,
+    })
+    expect(details.distanceMiles).toBeGreaterThan(0)
 
     res = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env())
     expect(res.status).toBe(200)
     expect(res.headers.get(MODE_HEADER)).toBe('mock')
-    const analysis = (await res.json()) as { items: unknown[]; totalVolumeCubicFeet: number }
+    const analysis = (await res.json()) as {
+      items: unknown[]
+      totalVolumeCubicFeet: number
+      specialHandling: { item: string }[]
+      possibleDuplicates: unknown[]
+      unseenAreas: string[]
+    }
     expect(Array.isArray(analysis.items)).toBe(true)
     expect(analysis.totalVolumeCubicFeet).toBeGreaterThan(0)
+    // MOVERS-23: the extensions are present and validated
+    expect(analysis.specialHandling[0]?.item).toBe('upright piano')
+    expect(Array.isArray(analysis.possibleDuplicates)).toBe(true)
+    expect(analysis.unseenAreas.length).toBeGreaterThan(0)
 
     const totals: number[] = []
     for (const [floor, elevator] of [
@@ -88,17 +116,72 @@ describe('local development with no AI credentials (offline mock)', () => {
       [4, false],
       [4, true],
     ] as const) {
-      res = await post(price, { analysis, moveInfo: moveInfo(floor, elevator) }, env())
+      res = await post(price, { analysis, moveDetails: moveDetails(floor, elevator) }, env())
       expect(res.status).toBe(200)
       expect(res.headers.get(MODE_HEADER)).toBe('mock')
-      const { price: result } = (await res.json()) as { price: { total: number; breakdown: Record<string, number> } }
+      const { price: result } = (await res.json()) as {
+        price: { total: number; low: number; high: number; confidence: string; breakdown: Record<string, number> }
+      }
       const sum = Object.values(result.breakdown).reduce((a, b) => a + b, 0)
       expect(result.total).toBe(sum)
+      // MOVERS-8: a range around the total; MOVERS-23: special items are a breakdown line
+      expect(result.low).toBeLessThanOrEqual(result.total)
+      expect(result.high).toBeGreaterThanOrEqual(result.total)
+      expect(result.high).toBeGreaterThan(result.low)
+      expect(result.breakdown['Special handling: upright piano']).toBeGreaterThan(0)
       totals.push(result.total)
     }
     // stairs cost more than no stairs; an elevator removes the surcharge
     expect(totals[1]).toBeGreaterThan(totals[0] as number)
     expect(totals[2]).toBeLessThan(totals[1] as number)
+  })
+
+  it('rejects an invalid price request with 400', async () => {
+    const res = await post(price, { analysis: { items: [] }, moveDetails: {} }, env())
+    expect(res.status).toBe(400)
+  })
+
+  it('confidence follows the unknown move details and widens the range', async () => {
+    const analysisRes = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env())
+    const analysis = await analysisRes.json()
+    const known = (await (await post(price, { analysis, moveDetails: moveDetails(1, true) }, env())).json()) as {
+      price: { total: number; low: number; high: number; confidence: string }
+    }
+    const unknown = (await (
+      await post(
+        price,
+        {
+          analysis,
+          moveDetails: {
+            ...moveDetails(1, true),
+            distanceMiles: null,
+            originFloor: null,
+            destinationFloor: null,
+            originElevator: null,
+            destinationElevator: null,
+          },
+        },
+        env(),
+      )
+    ).json()) as { price: { total: number; low: number; high: number; confidence: string } }
+    // the mock always says low, and the fewer fields are known the lower confidence may go, never higher
+    expect(['high', 'medium', 'low']).toContain(known.price.confidence)
+    expect(unknown.price.confidence).toBe('low')
+    const spread = (p: { total: number; low: number; high: number }) => (p.high - p.low) / p.total
+    expect(spread(unknown.price)).toBeGreaterThanOrEqual(spread(known.price) - 0.01)
+  })
+
+  it('serves the sample move from cache on the second call (MOVERS-16)', async () => {
+    const body = { imageUrls: ['http://localhost/api/images/sample-1.png'], sample: true }
+    const first = await post(analyze, body, env())
+    expect(first.status).toBe(200)
+    const second = await post(analyze, body, env())
+    expect(second.status).toBe(200)
+    expect(second.headers.get('x-movers-sample-cache')).toBe('hit')
+    expect(await second.json()).toEqual(await first.json())
+
+    const own = await post(analyze, { imageUrls: body.imageUrls }, env())
+    expect(own.headers.get('x-movers-sample-cache')).toBeNull()
   })
 })
 
@@ -124,8 +207,8 @@ describe('anywhere but local development: the mock is never served', () => {
         post(
           price,
           {
-            analysis: { items: [], totalVolumeCubicFeet: 10, estimatedBoxes: 1, boxesExplanation: '' },
-            moveInfo: moveInfo(1, true),
+            analysis: { items: [], totalVolumeCubicFeet: 10, estimatedBoxes: { min: 1, max: 1 }, boxesExplanation: '' },
+            moveDetails: moveDetails(1, true),
           },
           bindings,
         ),

@@ -4,8 +4,7 @@
 # GETTING STARTED
 # ---------------
 # 1. For local dev: copy .dev.vars.example to .dev.vars and fill in secrets
-# 2. Run frontend: pnpm dev  (Vite on port 5173)
-#    Run full-stack: pnpm dev:api  (wrangler pages dev, proxies to Vite)
+# 2. Run the stack: pnpm dev  (Vite on 4611, wrangler pages dev on 4610)
 # 3. Deploy: pnpm deploy  (builds and deploys to Cloudflare Pages)
 #
 # PRODUCTION SETUP
@@ -35,6 +34,20 @@ PRICE_PER_BOX = "50"
 [[r2_buckets]]
 binding = "MOVERS_BUCKET"
 bucket_name = "movers"
+
+# ---------------------------------------------------------------------------
+# Cloudflare D1 - saved estimates (leads), movers and quote requests.
+# Migrations live in ./migrations; `pnpm dev:api` applies them to the local
+# database before starting. Without this binding the API keeps records in
+# memory (unit tests).
+# Create for production: wrangler d1 create movers, then paste the database_id.
+# Docs: https://developers.cloudflare.com/d1/
+# ---------------------------------------------------------------------------
+[[d1_databases]]
+binding = "MOVERS_DB"
+database_name = "movers"
+database_id = "local-movers"
+migrations_dir = "migrations"
 
 # ---------------------------------------------------------------------------
 # Workers AI - used by the AI routes when CF_AIG_TOKEN is not set (local dev).

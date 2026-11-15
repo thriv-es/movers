@@ -14,7 +14,7 @@
  *
  * Plain Node 22+, no dependencies.
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -47,12 +47,29 @@ const hasRealToken = token !== '' && token !== PLACEHOLDER_TOKEN
 
 const wantsBinding = aiMode === 'binding' || (aiMode !== 'mock' && aiMode !== 'gateway' && !hasRealToken)
 
+/** Applies ./migrations to the local D1 database so the API can save estimates, movers and quote requests. */
+function applyMigrations() {
+  console.log('[dev-api] applying D1 migrations to the local database (MOVERS_DB)')
+  const result = spawnSync(WRANGLER, ['d1', 'migrations', 'apply', 'MOVERS_DB', '--local'], {
+    cwd: ROOT,
+    stdio: 'inherit',
+    env: process.env,
+  })
+  if (result.status !== 0) {
+    console.warn('[dev-api] could not apply D1 migrations; saving estimates will fail until they are applied')
+  }
+}
+
 function baseArgs() {
+  // The D1 binding comes from wrangler.toml ([[d1_databases]]), so `pages dev` and `d1 migrations apply` share the
+  // same local database. Passing `--d1` here would create a second, empty one.
   const args = ['pages', 'dev', '--proxy', PROXY_PORT, '--port', PORT]
   // Wrangler reads .dev.vars itself; only a value that came from the shell needs to be passed on.
   if (process.env.AI_MODE) args.push('--binding', `AI_MODE=${process.env.AI_MODE}`)
   return args
 }
+
+applyMigrations()
 
 let child = null
 let stopping = false
