@@ -35,11 +35,22 @@ class FakeStorage {
 }
 
 const analysis = {
-  items: [{ type: 'sofa', count: 1 }], totalVolumeCubicFeet: 80,
-  estimatedBoxes: { min: 2, max: 4 }, boxesExplanation: '',
-  specialHandling: [], possibleDuplicates: [], unseenAreas: [],
+  items: [{ type: 'sofa', count: 1 }],
+  totalVolumeCubicFeet: 80,
+  estimatedBoxes: { min: 2, max: 4 },
+  boxesExplanation: '',
+  specialHandling: [],
+  possibleDuplicates: [],
+  unseenAreas: [],
 }
-const savedPrice = { currency: 'USD', total: 100, low: 90, high: 110, breakdown: { labor: 100 }, confidence: 'high' as const }
+const savedPrice = {
+  currency: 'USD',
+  total: 100,
+  low: 90,
+  high: 110,
+  breakdown: { labor: 100 },
+  confidence: 'high' as const,
+}
 const review = { followUps: { garage: false, closets: false, appliances: false }, wholeMoveCovered: true }
 
 afterEach(() => {
@@ -77,25 +88,54 @@ describe('estimate session', () => {
 
   it('migrates a v3 priced draft to review without losing edits or photos', () => {
     const store = new FakeStorage()
-    store.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION, version: 3, step: 'estimate',
-      photoUrls: ['https://dev.movers-ee0.pages.dev/sample/living-room.jpg'],
-      analysis, items: [{ type: 'sofa', count: 2 }],
-      price: savedPrice, estimateId: 'saved-id', sample: true,
-    }))
+    store.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        version: 3,
+        step: 'estimate',
+        photoUrls: ['https://dev.movers-ee0.pages.dev/sample/living-room.jpg'],
+        analysis,
+        items: [{ type: 'sofa', count: 2 }],
+        price: savedPrice,
+        estimateId: 'saved-id',
+        sample: true,
+      }),
+    )
     expect(loadSession(store)).toMatchObject({
-      version: 4, step: 'review',
+      version: 4,
+      step: 'review',
       photoUrls: ['https://dev.movers-ee0.pages.dev/sample/living-room.jpg'],
-      analysis, items: [{ type: 'sofa', count: 2 }],
-      price: null, estimateId: null, wholeMoveCovered: null, sample: true,
+      analysis,
+      items: [{ type: 'sofa', count: 2 }],
+      price: null,
+      estimateId: null,
+      wholeMoveCovered: null,
+      sample: true,
     })
     expect(store.getItem(SESSION_KEY)).not.toBeNull()
   })
 
   it('keeps a v3 draft without analysis at upload rather than a broken estimate', () => {
     const store = new FakeStorage()
-    store.setItem(SESSION_KEY, JSON.stringify({ ...EMPTY_SESSION, version: 3, step: 'estimate', photoUrls: ['https://example.test/a.jpg'], price: savedPrice }))
-    expect(loadSession(store)).toMatchObject({ version: 4, step: 'upload', photoUrls: ['https://example.test/a.jpg'], analysis: null, price: null, estimateId: null })
+    store.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        version: 3,
+        step: 'estimate',
+        photoUrls: ['https://example.test/a.jpg'],
+        price: savedPrice,
+      }),
+    )
+    expect(loadSession(store)).toMatchObject({
+      version: 4,
+      step: 'upload',
+      photoUrls: ['https://example.test/a.jpg'],
+      analysis: null,
+      price: null,
+      estimateId: null,
+    })
     expect(store.getItem(SESSION_KEY)).not.toBeNull()
   })
 
@@ -149,16 +189,28 @@ describe('estimate review and API', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(fetch.mock.calls[0]?.[0]).toBe('/api/price')
     expect(JSON.parse((fetch.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
-      analysis, moveDetails: EMPTY_SESSION.moveDetails, review, sample: true,
+      analysis,
+      moveDetails: EMPTY_SESSION.moveDetails,
+      review,
+      sample: true,
     })
   })
 
   it('offers an explicit whole-move yes/no answer with pressed state', () => {
     const onWholeMoveCovered = vi.fn()
-    const { rerender } = render(createElement(ReviewStep, {
-      analysis, items: analysis.items, followUps: review.followUps, wholeMoveCovered: null,
-      onItemsChange: vi.fn(), onFollowUp: vi.fn(), onWholeMoveCovered, onBack: vi.fn(), onConfirm: vi.fn(),
-    }))
+    const { rerender } = render(
+      createElement(ReviewStep, {
+        analysis,
+        items: analysis.items,
+        followUps: review.followUps,
+        wholeMoveCovered: null,
+        onItemsChange: vi.fn(),
+        onFollowUp: vi.fn(),
+        onWholeMoveCovered,
+        onBack: vi.fn(),
+        onConfirm: vi.fn(),
+      }),
+    )
     const group = screen.getByRole('group', { name: /whole move/i })
     const yes = group.querySelector('button:nth-of-type(1)')!
     const no = group.querySelector('button:nth-of-type(2)')!
@@ -166,25 +218,54 @@ describe('estimate review and API', () => {
     expect(no).toHaveAttribute('aria-pressed', 'false')
     fireEvent.click(yes)
     expect(onWholeMoveCovered).toHaveBeenCalledWith(true)
-    rerender(createElement(ReviewStep, {
-      analysis, items: analysis.items, followUps: review.followUps, wholeMoveCovered: true,
-      onItemsChange: vi.fn(), onFollowUp: vi.fn(), onWholeMoveCovered, onBack: vi.fn(), onConfirm: vi.fn(),
-    }))
+    rerender(
+      createElement(ReviewStep, {
+        analysis,
+        items: analysis.items,
+        followUps: review.followUps,
+        wholeMoveCovered: true,
+        onItemsChange: vi.fn(),
+        onFollowUp: vi.fn(),
+        onWholeMoveCovered,
+        onBack: vi.fn(),
+        onConfirm: vi.fn(),
+      }),
+    )
     expect(yes).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(no)
     expect(onWholeMoveCovered).toHaveBeenCalledWith(false)
   })
 
   it('consolidates saved couch and edited sofa rows before add, count edits, and removal', async () => {
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION, step: 'review',
-      analysis: { ...analysis, specialHandling: [{ item: 'couch', reason: 'Needs extra movers' }] },
-      items: [{ type: 'Couch', count: 1 }, { type: 'Sofa', count: 5 }, { type: 'piano', count: 2 }],
-      price: savedPrice, estimateId: 'stale-id',
-    }))
-    render(createElement(HelmetProvider, null, createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage))))
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        step: 'review',
+        analysis: { ...analysis, specialHandling: [{ item: 'couch', reason: 'Needs extra movers' }] },
+        items: [
+          { type: 'Couch', count: 1 },
+          { type: 'Sofa', count: 5 },
+          { type: 'piano', count: 2 },
+        ],
+        price: savedPrice,
+        estimateId: 'stale-id',
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     const savedItems = () => JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).items
-    await waitFor(() => expect(savedItems()).toEqual([{ type: 'Sofa', count: 6 }, { type: 'piano', count: 2 }]))
+    await waitFor(() =>
+      expect(savedItems()).toEqual([
+        { type: 'Sofa', count: 6 },
+        { type: 'piano', count: 2 },
+      ]),
+    )
     expect(screen.getByLabelText('Sofa count')).toHaveTextContent('6')
     expect(screen.queryByLabelText('Couch count')).not.toBeInTheDocument()
     expect(screen.getByText('Needs extra movers')).toBeInTheDocument()
@@ -192,30 +273,73 @@ describe('estimate review and API', () => {
 
     fireEvent.change(screen.getByLabelText('Add something we missed'), { target: { value: 'couch' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
-    await waitFor(() => expect(savedItems()).toEqual([{ type: 'Sofa', count: 7 }, { type: 'piano', count: 2 }]))
+    await waitFor(() =>
+      expect(savedItems()).toEqual([
+        { type: 'Sofa', count: 7 },
+        { type: 'piano', count: 2 },
+      ]),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'One more Sofa' }))
-    await waitFor(() => expect(savedItems()).toEqual([{ type: 'Sofa', count: 8 }, { type: 'piano', count: 2 }]))
+    await waitFor(() =>
+      expect(savedItems()).toEqual([
+        { type: 'Sofa', count: 8 },
+        { type: 'piano', count: 2 },
+      ]),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'One fewer Sofa' }))
-    await waitFor(() => expect(savedItems()).toEqual([{ type: 'Sofa', count: 7 }, { type: 'piano', count: 2 }]))
+    await waitFor(() =>
+      expect(savedItems()).toEqual([
+        { type: 'Sofa', count: 7 },
+        { type: 'piano', count: 2 },
+      ]),
+    )
     fireEvent.click(within(screen.getByLabelText('Sofa count')).getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(savedItems()).toEqual([{ type: 'piano', count: 2 }]))
   })
 
   it('renders server reasons instead of claiming photos covered the move', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ movers: [] })))
-    render(createElement(EstimateStep, {
-      analysis, items: analysis.items, moveDetails: EMPTY_SESSION.moveDetails,
-      review, price: { ...savedPrice, confidence: 'low', confidenceReasons: ['Garage follow-up has not been answered.'] },
-      estimateId: 'saved-id', photoUrls: [], sample: false,
-      onPriced: vi.fn(), onBack: vi.fn(), onSchedule: vi.fn(),
-    }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ movers: [] })),
+    )
+    render(
+      createElement(EstimateStep, {
+        analysis,
+        items: analysis.items,
+        moveDetails: EMPTY_SESSION.moveDetails,
+        review,
+        price: { ...savedPrice, confidence: 'low', confidenceReasons: ['Garage follow-up has not been answered.'] },
+        estimateId: 'saved-id',
+        photoUrls: [],
+        sample: false,
+        onPriced: vi.fn(),
+        onBack: vi.fn(),
+        onSchedule: vi.fn(),
+      }),
+    )
     expect(screen.getByText(/garage follow-up has not been answered/i)).toBeInTheDocument()
     expect(screen.queryByText(/photos and details covered the whole move/i)).not.toBeInTheDocument()
   })
 
   it('clears saved price and ID when the whole-move answer changes in the page', async () => {
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...EMPTY_SESSION, step: 'review', analysis, items: analysis.items, price: savedPrice, estimateId: 'saved-id' }))
-    render(createElement(HelmetProvider, null, createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage))))
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        step: 'review',
+        analysis,
+        items: analysis.items,
+        price: savedPrice,
+        estimateId: 'saved-id',
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     const group = screen.getByRole('group', { name: /whole move/i })
     fireEvent.click(group.querySelector('button:nth-of-type(1)')!)
     await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).wholeMoveCovered).toBe(true))
@@ -230,8 +354,17 @@ describe('estimate review and API', () => {
       throw new Error(`Unexpected route ${path}`)
     })
     vi.stubGlobal('fetch', fetch)
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...EMPTY_SESSION, step: 'review', analysis, items: analysis.items, ...review }))
-    render(createElement(HelmetProvider, null, createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage))))
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({ ...EMPTY_SESSION, step: 'review', analysis, items: analysis.items, ...review }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     fireEvent.click(screen.getByRole('button', { name: /confirm and price it/i }))
     await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).estimateId).toBe('new-id'))
     const priceCall = fetch.mock.calls.find(([path]) => path === '/api/price')!
@@ -240,7 +373,9 @@ describe('estimate review and API', () => {
 
   it('does not restore a stale in-flight price after returning to review and changing coverage', async () => {
     let resolvePrice!: (response: Response) => void
-    const pendingPrice = new Promise<Response>((resolve) => { resolvePrice = resolve })
+    const pendingPrice = new Promise<Response>((resolve) => {
+      resolvePrice = resolve
+    })
     const fetch = vi.fn(async (path: string) => {
       if (path === '/api/price') return pendingPrice
       if (path === '/api/movers') return Response.json({ movers: [] })
@@ -248,52 +383,109 @@ describe('estimate review and API', () => {
       throw new Error(`Unexpected route ${path}`)
     })
     vi.stubGlobal('fetch', fetch)
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION, step: 'estimate', analysis, items: analysis.items, ...review,
-    }))
-    render(createElement(HelmetProvider, null, createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage))))
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        step: 'estimate',
+        analysis,
+        items: analysis.items,
+        ...review,
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     await waitFor(() => expect(fetch.mock.calls.some(([path]) => path === '/api/price')).toBe(true))
     fireEvent.click(screen.getByRole('button', { name: /review/i }))
     fireEvent.click(screen.getByRole('group', { name: /whole move/i }).querySelector('button:nth-of-type(2)')!)
-    await act(async () => { resolvePrice(Response.json({ price: savedPrice })) })
+    await act(async () => {
+      resolvePrice(Response.json({ price: savedPrice }))
+    })
     expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({
-      step: 'review', wholeMoveCovered: false, price: null, estimateId: null,
+      step: 'review',
+      wholeMoveCovered: false,
+      price: null,
+      estimateId: null,
     })
     expect(fetch.mock.calls.some(([path]) => path === '/api/estimates')).toBe(false)
   })
 
   it('invalidates price and resets all coverage answers when a photo is removed', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION, step: 'upload', photoUrls: ['https://example.test/a.jpg'],
-      analysis, items: analysis.items, followUps: review.followUps, wholeMoveCovered: true,
-      price: savedPrice, estimateId: 'saved-id',
-    }))
-    render(createElement(HelmetProvider, null, createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage))))
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        step: 'upload',
+        photoUrls: ['https://example.test/a.jpg'],
+        analysis,
+        items: analysis.items,
+        followUps: review.followUps,
+        wholeMoveCovered: true,
+        price: savedPrice,
+        estimateId: 'saved-id',
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).photoUrls).toEqual([]))
     expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({
-      analysis: null, followUps: { garage: null, closets: null, appliances: null },
-      wholeMoveCovered: null, price: null, estimateId: null,
+      analysis: null,
+      followUps: { garage: null, closets: null, appliances: null },
+      wholeMoveCovered: null,
+      price: null,
+      estimateId: null,
     })
   })
 
   it('invalidates price and resets coverage answers after reanalysis', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (path: string) => {
-      if (path === '/api/analyze') return Response.json(analysis)
-      throw new Error(`Unexpected route ${path}`)
-    }))
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION, step: 'upload', photoUrls: ['https://example.test/a.jpg'],
-      analysis, items: analysis.items, followUps: review.followUps, wholeMoveCovered: true,
-      price: savedPrice, estimateId: 'saved-id',
-    }))
-    render(createElement(HelmetProvider, null, createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string) => {
+        if (path === '/api/analyze') return Response.json(analysis)
+        throw new Error(`Unexpected route ${path}`)
+      }),
+    )
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        step: 'upload',
+        photoUrls: ['https://example.test/a.jpg'],
+        analysis,
+        items: analysis.items,
+        followUps: review.followUps,
+        wholeMoveCovered: true,
+        price: savedPrice,
+        estimateId: 'saved-id',
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
     await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).step).toBe('review'))
     expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({
-      items: analysis.items, followUps: { garage: null, closets: null, appliances: null },
-      wholeMoveCovered: null, price: null, estimateId: null,
+      items: analysis.items,
+      followUps: { garage: null, closets: null, appliances: null },
+      wholeMoveCovered: null,
+      price: null,
+      estimateId: null,
     })
   })
 })

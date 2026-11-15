@@ -64,20 +64,26 @@ describe('mergeAnalyses', () => {
   it('normalizes a single inventory by value without changing its totals or notes', () => {
     expect(mergeAnalyses([livingRoom])).toEqual({
       ...livingRoom,
-      items: [{ type: 'sofa', count: 1 }, { type: 'floor lamp', count: 2 }],
+      items: [
+        { type: 'sofa', count: 1 },
+        { type: 'floor lamp', count: 2 },
+      ],
     })
   })
 
   it('normalizes a one-photo couch alias without changing its count', () => {
-    expect(mergeAnalyses([{ items: [{ type: ' couch ', count: 3 }], total_volume_cubic_feet: 10 }]).items)
-      .toEqual([{ type: 'sofa', count: 3 }])
+    expect(mergeAnalyses([{ items: [{ type: ' couch ', count: 3 }], total_volume_cubic_feet: 10 }]).items).toEqual([
+      { type: 'sofa', count: 3 },
+    ])
   })
 
   it('combines couch and sofa across photos without losing counts', () => {
-    expect(mergeAnalyses([
-      { items: [{ type: 'couch', count: 1 }], total_volume_cubic_feet: 10 },
-      { items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 10 },
-    ]).items).toEqual([{ type: 'sofa', count: 2 }])
+    expect(
+      mergeAnalyses([
+        { items: [{ type: 'couch', count: 1 }], total_volume_cubic_feet: 10 },
+        { items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 10 },
+      ]).items,
+    ).toEqual([{ type: 'sofa', count: 2 }])
   })
 
   it('adds up items by type (case-insensitive), volumes and box estimates', () => {
@@ -132,17 +138,27 @@ describe('mergeAnalyses', () => {
 describe('review inventory aliases', () => {
   it('adds a couch to the edited sofa row without replacing its name or count', () => {
     const onItemsChange = vi.fn()
-    render(createElement(ReviewStep, {
-      analysis: {
-        items: [{ type: 'sofa', count: 1 }], totalVolumeCubicFeet: 10,
-        estimatedBoxes: { min: 1, max: 2 }, boxesExplanation: '',
-        specialHandling: [], possibleDuplicates: [], unseenAreas: [],
-      },
-      items: [{ type: 'Sofa', count: 2 }],
-      followUps: { garage: false, closets: false, appliances: false },
-      wholeMoveCovered: true,
-      onWholeMoveCovered: vi.fn(), onItemsChange, onFollowUp: vi.fn(), onBack: vi.fn(), onConfirm: vi.fn(),
-    }))
+    render(
+      createElement(ReviewStep, {
+        analysis: {
+          items: [{ type: 'sofa', count: 1 }],
+          totalVolumeCubicFeet: 10,
+          estimatedBoxes: { min: 1, max: 2 },
+          boxesExplanation: '',
+          specialHandling: [],
+          possibleDuplicates: [],
+          unseenAreas: [],
+        },
+        items: [{ type: 'Sofa', count: 2 }],
+        followUps: { garage: false, closets: false, appliances: false },
+        wholeMoveCovered: true,
+        onWholeMoveCovered: vi.fn(),
+        onItemsChange,
+        onFollowUp: vi.fn(),
+        onBack: vi.fn(),
+        onConfirm: vi.fn(),
+      }),
+    )
     fireEvent.change(screen.getByLabelText('Add something we missed'), { target: { value: ' couch ' } })
     fireEvent.change(screen.getByLabelText('Count'), { target: { value: '3' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))

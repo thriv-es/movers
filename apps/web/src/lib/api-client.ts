@@ -99,7 +99,12 @@ export function analyzeApi(imageUrls: string[], sample = false): Promise<Analysi
 }
 
 /** Prices the confirmed inventory for the given move details. */
-export function priceApi(analysis: AnalysisResult, moveDetails: MoveDetails, review: ReviewCoverage, sample = false): Promise<PriceResult> {
+export function priceApi(
+  analysis: AnalysisResult,
+  moveDetails: MoveDetails,
+  review: ReviewCoverage,
+  sample = false,
+): Promise<PriceResult> {
   return postJson<PriceResult>('/api/price', { analysis, moveDetails, review, sample }, { ai: true })
 }
 

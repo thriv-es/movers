@@ -53,7 +53,9 @@ export function EstimateStep({
 
   useEffect(() => {
     active.current = true
-    return () => { active.current = false }
+    return () => {
+      active.current = false
+    }
   }, [])
 
   const runPricing = useCallback(async () => {

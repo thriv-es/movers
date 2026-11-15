@@ -55,12 +55,15 @@ export function ReviewStep({
       const key = canonicalItemType(item.type)
       const existing = grouped.get(key)
       if (!existing) grouped.set(key, item)
-      else grouped.set(key, {
-        ...existing,
-        type: existing.type.trim().toLowerCase() !== key && item.type.trim().toLowerCase() === key
-          ? item.type : existing.type,
-        count: existing.count + item.count,
-      })
+      else
+        grouped.set(key, {
+          ...existing,
+          type:
+            existing.type.trim().toLowerCase() !== key && item.type.trim().toLowerCase() === key
+              ? item.type
+              : existing.type,
+          count: existing.count + item.count,
+        })
     }
     return [...grouped.values()]
   }, [items])
@@ -109,8 +112,8 @@ export function ReviewStep({
           <Caption accent="sky">What we counted</Caption>
         </div>
         <p className="mv-lede">
-          {total} item{total === 1 ? '' : 's'} across {reviewItems.length} kind{reviewItems.length === 1 ? '' : 's'}, roughly{' '}
-          {analysis.estimatedBoxes.min} to {analysis.estimatedBoxes.max} boxes. Fix anything we got wrong.
+          {total} item{total === 1 ? '' : 's'} across {reviewItems.length} kind{reviewItems.length === 1 ? '' : 's'},
+          roughly {analysis.estimatedBoxes.min} to {analysis.estimatedBoxes.max} boxes. Fix anything we got wrong.
         </p>
 
         <ul className="est-items" aria-label="Detected items">

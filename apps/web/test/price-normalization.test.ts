@@ -13,14 +13,15 @@ describe('normalizePriceReply', () => {
   })
 
   it('merges case-insensitive, trimmed labels while keeping the first spelling', () => {
-    expect(
-      normalizePriceReply({ currency: 'USD', breakdown: { Labor: 10.25, ' labor ': 0.75 } }, true),
-    ).toMatchObject({ total: 11, breakdown: { Labor: 11 } })
+    expect(normalizePriceReply({ currency: 'USD', breakdown: { Labor: 10.25, ' labor ': 0.75 } }, true)).toMatchObject({
+      total: 11,
+      breakdown: { Labor: 11 },
+    })
   })
 
   it.each([
     ['negative amount', { currency: 'USD', breakdown: { labor: -1 } }],
-    ['non-finite amount', { currency: 'USD', breakdown: { labor: NaN } }],
+    ['non-finite amount', { currency: 'USD', breakdown: { labor: Number.NaN } }],
     ['three-decimal amount', { currency: 'USD', breakdown: { labor: 1.001 } }],
     ['non-USD currency', { currency: 'EUR', breakdown: { labor: 1 } }],
     ['blank label', { currency: 'USD', breakdown: { ' ': 1 } }],
@@ -37,7 +38,9 @@ describe('normalizePriceReply', () => {
     const breakdown = JSON.parse('{"__proto__":1,"labor":2}') as Record<string, number>
     expect(Object.hasOwn(breakdown, '__proto__')).toBe(true)
     expect(() => normalizePriceReply({ currency: 'USD', breakdown }, true)).toThrow(PriceFormatError)
-    expect(() => normalizePriceReply({ currency: 'USD', breakdown: { ' __PROTO__ ': 1 } }, true)).toThrow(PriceFormatError)
+    expect(() => normalizePriceReply({ currency: 'USD', breakdown: { ' __PROTO__ ': 1 } }, true)).toThrow(
+      PriceFormatError,
+    )
   })
 
   it('requires a plain reply object', () => {

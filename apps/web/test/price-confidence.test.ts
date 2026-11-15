@@ -5,13 +5,23 @@ import { zPriceRequest } from '../src/data'
 
 const request = {
   analysis: {
-    items: [{ type: 'sofa', count: 1 }], totalVolumeCubicFeet: 80,
-    estimatedBoxes: { min: 2, max: 4 }, boxesExplanation: '',
-    specialHandling: [], possibleDuplicates: [], unseenAreas: [],
+    items: [{ type: 'sofa', count: 1 }],
+    totalVolumeCubicFeet: 80,
+    estimatedBoxes: { min: 2, max: 4 },
+    boxesExplanation: '',
+    specialHandling: [],
+    possibleDuplicates: [],
+    unseenAreas: [],
   },
   moveDetails: {
-    from: 'A', to: 'B', date: null, distanceMiles: 12,
-    originFloor: 1, destinationFloor: 1, originElevator: true, destinationElevator: true,
+    from: 'A',
+    to: 'B',
+    date: null,
+    distanceMiles: 12,
+    originFloor: 1,
+    destinationFloor: 1,
+    originElevator: true,
+    destinationElevator: true,
   },
   review: { followUps: { garage: false, closets: false, appliances: false }, wholeMoveCovered: true },
 }
@@ -29,7 +39,10 @@ describe('price confidence', () => {
   })
 
   it('rates any unanswered follow-up low and identifies it', () => {
-    const verdict = priceConfidence({ ...request, review: { ...request.review, followUps: { ...request.review.followUps, garage: null } } }, 'high')
+    const verdict = priceConfidence(
+      { ...request, review: { ...request.review, followUps: { ...request.review.followUps, garage: null } } },
+      'high',
+    )
     expect(verdict.level).toBe('low')
     expect(verdict.reasons.join(' ')).toMatch(/garage/i)
   })
@@ -41,20 +54,32 @@ describe('price confidence', () => {
   })
 
   it('rates unseen areas medium even with confirmed coverage without echoing arbitrary area names', () => {
-    const verdict = priceConfidence({ ...request, analysis: { ...request.analysis, unseenAreas: ['<unsafe-area>'] } }, 'high')
+    const verdict = priceConfidence(
+      { ...request, analysis: { ...request.analysis, unseenAreas: ['<unsafe-area>'] } },
+      'high',
+    )
     expect(verdict.level).toBe('medium')
     expect(verdict.reasons.join(' ')).toMatch(/area|room/i)
     expect(verdict.reasons.join(' ')).not.toContain('<unsafe-area>')
   })
 
   it('rates one missing move field medium and names it', () => {
-    const verdict = priceConfidence({ ...request, moveDetails: { ...request.moveDetails, distanceMiles: null } }, 'high')
+    const verdict = priceConfidence(
+      { ...request, moveDetails: { ...request.moveDetails, distanceMiles: null } },
+      'high',
+    )
     expect(verdict.level).toBe('medium')
     expect(verdict.reasons.join(' ')).toMatch(/distance/i)
   })
 
   it('rates three missing move fields low and names each', () => {
-    const verdict = priceConfidence({ ...request, moveDetails: { ...request.moveDetails, distanceMiles: null, originFloor: null, destinationElevator: null } }, 'high')
+    const verdict = priceConfidence(
+      {
+        ...request,
+        moveDetails: { ...request.moveDetails, distanceMiles: null, originFloor: null, destinationElevator: null },
+      },
+      'high',
+    )
     expect(verdict.level).toBe('low')
     expect(verdict.reasons.join(' ')).toMatch(/distance/i)
     expect(verdict.reasons.join(' ')).toMatch(/origin floor/i)
@@ -69,7 +94,10 @@ describe('price confidence', () => {
 
   it('defaults legacy API callers to unanswered review rather than inferred coverage', () => {
     const parsed = zPriceRequest.parse({ analysis: request.analysis, moveDetails: request.moveDetails })
-    expect(parsed.review).toEqual({ followUps: { garage: null, closets: null, appliances: null }, wholeMoveCovered: null })
+    expect(parsed.review).toEqual({
+      followUps: { garage: null, closets: null, appliances: null },
+      wholeMoveCovered: null,
+    })
     expect(priceConfidence(parsed, 'high').level).toBe('low')
   })
 })

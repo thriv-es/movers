@@ -107,9 +107,13 @@ export function loadSession(store: StorageLike | null = storage()): EstimateSess
     }
     if (parsed.version === 3) {
       return {
-        ...EMPTY_SESSION, ...parsed, version: SESSION_VERSION,
+        ...EMPTY_SESSION,
+        ...parsed,
+        version: SESSION_VERSION,
         step: parsed.analysis ? 'review' : 'upload',
-        price: null, estimateId: null, wholeMoveCovered: null,
+        price: null,
+        estimateId: null,
+        wholeMoveCovered: null,
       }
     }
     if (parsed.version !== SESSION_VERSION) {

@@ -14,7 +14,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** The model suggests line-item amounts; the server owns their arithmetic and shape. */
-export function normalizePriceReply(raw: unknown, hasItems: boolean): {
+export function normalizePriceReply(
+  raw: unknown,
+  hasItems: boolean,
+): {
   currency: 'USD'
   total: number
   breakdown: Record<string, number>
@@ -32,7 +35,12 @@ export function normalizePriceReply(raw: unknown, hasItems: boolean): {
   for (const [rawLabel, amount] of entries) {
     if (typeof amount !== 'number') throw new PriceFormatError('Invalid amount')
     const cents = Math.round(amount * 100)
-    if (amount < 0 || !Number.isFinite(amount) || !Number.isSafeInteger(cents) || Math.abs(amount * 100 - cents) > 1e-7) {
+    if (
+      amount < 0 ||
+      !Number.isFinite(amount) ||
+      !Number.isSafeInteger(cents) ||
+      Math.abs(amount * 100 - cents) > 1e-7
+    ) {
       throw new PriceFormatError('Invalid amount')
     }
     const label = rawLabel.trim()

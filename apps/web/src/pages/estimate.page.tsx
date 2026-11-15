@@ -85,8 +85,14 @@ export default function EstimatePage(): JSX.Element {
   const onPhotosChange = useCallback(
     (photoUrls: string[]) =>
       update({
-        photoUrls, analysis: null, items: [], followUps: { ...EMPTY_FOLLOW_UPS }, wholeMoveCovered: null,
-        price: null, estimateId: null, contact: null,
+        photoUrls,
+        analysis: null,
+        items: [],
+        followUps: { ...EMPTY_FOLLOW_UPS },
+        wholeMoveCovered: null,
+        price: null,
+        estimateId: null,
+        contact: null,
       }),
     [update],
   )
@@ -94,8 +100,14 @@ export default function EstimatePage(): JSX.Element {
   const onAnalyzed = useCallback(
     (analysis: AnalysisResult) =>
       update({
-        analysis, items: analysis.items, step: 'review', followUps: { ...EMPTY_FOLLOW_UPS },
-        wholeMoveCovered: null, price: null, estimateId: null, contact: null,
+        analysis,
+        items: analysis.items,
+        step: 'review',
+        followUps: { ...EMPTY_FOLLOW_UPS },
+        wholeMoveCovered: null,
+        price: null,
+        estimateId: null,
+        contact: null,
       }),
     [update],
   )
@@ -135,8 +147,15 @@ export default function EstimatePage(): JSX.Element {
   const useOwnPhotos = useCallback(
     () =>
       update({
-        sample: false, photoUrls: [], analysis: null, items: [], followUps: { ...EMPTY_FOLLOW_UPS },
-        wholeMoveCovered: null, price: null, estimateId: null, contact: null,
+        sample: false,
+        photoUrls: [],
+        analysis: null,
+        items: [],
+        followUps: { ...EMPTY_FOLLOW_UPS },
+        wholeMoveCovered: null,
+        price: null,
+        estimateId: null,
+        contact: null,
       }),
     [update],
   )

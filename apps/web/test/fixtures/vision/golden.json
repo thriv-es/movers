@@ -2,26 +2,17 @@
   "photos": [
     {
       "file": "living-room.jpg",
-      "expected": [
-        { "type": "sofa", "count": 1 },
-        { "type": "coffee table", "count": 1 }
-      ],
+      "expected": [{ "type": "sofa", "count": 1 }, { "type": "coffee table", "count": 1 }],
       "ignored": ["tv", "media console", "shelves", "curtains", "small decor"]
     },
     {
       "file": "bedroom.jpg",
-      "expected": [
-        { "type": "bed", "count": 1 },
-        { "type": "chair", "count": 1 }
-      ],
+      "expected": [{ "type": "bed", "count": 1 }, { "type": "chair", "count": 1 }],
       "ignored": ["nightstand", "side table", "pendant light", "bedding", "small decor"]
     },
     {
       "file": "kitchen.jpg",
-      "expected": [
-        { "type": "dining table", "count": 1 },
-        { "type": "dining chair", "count": 6 }
-      ],
+      "expected": [{ "type": "dining table", "count": 1 }, { "type": "dining chair", "count": 6 }],
       "ignored": ["sofa", "refrigerator", "kitchen cabinets", "microwave", "small appliances", "small decor"]
     }
   ]

@@ -17,29 +17,50 @@ export function score(expected, predicted, aliases = {}) {
   }
   const gold = counts(expected)
   const actual = counts(predicted)
-  let truePositives = 0, falsePositives = 0, falseNegatives = 0, countError = 0
+  let truePositives = 0
+  let falsePositives = 0
+  let falseNegatives = 0
+  let countError = 0
   for (const key of new Set([...gold.keys(), ...actual.keys()])) {
-    const want = gold.get(key) ?? 0, got = actual.get(key) ?? 0
+    const want = gold.get(key) ?? 0
+    const got = actual.get(key) ?? 0
     truePositives += Math.min(want, got)
     falsePositives += Math.max(0, got - want)
     falseNegatives += Math.max(0, want - got)
     if (gold.has(key)) countError += Math.abs(want - got)
   }
-  return { truePositives, falsePositives, falseNegatives, countError,
+  return {
+    truePositives,
+    falsePositives,
+    falseNegatives,
+    countError,
     precision: truePositives / (truePositives + falsePositives || 1),
-    recall: truePositives / (truePositives + falseNegatives || 1) }
+    recall: truePositives / (truePositives + falseNegatives || 1),
+  }
 }
 
 function requireItems(items, label) {
-  if (!Array.isArray(items) || items.some((item) =>
-    !item || typeof item.type !== 'string' || !item.type.trim() || !Number.isSafeInteger(item.count) || item.count <= 0
-  )) throw new Error(`${label}: items must have a nonempty type and positive integer count`)
+  if (
+    !Array.isArray(items) ||
+    items.some(
+      (item) =>
+        !item ||
+        typeof item.type !== 'string' ||
+        !item.type.trim() ||
+        !Number.isSafeInteger(item.count) ||
+        item.count <= 0,
+    )
+  )
+    throw new Error(`${label}: items must have a nonempty type and positive integer count`)
 }
 
 function requireThree(entries, label) {
-  if (!Array.isArray(entries) || entries.length !== FILES.length ||
-      new Set(entries.map((entry) => entry?.file)).size !== FILES.length ||
-      entries.some((entry) => !FILES.includes(entry?.file))) {
+  if (
+    !Array.isArray(entries) ||
+    entries.length !== FILES.length ||
+    new Set(entries.map((entry) => entry?.file)).size !== FILES.length ||
+    entries.some((entry) => !FILES.includes(entry?.file))
+  ) {
     throw new Error(`${label}: expected exactly ${FILES.join(', ')}`)
   }
 }
@@ -84,7 +105,8 @@ export function evaluate(golden, baseline, aliases = {}) {
     const analysis = baseline.analyses.find((entry) => entry.file === photo.file)
     const raw = analysis.parseOk ? analysis.items : []
     const seen = new Set()
-    let rawDuplicateLabels = 0, rawAliasLabels = 0
+    let rawDuplicateLabels = 0
+    let rawAliasLabels = 0
     for (const item of raw) {
       const type = item.type.trim().toLowerCase()
       if (Object.hasOwn(aliases, type)) rawAliasLabels++
@@ -95,23 +117,44 @@ export function evaluate(golden, baseline, aliases = {}) {
     const ignored = new Set(photo.ignored.map((type) => canonical(type, aliases)))
     const predicted = raw.filter((item) => !ignored.has(canonical(item.type, aliases)))
     return {
-      file: photo.file, parseOk: analysis.parseOk, ...score(photo.expected, predicted, aliases),
-      rawDuplicateLabels, rawAliasLabels, latencyMs: analysis.latencyMs, costUsd: analysis.costUsd,
+      file: photo.file,
+      parseOk: analysis.parseOk,
+      ...score(photo.expected, predicted, aliases),
+      rawDuplicateLabels,
+      rawAliasLabels,
+      latencyMs: analysis.latencyMs,
+      costUsd: analysis.costUsd,
     }
   })
-  const totals = ['truePositives', 'falsePositives', 'falseNegatives', 'countError', 'rawDuplicateLabels', 'rawAliasLabels']
+  const totals = [
+    'truePositives',
+    'falsePositives',
+    'falseNegatives',
+    'countError',
+    'rawDuplicateLabels',
+    'rawAliasLabels',
+  ]
   const aggregate = Object.fromEntries(totals.map((key) => [key, photos.reduce((sum, photo) => sum + photo[key], 0)]))
   const { truePositives: tp, falsePositives: fp, falseNegatives: fn } = aggregate
   Object.assign(aggregate, {
-    precision: tp / (tp + fp || 1), recall: tp / (tp + fn || 1),
+    precision: tp / (tp + fp || 1),
+    recall: tp / (tp + fn || 1),
     parseFailures: photos.filter((photo) => !photo.parseOk).length,
     latencyMs: photos.every((photo) => photo.latencyMs !== null)
-      ? photos.reduce((sum, photo) => sum + photo.latencyMs, 0) : null,
+      ? photos.reduce((sum, photo) => sum + photo.latencyMs, 0)
+      : null,
     costUsd: photos.every((photo) => photo.costUsd !== null)
-      ? photos.reduce((sum, photo) => sum + photo.costUsd, 0) : null,
+      ? photos.reduce((sum, photo) => sum + photo.costUsd, 0)
+      : null,
   })
-  return { mode: baseline.mode, model: baseline.model, sampleVersion: baseline.sampleVersion,
-    recordedAt: baseline.recordedAt, aggregate, photos }
+  return {
+    mode: baseline.mode,
+    model: baseline.model,
+    sampleVersion: baseline.sampleVersion,
+    recordedAt: baseline.recordedAt,
+    aggregate,
+    photos,
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

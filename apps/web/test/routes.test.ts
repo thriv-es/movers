@@ -140,19 +140,28 @@ describe('local development with no AI credentials (offline mock)', () => {
 
   it('treats omitted legacy review as unknown coverage and emits concrete confidence reasons', async () => {
     const analysis = {
-      items: [{ type: 'sofa', count: 1 }], totalVolumeCubicFeet: 80,
-      estimatedBoxes: { min: 2, max: 4 }, boxesExplanation: '',
-      specialHandling: [], possibleDuplicates: [], unseenAreas: [],
+      items: [{ type: 'sofa', count: 1 }],
+      totalVolumeCubicFeet: 80,
+      estimatedBoxes: { min: 2, max: 4 },
+      boxesExplanation: '',
+      specialHandling: [],
+      possibleDuplicates: [],
+      unseenAreas: [],
     }
     const legacy = await post(price, { analysis, moveDetails: moveDetails(1, true) }, env())
     expect(legacy.status).toBe(200)
     const body = (await legacy.json()) as { price: { confidence: string; confidenceReasons: string[] } }
     expect(body.price.confidence).toBe('low')
     expect(body.price.confidenceReasons.join(' ')).toMatch(/whole move|garage/i)
-    const reviewed = await post(price, {
-      analysis, moveDetails: moveDetails(1, true),
-      review: { followUps: { garage: false, closets: false, appliances: false }, wholeMoveCovered: true },
-    }, env())
+    const reviewed = await post(
+      price,
+      {
+        analysis,
+        moveDetails: moveDetails(1, true),
+        review: { followUps: { garage: false, closets: false, appliances: false }, wholeMoveCovered: true },
+      },
+      env(),
+    )
     expect(reviewed.status).toBe(200)
     const reviewedBody = (await reviewed.json()) as { price: { confidence: string; confidenceReasons: string[] } }
     expect(reviewedBody.price.confidenceReasons).toEqual(expect.any(Array))

@@ -13,8 +13,9 @@ const missingFields = {
 export function priceConfidence(request: PriceRequest, suggested: unknown): { level: Confidence; reasons: string[] } {
   const reasons: string[] = []
   const { analysis, moveDetails, review } = request
-  const missing = (Object.keys(missingFields) as Array<keyof typeof missingFields>)
-    .filter((field) => moveDetails[field] === null)
+  const missing = (Object.keys(missingFields) as Array<keyof typeof missingFields>).filter(
+    (field) => moveDetails[field] === null,
+  )
   reasons.push(...missing.map((field) => missingFields[field]))
 
   if (review.wholeMoveCovered !== true) {
@@ -25,16 +26,18 @@ export function priceConfidence(request: PriceRequest, suggested: unknown): { le
     )
   }
   for (const key of ['garage', 'closets', 'appliances'] as const) {
-    if (review.followUps[key] === null) reasons.push(`${key[0]!.toUpperCase()}${key.slice(1)} follow-up has not been answered.`)
+    if (review.followUps[key] === null)
+      reasons.push(`${key[0]!.toUpperCase()}${key.slice(1)} follow-up has not been answered.`)
   }
   if (analysis.unseenAreas.length > 0) reasons.push('Some areas were not shown in the photos; confirm their inventory.')
 
   const unanswered = Object.values(review.followUps).some((answer) => answer === null)
-  const byRules: Confidence = review.wholeMoveCovered !== true || unanswered || missing.length >= 3
-    ? 'low'
-    : missing.length > 0 || analysis.unseenAreas.length > 0
-      ? 'medium'
-      : 'high'
+  const byRules: Confidence =
+    review.wholeMoveCovered !== true || unanswered || missing.length >= 3
+      ? 'low'
+      : missing.length > 0 || analysis.unseenAreas.length > 0
+        ? 'medium'
+        : 'high'
   const model = suggested === 'high' || suggested === 'medium' || suggested === 'low' ? suggested : byRules
   if (levels.indexOf(model) > levels.indexOf(byRules)) reasons.push('The price evaluation suggested lower confidence.')
   return { level: levels[Math.max(levels.indexOf(byRules), levels.indexOf(model))] ?? 'low', reasons }
