@@ -60,8 +60,10 @@ async function run<T>(
 
   try {
     return { value: await backends[mode](selection.model), mode }
-  } catch (error) {
-    if (env.ENV !== 'development' || env.MOVERS_DB || !resolveAiMode(env).allowMockFallback) throw error
+  } catch {
+    if (env.ENV !== 'development' || env.MOVERS_DB || !resolveAiMode(env).allowMockFallback) {
+      throw new Error(`${mode === 'binding' ? 'Workers AI binding' : 'AI Gateway'} request failed`)
+    }
     console.warn(`[ai] ${mode} call failed, answering with the offline mock (demo data).`)
     return { value: mock(), mode: 'mock' }
   }

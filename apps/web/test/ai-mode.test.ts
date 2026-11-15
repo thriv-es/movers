@@ -155,6 +155,20 @@ describe('resolveRole', () => {
     })
   })
 
+  it('keeps forced offline mock available when the local settings table cannot be read', async () => {
+    const prepare = vi.fn(() => {
+      throw new Error('no such table: ai_settings')
+    })
+    const env = roleEnv({ MOVERS_DB: { prepare } as unknown as D1Database, AI_MODE: 'mock' })
+    expect(await resolveRole(env, 'price')).toEqual({
+      selection: { backend: 'gateway', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' },
+      mode: 'mock',
+      available: true,
+      revision: 0,
+    })
+    expect(prepare).toHaveBeenCalledOnce()
+  })
+
   it('marks a selected provider unavailable for a missing binding or placeholder token', async () => {
     const { db } = settingsDb(2, roles)
     expect(await resolveRole(roleEnv({ MOVERS_DB: db }), 'price')).toMatchObject({ mode: 'binding', available: false })

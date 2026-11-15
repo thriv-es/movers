@@ -123,10 +123,12 @@ describe('binding mode', () => {
     const AI = binding(async () => {
       throw new Error('Workers AI is down')
     })
-    await expect(runText(env({ AI, ENV: 'production' }), 'PROMPT', mock)).rejects.toThrow('Workers AI is down')
-    await expect(runVision(env({ AI, ENV: 'production' }), 'PROMPT', [image], mock)).rejects.toThrow(
-      'Workers AI is down',
-    )
+    await expect(runText(env({ AI, ENV: 'production' }), 'PROMPT', mock)).rejects.toMatchObject({
+      message: 'Workers AI binding request failed',
+    })
+    await expect(runVision(env({ AI, ENV: 'production' }), 'PROMPT', [image], mock)).rejects.toMatchObject({
+      message: 'Workers AI binding request failed',
+    })
     expect(mock).not.toHaveBeenCalled()
   })
 
@@ -134,7 +136,9 @@ describe('binding mode', () => {
     const AI = binding(async () => {
       throw new Error('boom')
     })
-    await expect(runText(env({ AI, AI_MODE: 'binding' }), 'PROMPT', mock)).rejects.toThrow('boom')
+    await expect(runText(env({ AI, AI_MODE: 'binding' }), 'PROMPT', mock)).rejects.toMatchObject({
+      message: 'Workers AI binding request failed',
+    })
     await expect(runText(env({ AI_MODE: 'binding' }), 'PROMPT', mock)).rejects.toThrow(/AI binding/)
     expect(mock).not.toHaveBeenCalled()
   })
@@ -188,11 +192,11 @@ describe('gateway mode', () => {
     ])
   })
 
-  it('rethrows in production and falls back to the mock in development', async () => {
+  it('reports a safe gateway failure in production and falls back to the mock in development', async () => {
     generateTextMock.mockRejectedValue(new Error('401 Unauthorized'))
-    await expect(runText(env({ CF_AIG_TOKEN: 'token', ENV: 'production' }), 'PROMPT', mock)).rejects.toThrow(
-      '401 Unauthorized',
-    )
+    await expect(runText(env({ CF_AIG_TOKEN: 'token', ENV: 'production' }), 'PROMPT', mock)).rejects.toMatchObject({
+      message: 'AI Gateway request failed',
+    })
     expect(mock).not.toHaveBeenCalled()
 
     expect(await runText(env({ CF_AIG_TOKEN: 'token' }), 'PROMPT', mock)).toEqual({ text: 'MOCK ANSWER', mode: 'mock' })
@@ -261,13 +265,39 @@ describe('local role selections', () => {
     expect(generateTextMock).not.toHaveBeenCalled()
   })
 
-  it('fails visibly without mock fallback when a selected provider call fails', async () => {
+  it('fails visibly without mock fallback or raw error propagation when a selected provider call fails', async () => {
     const AI = binding(async () => {
       throw new Error('provider failure')
     })
     const { db } = settingsDb(1, selectedRoles)
-    await expect(runText(env({ MOVERS_DB: db, AI }), 'PRICE', mock, 'price')).rejects.toThrow('provider failure')
+    await expect(runText(env({ MOVERS_DB: db, AI }), 'PRICE', mock, 'price')).rejects.toMatchObject({
+      message: 'Workers AI binding request failed',
+    })
     expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('does not expose sensitive provider exception text from selected Gateway chat or vision', async () => {
+    generateTextMock.mockRejectedValue(new Error('SYNTHETIC_TOKEN prompt=private raw_text=untrusted'))
+    const { db } = settingsDb(1, { ...selectedRoles, vision: { ...selectedRoles.vision, backend: 'gateway' } })
+    const local = env({ MOVERS_DB: db, CF_AIG_TOKEN: 'test-token' })
+    await expect(runText(local, 'CHAT', mock)).rejects.toMatchObject({ message: 'AI Gateway request failed' })
+    await expect(runVision(local, 'VISION', [image], mock)).rejects.toMatchObject({
+      message: 'AI Gateway request failed',
+    })
+    expect(mock).not.toHaveBeenCalled()
+    expect(console.warn).not.toHaveBeenCalled()
+  })
+
+  it('answers forced offline mock when the local settings table read fails', async () => {
+    const db = {
+      prepare: () => {
+        throw new Error('no such table: ai_settings')
+      },
+    } as unknown as D1Database
+    const local = env({ MOVERS_DB: db, AI_MODE: 'mock' })
+    expect(await runText(local, 'CHAT', mock)).toEqual({ text: 'MOCK ANSWER', mode: 'mock' })
+    expect(await runVision(local, 'VISION', [image], mock)).toEqual({ texts: ['MOCK ANSWER'], mode: 'mock' })
+    expect(generateTextMock).not.toHaveBeenCalled()
   })
 
   it('fails with a sanitized availability error for a missing selected binding or placeholder token', async () => {

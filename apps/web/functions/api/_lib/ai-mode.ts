@@ -1,5 +1,5 @@
 import { VISION_MODEL, textModel } from './ai'
-import { type AiRole, type AiSelection, readAiSettings } from './ai-settings'
+import { type AiRole, type AiSelection, type AiSettings, readAiSettings } from './ai-settings'
 import type { Bindings } from './types'
 
 /**
@@ -60,14 +60,21 @@ export async function resolveRole(
   role: AiRole,
 ): Promise<{ selection: AiSelection; mode: AiMode; available: boolean; revision: number }> {
   const defaultMode = resolveAiMode(env).mode
-  const settings = env.ENV === 'development' && env.MOVERS_DB ? await readAiSettings(env.MOVERS_DB) : null
+  const forcedMock = env.ENV === 'development' && env.AI_MODE?.trim().toLowerCase() === 'mock'
+  let settings: AiSettings | null = null
+  if (env.ENV === 'development' && env.MOVERS_DB) {
+    try {
+      settings = await readAiSettings(env.MOVERS_DB)
+    } catch (error) {
+      if (!forcedMock) throw error
+    }
+  }
   const selection: AiSelection = settings
     ? settings.roles[role]
     : {
         backend: defaultMode === 'binding' ? 'binding' : 'gateway',
         model: role === 'vision' ? VISION_MODEL : textModel(env, role),
       }
-  const forcedMock = env.ENV === 'development' && env.AI_MODE?.trim().toLowerCase() === 'mock'
   const mode = forcedMock ? 'mock' : (settings?.roles[role].backend ?? defaultMode)
   const available = mode === 'mock' || (mode === 'gateway' ? isTokenSet(env.CF_AIG_TOKEN) : !!env.AI)
   return { selection, mode, available, revision: settings?.revision ?? 0 }
