@@ -55,6 +55,7 @@ price.post('/', async (c) => {
         pricing: { mode: pricing.mode, ...pricing.selection, revision: pricing.revision },
       },
       () => runText(c.env, prompt, () => mockPriceReply(validatedRequest, pricePerBox), 'price', pricing),
+      (answer) => answer.mode === pricing.mode,
     )
     c.header('x-movers-ai-mode', value.mode)
     if (cached) c.header('x-movers-sample-cache', 'hit')

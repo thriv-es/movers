@@ -65,18 +65,20 @@ export async function withSampleCache<T>(
   route: string,
   payload: unknown,
   compute: () => Promise<T>,
+  cacheWhen: (value: T) => boolean = () => true,
 ): Promise<{ value: T; cached: boolean }> {
   if (!sample) return { value: await compute(), cached: false }
   const key = await sampleCacheKey(route, payload)
   const hit = await readSampleCache(key)
   if (hit !== null) {
     try {
-      return { value: JSON.parse(hit) as T, cached: true }
+      const value = JSON.parse(hit) as T
+      if (cacheWhen(value)) return { value, cached: true }
     } catch {
       // a corrupt entry is recomputed below
     }
   }
   const value = await compute()
-  await writeSampleCache(key, JSON.stringify(value))
+  if (cacheWhen(value)) await writeSampleCache(key, JSON.stringify(value))
   return { value, cached: false }
 }

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import { runText } from '../functions/api/_lib/ai-client'
+import { sampleCacheKey, writeSampleCache } from '../functions/api/_lib/sample-cache'
 import price from '../functions/api/_routes/price'
 
 vi.mock('../functions/api/_lib/ai-client', () => ({
@@ -56,9 +57,9 @@ describe('price route model reply', () => {
       }),
     } as unknown as D1Database
     vi.mocked(runText).mockClear()
-    for (const labor of [100, 200, 300, 400]) {
+    for (const [index, labor] of [100, 200, 300, 400].entries()) {
       vi.mocked(runText).mockResolvedValueOnce({
-        mode: 'binding',
+        mode: index < 2 ? 'gateway' : 'binding',
         text: JSON.stringify({ currency: 'USD', breakdown: { labor }, confidence: 'low' }),
       })
     }
@@ -97,6 +98,86 @@ describe('price route model reply', () => {
     )
     errorLog.mockRestore()
     expect(runText).toHaveBeenCalledTimes(4)
+  })
+
+  it('does not cache an unsaved local fallback mock as a recovered real sample quote', async () => {
+    const db = { prepare: () => ({ first: async () => null }) } as unknown as D1Database
+    const env = { ENV: 'development', MOVERS_DB: db, CF_AIG_TOKEN: 'synthetic-token', PRICE_PER_BOX: '51' }
+    vi.mocked(runText).mockClear()
+    vi.mocked(runText)
+      .mockResolvedValueOnce({
+        mode: 'mock',
+        text: JSON.stringify({ currency: 'USD', breakdown: { labor: 100 }, confidence: 'low' }),
+      })
+      .mockResolvedValueOnce({
+        mode: 'gateway',
+        text: JSON.stringify({ currency: 'USD', breakdown: { labor: 200 }, confidence: 'low' }),
+      })
+    const fallback = await request(true, env)
+    expect(fallback.status).toBe(200)
+    expect(fallback.headers.get('x-movers-ai-mode')).toBe('mock')
+    const recovered = await request(true, env)
+    expect(recovered.status).toBe(200)
+    expect(recovered.headers.get('x-movers-sample-cache')).toBeNull()
+    expect(recovered.headers.get('x-movers-ai-mode')).toBe('gateway')
+    expect(((await recovered.json()) as { price: { total: number } }).price.total).toBe(200)
+    const repeated = await request(true, env)
+    expect(repeated.headers.get('x-movers-sample-cache')).toBe('hit')
+    expect(runText).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects an earlier cached fallback mock under an unsaved real-mode key', async () => {
+    const db = { prepare: () => ({ first: async () => null }) } as unknown as D1Database
+    const env = { ENV: 'development', MOVERS_DB: db, CF_AIG_TOKEN: 'synthetic-token', PRICE_PER_BOX: '53' }
+    const key = await sampleCacheKey('price', {
+      analysis,
+      moveDetails: {
+        from: moveDetails.from,
+        to: moveDetails.to,
+        date: moveDetails.date,
+        distanceMiles: moveDetails.distanceMiles,
+        originFloor: moveDetails.originFloor,
+        destinationFloor: moveDetails.destinationFloor,
+        originElevator: moveDetails.originElevator,
+        destinationElevator: moveDetails.destinationElevator,
+      },
+      pricePerBox: 53,
+      pricing: { mode: 'gateway', backend: 'gateway', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', revision: 0 },
+    })
+    await writeSampleCache(
+      key,
+      JSON.stringify({
+        mode: 'mock',
+        text: JSON.stringify({ currency: 'USD', breakdown: { labor: 100 }, confidence: 'low' }),
+      }),
+    )
+    vi.mocked(runText).mockClear()
+    vi.mocked(runText).mockResolvedValueOnce({
+      mode: 'gateway',
+      text: JSON.stringify({ currency: 'USD', breakdown: { labor: 200 }, confidence: 'low' }),
+    })
+    const recovered = await request(true, env)
+    expect(recovered.status).toBe(200)
+    expect(recovered.headers.get('x-movers-sample-cache')).toBeNull()
+    expect(recovered.headers.get('x-movers-ai-mode')).toBe('gateway')
+    expect(((await recovered.json()) as { price: { total: number } }).price.total).toBe(200)
+    expect(runText).toHaveBeenCalledTimes(1)
+  })
+
+  it('caches a forced local offline mock as mock, without calling a provider', async () => {
+    const db = { prepare: () => ({ first: async () => null }) } as unknown as D1Database
+    const env = { ENV: 'development', MOVERS_DB: db, CF_AIG_TOKEN: '', AI_MODE: 'mock', PRICE_PER_BOX: '52' }
+    vi.mocked(runText).mockClear()
+    vi.mocked(runText).mockResolvedValueOnce({
+      mode: 'mock',
+      text: JSON.stringify({ currency: 'USD', breakdown: { labor: 100 }, confidence: 'low' }),
+    })
+    const first = await request(true, env)
+    const repeated = await request(true, env)
+    expect(first.status).toBe(200)
+    expect(first.headers.get('x-movers-ai-mode')).toBe('mock')
+    expect(repeated.headers.get('x-movers-sample-cache')).toBe('hit')
+    expect(runText).toHaveBeenCalledTimes(1)
   })
 
   it('returns a retryable error without fabricated price for malformed JSON', async () => {
