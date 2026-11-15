@@ -51,6 +51,12 @@ const routes: RouteObject[] = [
               return { Component: (await import('@/pages/admin/quote-requests.page')).default }
             },
           },
+          {
+            path: 'ai-settings',
+            async lazy() {
+              return { Component: (await import('@/pages/admin/ai-settings.page')).default }
+            },
+          },
         ],
       },
     ],

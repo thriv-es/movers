@@ -11,6 +11,18 @@ import type {
   QuoteRequestRecord,
   QuoteRequestStatus,
 } from '@/data'
+// Mirror the local settings API contract without importing Worker files into the browser's TS rootDir.
+export type AiRole = 'chat' | 'price' | 'vision'
+export interface AiSelection {
+  backend: 'gateway' | 'binding'
+  model: string
+}
+
+export interface AdminAiSettings {
+  settings: { revision: number; roles: Record<AiRole, AiSelection> }
+  effective: Record<AiRole, { mode: 'gateway' | 'binding' | 'mock'; available: boolean }>
+  catalog: Record<AiRole, readonly { model: string; label: string; caveat?: string }[]>
+}
 
 export interface AdminStatus {
   storage: 'd1' | 'memory'
@@ -60,6 +72,20 @@ export async function adminStatus(): Promise<AdminStatus | null> {
   if (!response.ok) throw new Error(errorMessage(body, response.status))
   if (typeof body === 'object' && body !== null && 'error' in body) return null
   return body as AdminStatus
+}
+
+export function adminAiSettings(): Promise<AdminAiSettings> {
+  return request<AdminAiSettings>('/api/admin/ai-settings')
+}
+
+export function saveAdminAiSettings(
+  expectedRevision: number,
+  roles: Record<AiRole, AiSelection>,
+): Promise<AdminAiSettings> {
+  return request<AdminAiSettings>('/api/admin/ai-settings', {
+    method: 'PATCH',
+    body: JSON.stringify({ expectedRevision, roles }),
+  })
 }
 
 export async function listLeads(status?: LeadStatus): Promise<EstimateRecord[]> {

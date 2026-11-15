@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet } from 'react-router'
+import { NavLink, Outlet, useLocation } from 'react-router'
 import { Badge, Panel, TapeLabel } from '@movers/ui'
 import { PageSeo } from '@/components/seo'
 import { adminStatus, toMessage } from '@/lib/admin-api'
@@ -22,6 +22,7 @@ const seo = <PageSeo title="Admin | Movers by thriv.es" index={false} follow={fa
 
 export default function AdminLayout() {
   const [state, setState] = useState<State>({ kind: 'loading' })
+  const location = useLocation()
 
   useEffect(() => {
     let cancelled = false
@@ -78,7 +79,10 @@ export default function AdminLayout() {
         </div>
         <nav aria-label="Admin sections">
           <ul className="adm-tabs">
-            {TABS.map((tab) => (
+            {[
+              ...TABS,
+              ...(state.status.env === 'development' ? [{ to: '/admin/ai-settings', label: 'AI settings' }] : []),
+            ].map((tab) => (
               <li key={tab.to}>
                 <NavLink to={tab.to} className={({ isActive }) => (isActive ? 'is-active' : undefined)}>
                   {tab.label}
@@ -88,7 +92,11 @@ export default function AdminLayout() {
           </ul>
         </nav>
       </header>
-      <Outlet />
+      {location.pathname === '/admin/ai-settings' && state.status.env !== 'development' ? (
+        <Panel>AI settings are available only in local development.</Panel>
+      ) : (
+        <Outlet />
+      )}
     </div>
   )
 }

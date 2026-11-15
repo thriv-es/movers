@@ -65,7 +65,7 @@ function applyMigrations() {
 function baseArgs() {
   // The D1 binding comes from wrangler.toml ([[d1_databases]]), so `pages dev` and `d1 migrations apply` share the
   // same local database. Passing `--d1` here would create a second, empty one.
-  const args = ['pages', 'dev', STATIC_DIR, '--port', PORT]
+  const args = ['pages', 'dev', STATIC_DIR, '--ip', '127.0.0.1', '--port', PORT]
   // Wrangler reads .dev.vars itself; only a value that came from the shell needs to be passed on.
   if (process.env.AI_MODE) args.push('--binding', `AI_MODE=${process.env.AI_MODE}`)
   return args

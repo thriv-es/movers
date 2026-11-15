@@ -3,6 +3,15 @@ import type { Bindings } from '../_lib/types'
 import type { EstimateRecord } from '../../../src/data'
 import { zLeadStatus, zLeadUpdate, zMoverInput, zQuoteRequestStatus } from '../../../src/data'
 import { createStore, storeKind } from '../_lib/store'
+import {
+  type AiRole,
+  type AiSelection,
+  MODEL_CATALOG,
+  readAiSettings,
+  updateAiSettings,
+  validateRoles,
+} from '../_lib/ai-settings'
+import { resolveRole } from '../_lib/ai-mode'
 
 const admin = new Hono<{ Bindings: Bindings }>()
 
@@ -14,6 +23,54 @@ admin.use('*', async (c, next) => {
 })
 
 admin.get('/status', (c) => c.json({ storage: storeKind(c.env), env: c.env.ENV }))
+
+// No authentication exists yet: these routes are available only on the loopback-bound local dev server.
+admin.use('/ai-settings', async (c, next) => {
+  const hostname = new URL(c.req.url).hostname
+  if (c.env.ENV !== 'development' || (hostname !== 'localhost' && hostname !== '127.0.0.1')) {
+    return c.json({ error: 'Not found' }, 404)
+  }
+  if (!c.env.MOVERS_DB) return c.json({ error: 'Local database unavailable' }, 503)
+  await next()
+  return undefined
+})
+
+async function settingsResponse(env: Bindings) {
+  const db = env.MOVERS_DB as D1Database
+  const settings = await readAiSettings(db)
+  const [chat, price, vision] = await Promise.all([
+    resolveRole(env, 'chat'),
+    resolveRole(env, 'price'),
+    resolveRole(env, 'vision'),
+  ])
+  return {
+    settings,
+    effective: {
+      chat: { mode: chat.mode, available: chat.available },
+      price: { mode: price.mode, available: price.available },
+      vision: { mode: vision.mode, available: vision.available },
+    },
+    catalog: MODEL_CATALOG,
+  }
+}
+
+admin.get('/ai-settings', async (c) => c.json(await settingsResponse(c.env)))
+
+admin.patch('/ai-settings', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+  if (!body || !Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0) {
+    return c.json({ error: 'Invalid AI settings' }, 400)
+  }
+  let roles: Record<AiRole, AiSelection>
+  try {
+    roles = validateRoles(body.roles)
+  } catch {
+    return c.json({ error: 'Invalid AI settings' }, 400)
+  }
+  const updated = await updateAiSettings(c.env.MOVERS_DB as D1Database, body.expectedRevision as number, roles)
+  if (!updated) return c.json({ error: 'Settings changed; reload and retry.' }, 409)
+  return c.json(await settingsResponse(c.env))
+})
 
 const csvCell = (value: string | number | null | undefined) => {
   const text = value === null || value === undefined ? '' : String(value)
