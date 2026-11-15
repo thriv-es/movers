@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { resolveAiMode } from '../functions/api/_lib/ai-mode'
+import { describe, expect, it, vi } from 'vitest'
+import { resolveAiMode, resolveRole } from '../functions/api/_lib/ai-mode'
+import type { Bindings } from '../functions/api/_lib/types'
 
 const TOKEN = 'cf-aig-real-token'
 const PLACEHOLDER = 'your_cloudflare_ai_gateway_token_here'
@@ -101,5 +102,84 @@ describe('resolveAiMode', () => {
       allowMockFallback: false,
     })
     expect(resolveAiMode({ AI_MODE: '', ENV: 'development' })).toEqual({ mode: 'mock', allowMockFallback: false })
+  })
+})
+
+function settingsDb(revision: number, roles: Record<string, unknown>) {
+  const first = async () => ({ revision, roles_json: JSON.stringify(roles) })
+  const prepare = vi.fn(() => ({ first }))
+  return { db: { prepare } as unknown as D1Database, prepare }
+}
+
+const roles = {
+  chat: { backend: 'gateway', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' },
+  price: { backend: 'binding', model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast' },
+  vision: { backend: 'binding', model: '@cf/meta/llama-3.2-11b-vision-instruct' },
+}
+
+function roleEnv(overrides: Record<string, unknown>): Bindings {
+  return { ENV: 'development', CF_AIG_TOKEN: TOKEN, ...overrides } as unknown as Bindings
+}
+
+describe('resolveRole', () => {
+  it('resolves each saved role independently with availability and revision', async () => {
+    const { db } = settingsDb(4, roles)
+    const env = roleEnv({ MOVERS_DB: db, AI })
+    expect(await resolveRole(env, 'chat')).toEqual({
+      selection: roles.chat,
+      mode: 'gateway',
+      available: true,
+      revision: 4,
+    })
+    expect(await resolveRole(env, 'price')).toEqual({
+      selection: roles.price,
+      mode: 'binding',
+      available: true,
+      revision: 4,
+    })
+    expect(await resolveRole(env, 'vision')).toEqual({
+      selection: roles.vision,
+      mode: 'binding',
+      available: true,
+      revision: 4,
+    })
+  })
+
+  it('keeps saved selections while local AI_MODE=mock overrides the effective mode', async () => {
+    const { db } = settingsDb(2, roles)
+    expect(await resolveRole(roleEnv({ MOVERS_DB: db, AI_MODE: 'mock' }), 'price')).toEqual({
+      selection: roles.price,
+      mode: 'mock',
+      available: true,
+      revision: 2,
+    })
+  })
+
+  it('marks a selected provider unavailable for a missing binding or placeholder token', async () => {
+    const { db } = settingsDb(2, roles)
+    expect(await resolveRole(roleEnv({ MOVERS_DB: db }), 'price')).toMatchObject({ mode: 'binding', available: false })
+    expect(await resolveRole(roleEnv({ MOVERS_DB: db, CF_AIG_TOKEN: PLACEHOLDER }), 'chat')).toMatchObject({
+      mode: 'gateway',
+      available: false,
+    })
+  })
+
+  it('ignores the local settings database in preview and keeps environment model defaults', async () => {
+    const { db, prepare } = settingsDb(7, roles)
+    expect(
+      await resolveRole(roleEnv({ ENV: 'preview', MOVERS_DB: db, CHAT_MODEL: 'preview-chat', AI }), 'chat'),
+    ).toEqual({
+      selection: { backend: 'gateway', model: 'preview-chat' },
+      mode: 'gateway',
+      available: true,
+      revision: 0,
+    })
+    expect(await resolveRole(roleEnv({ ENV: 'preview', MOVERS_DB: db, AI, CF_AIG_TOKEN: '' }), 'vision')).toEqual({
+      selection: { backend: 'binding', model: '@cf/meta/llama-3.2-11b-vision-instruct' },
+      mode: 'binding',
+      available: true,
+      revision: 0,
+    })
+    expect(prepare).not.toHaveBeenCalled()
   })
 })

@@ -1,3 +1,7 @@
+import { VISION_MODEL, textModel } from './ai'
+import { type AiRole, type AiSelection, readAiSettings } from './ai-settings'
+import type { Bindings } from './types'
+
 /**
  * Pure AI mode resolution: which backend answers the AI routes.
  *
@@ -48,4 +52,23 @@ export function resolveAiMode(env: AiEnv): AiModeDecision {
   if (env.AI) return { mode: 'binding', allowMockFallback: isLocalDev }
   if (isLocalDev) return { mode: 'mock', allowMockFallback: false }
   return { mode: 'gateway', allowMockFallback: false }
+}
+
+/** Read local selections per call so a later D1 revision cannot reuse a stale model. */
+export async function resolveRole(
+  env: Bindings,
+  role: AiRole,
+): Promise<{ selection: AiSelection; mode: AiMode; available: boolean; revision: number }> {
+  const defaultMode = resolveAiMode(env).mode
+  const settings = env.ENV === 'development' && env.MOVERS_DB ? await readAiSettings(env.MOVERS_DB) : null
+  const selection: AiSelection = settings
+    ? settings.roles[role]
+    : {
+        backend: defaultMode === 'binding' ? 'binding' : 'gateway',
+        model: role === 'vision' ? VISION_MODEL : textModel(env, role),
+      }
+  const forcedMock = env.ENV === 'development' && env.AI_MODE?.trim().toLowerCase() === 'mock'
+  const mode = forcedMock ? 'mock' : (settings?.roles[role].backend ?? defaultMode)
+  const available = mode === 'mock' || (mode === 'gateway' ? isTokenSet(env.CF_AIG_TOKEN) : !!env.AI)
+  return { selection, mode, available, revision: settings?.revision ?? 0 }
 }

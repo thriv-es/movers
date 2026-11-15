@@ -3,8 +3,9 @@
  * model's text together with the mode that actually answered, so routes can label the response.
  */
 import { generateText } from 'ai'
-import { type TextPurpose, VISION_MODEL, createWorkersAI, textModel } from './ai'
-import { type AiMode, resolveAiMode } from './ai-mode'
+import { type TextPurpose, createWorkersAI } from './ai'
+import { type AiMode, resolveAiMode, resolveRole } from './ai-mode'
+import type { AiRole } from './ai-settings'
 import type { Bindings } from './types'
 
 export interface AiImage {
@@ -49,18 +50,19 @@ function toDataUrl(image: AiImage): string {
 
 async function run<T>(
   env: Bindings,
-  backends: Record<Backend, () => Promise<T>>,
+  role: AiRole,
+  backends: Record<Backend, (model: string) => Promise<T>>,
   mock: () => T,
 ): Promise<{ value: T; mode: AiMode }> {
-  const { mode, allowMockFallback } = resolveAiMode(env)
+  const { mode, selection, available } = await resolveRole(env, role)
   if (mode === 'mock') return { value: mock(), mode }
+  if (!available) throw new Error(`${mode === 'binding' ? 'Workers AI binding' : 'AI Gateway'} unavailable`)
 
   try {
-    return { value: await backends[mode](), mode }
+    return { value: await backends[mode](selection.model), mode }
   } catch (error) {
-    if (!allowMockFallback) throw error
-    const reason = error instanceof Error ? error.message : String(error)
-    console.warn(`[ai] ${mode} call failed, answering with the offline mock (demo data). Reason: ${reason}`)
+    if (env.ENV !== 'development' || env.MOVERS_DB || !resolveAiMode(env).allowMockFallback) throw error
+    console.warn(`[ai] ${mode} call failed, answering with the offline mock (demo data).`)
     return { value: mock(), mode: 'mock' }
   }
 }
@@ -72,16 +74,16 @@ export async function runText(
   mock: () => string,
   purpose: TextPurpose = 'chat',
 ): Promise<AiResult> {
-  const model = textModel(env, purpose)
   const { value, mode } = await run(
     env,
+    purpose,
     {
-      gateway: async () => {
+      gateway: async (model) => {
         const ai = createWorkersAI(env.CF_AIG_TOKEN)
         const { text } = await generateText({ model: ai(model), prompt })
         return text
       },
-      binding: async () => {
+      binding: async (model) => {
         const output = await requireBinding(env).run(model, {
           messages: [{ role: 'user', content: prompt }],
           max_tokens: BINDING_MAX_TOKENS,
@@ -112,13 +114,14 @@ export async function runVision(
 ): Promise<AiVisionResult> {
   const { value, mode } = await run(
     env,
+    'vision',
     {
-      gateway: () =>
+      gateway: (model) =>
         Promise.all(
           images.map(async (img) => {
             const ai = createWorkersAI(env.CF_AIG_TOKEN)
             const { text } = await generateText({
-              model: ai(VISION_MODEL),
+              model: ai(model),
               messages: [
                 {
                   role: 'user',
@@ -132,10 +135,10 @@ export async function runVision(
             return text
           }),
         ),
-      binding: () =>
+      binding: (model) =>
         Promise.all(
           images.map(async (img) => {
-            const output = await requireBinding(env).run(VISION_MODEL, {
+            const output = await requireBinding(env).run(model, {
               messages: [
                 {
                   role: 'user',

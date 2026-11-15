@@ -110,7 +110,8 @@ describe('binding mode', () => {
     const result = await runText(env({ AI }), 'PROMPT', mock)
 
     expect(result).toEqual({ text: 'MOCK ANSWER', mode: 'mock' })
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('Not logged in'))
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('offline mock'))
+    expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining('Not logged in'))
   })
 
   it('treats an empty answer as a failure', async () => {
@@ -195,6 +196,104 @@ describe('gateway mode', () => {
     expect(mock).not.toHaveBeenCalled()
 
     expect(await runText(env({ CF_AIG_TOKEN: 'token' }), 'PROMPT', mock)).toEqual({ text: 'MOCK ANSWER', mode: 'mock' })
+  })
+})
+
+function settingsDb(revision: number, roles: Record<string, unknown>) {
+  const first = vi.fn(async () => ({ revision, roles_json: JSON.stringify(roles) }))
+  return { db: { prepare: vi.fn(() => ({ first })) } as unknown as D1Database, first }
+}
+
+const selectedRoles = {
+  chat: { backend: 'gateway', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' },
+  price: { backend: 'binding', model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast' },
+  vision: { backend: 'binding', model: '@cf/meta/llama-3.2-11b-vision-instruct' },
+}
+
+describe('local role selections', () => {
+  it('routes chat, price, and vision to their independently selected model and backend', async () => {
+    generateTextMock.mockResolvedValue({ text: 'chat answer' } as never)
+    const AI = binding(async () => ({ response: 'binding answer' }))
+    const { db } = settingsDb(1, selectedRoles)
+    const local = env({ MOVERS_DB: db, CF_AIG_TOKEN: 'test-token', AI })
+
+    expect(await runText(local, 'CHAT', mock)).toEqual({ text: 'chat answer', mode: 'gateway' })
+    expect((generateTextMock.mock.calls[0]?.[0] as any).model.modelId).toBe(selectedRoles.chat.model)
+    expect(await runText(local, 'PRICE', mock, 'price')).toEqual({ text: 'binding answer', mode: 'binding' })
+    expect(AI.run).toHaveBeenLastCalledWith(selectedRoles.price.model, expect.anything())
+    expect(await runVision(local, 'VISION', [image], mock)).toEqual({ texts: ['binding answer'], mode: 'binding' })
+    expect(AI.run).toHaveBeenLastCalledWith(selectedRoles.vision.model, expect.anything())
+    expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('uses the selected vision model on the gateway and reads settings once per vision request', async () => {
+    generateTextMock.mockResolvedValue({ text: 'vision answer' } as never)
+    const { db, first } = settingsDb(3, { ...selectedRoles, vision: { ...selectedRoles.vision, backend: 'gateway' } })
+    const result = await runVision(env({ MOVERS_DB: db, CF_AIG_TOKEN: 'test-token' }), 'VISION', [image, image], mock)
+    expect(result).toEqual({ texts: ['vision answer', 'vision answer'], mode: 'gateway' })
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(generateTextMock.mock.calls.map(([args]) => (args as any).model.modelId)).toEqual([
+      selectedRoles.vision.model,
+      selectedRoles.vision.model,
+    ])
+  })
+
+  it('uses a new saved selection on the next call without caching across revisions', async () => {
+    const AI = binding(async () => ({ response: 'ok' }))
+    const roles = { ...selectedRoles, chat: { backend: 'binding', model: selectedRoles.chat.model } }
+    const first = vi.fn(async () => ({ revision: 1, roles_json: JSON.stringify(roles) }))
+    const db = { prepare: () => ({ first }) } as unknown as D1Database
+    const local = env({ MOVERS_DB: db, AI })
+    await runText(local, 'CHAT', mock)
+    roles.chat = { backend: 'binding', model: selectedRoles.price.model }
+    await runText(local, 'CHAT', mock)
+    expect(AI.run.mock.calls.map(([model]) => model)).toEqual([selectedRoles.chat.model, selectedRoles.price.model])
+    expect(first).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps forced local mock ahead of a saved real selection without calling providers', async () => {
+    const AI = binding(async () => ({ response: 'real' }))
+    const { db } = settingsDb(1, selectedRoles)
+    const local = env({ MOVERS_DB: db, AI, CF_AIG_TOKEN: 'test-token', AI_MODE: 'mock' })
+    expect(await runText(local, 'CHAT', mock)).toEqual({ text: 'MOCK ANSWER', mode: 'mock' })
+    expect(await runVision(local, 'VISION', [image], mock)).toEqual({ texts: ['MOCK ANSWER'], mode: 'mock' })
+    expect(AI.run).not.toHaveBeenCalled()
+    expect(generateTextMock).not.toHaveBeenCalled()
+  })
+
+  it('fails visibly without mock fallback when a selected provider call fails', async () => {
+    const AI = binding(async () => {
+      throw new Error('provider failure')
+    })
+    const { db } = settingsDb(1, selectedRoles)
+    await expect(runText(env({ MOVERS_DB: db, AI }), 'PRICE', mock, 'price')).rejects.toThrow('provider failure')
+    expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('fails with a sanitized availability error for a missing selected binding or placeholder token', async () => {
+    const { db } = settingsDb(1, selectedRoles)
+    await expect(runText(env({ MOVERS_DB: db }), 'PRICE', mock, 'price')).rejects.toThrow(
+      'Workers AI binding unavailable',
+    )
+    await expect(
+      runText(env({ MOVERS_DB: db, CF_AIG_TOKEN: 'your_cloudflare_ai_gateway_token_here' }), 'CHAT', mock),
+    ).rejects.toThrow('AI Gateway unavailable')
+    expect(mock).not.toHaveBeenCalled()
+    expect(generateTextMock).not.toHaveBeenCalled()
+  })
+
+  it('ignores the saved local settings in preview and retains environment model routing', async () => {
+    const AI = binding(async () => ({ response: 'preview answer' }))
+    const { db, first } = settingsDb(1, selectedRoles)
+    const result = await runText(
+      env({ ENV: 'preview', MOVERS_DB: db, AI, PRICE_MODEL: 'preview-price' }),
+      'PRICE',
+      mock,
+      'price',
+    )
+    expect(result).toEqual({ text: 'preview answer', mode: 'binding' })
+    expect(AI.run).toHaveBeenCalledWith('preview-price', expect.anything())
+    expect(first).not.toHaveBeenCalled()
   })
 })
 
