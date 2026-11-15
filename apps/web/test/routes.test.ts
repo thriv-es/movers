@@ -122,6 +122,7 @@ describe('local development with no AI credentials (offline mock)', () => {
       const { price: result } = (await res.json()) as {
         price: { total: number; low: number; high: number; confidence: string; breakdown: Record<string, number> }
       }
+      expect(Object.values(result.breakdown).every((amount) => Number.isFinite(amount))).toBe(true)
       const sum = Object.values(result.breakdown).reduce((a, b) => a + b, 0)
       expect(result.total).toBe(sum)
       // MOVERS-8: a range around the total; MOVERS-23: special items are a breakdown line

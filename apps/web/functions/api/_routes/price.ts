@@ -2,8 +2,9 @@ import { Hono } from 'hono'
 import type { Bindings } from '../_lib/types'
 import type { Confidence, PriceRequest, PriceResult } from '../../../src/data'
 import { zPriceRequest, zPriceResult } from '../../../src/data'
-import { calculatePrice, specialHandlingLines, withRange } from '../_lib/pricing'
+import { withRange } from '../_lib/pricing'
 import { extractAndRepairJSON } from '../_lib/json-utils'
+import { normalizePriceReply, PriceFormatError } from '../_lib/price-normalization'
 import { runText } from '../_lib/ai-client'
 import { mockPriceReply } from '../_lib/mock'
 import { PRICE_EVALUATION_PROMPT, substituteVars } from '../_lib/prompts'
@@ -61,39 +62,24 @@ price.post('/', async (c) => {
     c.header('x-movers-ai-mode', value.mode)
     if (cached) c.header('x-movers-sample-cache', 'hit')
 
-    let priceData: {
-      total: number
-      currency: string
-      breakdown: Record<string, number>
-      explanation?: string
-      confidence?: unknown
-    }
-
+    let priceData: ReturnType<typeof normalizePriceReply>
     try {
-      priceData = extractAndRepairJSON(value.text)
-      if (typeof priceData.total !== 'number') throw new Error('Missing total')
-      if (!priceData.breakdown || typeof priceData.breakdown !== 'object') throw new Error('Missing breakdown')
-    } catch (parseError) {
-      console.error('Price parse failed, using fallback:', parseError)
-      const boxes = calculatePrice({ items: analysis.items, estimatedBoxes: analysis.estimatedBoxes, pricePerBox })
-      const breakdown = { ...boxes.breakdown, ...specialHandlingLines(analysis.specialHandling) }
-      const total = Object.values(breakdown).reduce((sum, v) => sum + v, 0)
-      const fallback = withRange(
-        {
-          currency: boxes.currency,
-          total,
-          breakdown,
-          explanation: 'A simplified estimate from the box count and special items; the pricing model did not answer.',
-        },
-        'low',
-      )
-      return c.json(zPriceResult.parse({ price: fallback } satisfies PriceResult))
+      let raw: unknown
+      try {
+        raw = extractAndRepairJSON(value.text)
+      } catch {
+        throw new PriceFormatError('Invalid price JSON')
+      }
+      priceData = normalizePriceReply(raw, analysis.items.length > 0)
+    } catch (error) {
+      if (!(error instanceof PriceFormatError)) throw error
+      return c.json({ code: 'PRICE_UNAVAILABLE', error: 'Pricing is temporarily unavailable. Please retry.' }, 503)
     }
 
     const confidence = confidenceFromDetails(validatedRequest, priceData.confidence)
     const priced = withRange(
       {
-        currency: priceData.currency || 'USD',
+        currency: priceData.currency,
         total: priceData.total,
         breakdown: priceData.breakdown,
         explanation: priceData.explanation,
