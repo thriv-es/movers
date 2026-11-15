@@ -73,13 +73,17 @@ migrations_dir = "migrations"
 # PREVIEW ENVIRONMENT
 # =============================================================================
 # Preview deployments (every non-production branch, e.g. https://dev.movers-ee0.pages.dev).
-# Bindings here override the Pages dashboard. The admin UI and API stay open on
-# previews (ENV != production) and there is no auth, so previews are for testing.
+# Once Pages reads this file it replaces the dashboard's preview config: plain-text
+# dashboard vars are dropped, only dashboard secrets (CF_AIG_TOKEN) survive. Put
+# every non-secret preview var here. Vars are also exposed to the build, so the
+# VITE_* ones work. The admin UI and API stay open on previews (ENV != production)
+# and there is no auth, so previews are for testing.
 # CHAT_MODEL/PRICE_MODEL: Workers AI models for the chat and pricing calls; empty
-# means TEXT_MODEL in functions/api/_lib/ai.ts (llama-3.3-70b). The 8B model is
-# about 6x cheaper and faster, so previews use it for the chat.
+# means TEXT_MODEL in functions/api/_lib/ai.ts (llama-3.3-70b). The cheaper
+# llama-3.1-8b-instruct-fp8-fast was tried for the chat and could not follow the
+# session-block prompt (it hallucinated the whole script), so both stay on 70B.
 [env.preview]
-vars = { ENV = "preview", PRICE_PER_BOX = "50", CHAT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8-fast", PRICE_MODEL = "" }
+vars = { ENV = "preview", PRICE_PER_BOX = "50", CHAT_MODEL = "", PRICE_MODEL = "", VITE_LANDING_URL = "https://movers-landing.pages.dev/" }
 
 [[env.preview.r2_buckets]]
 binding = "MOVERS_BUCKET"
