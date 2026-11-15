@@ -7,6 +7,7 @@ import { priceConfidence } from '../_lib/price-confidence'
 import { extractAndRepairJSON } from '../_lib/json-utils'
 import { normalizePriceReply, PriceFormatError } from '../_lib/price-normalization'
 import { runText } from '../_lib/ai-client'
+import { resolveRole } from '../_lib/ai-mode'
 import { mockPriceReply } from '../_lib/mock'
 import { PRICE_EVALUATION_PROMPT, substituteVars } from '../_lib/prompts'
 import { withSampleCache } from '../_lib/sample-cache'
@@ -40,8 +41,20 @@ price.post('/', async (c) => {
       price_per_box: pricePerBox.toString(),
     })
 
-    const { value, cached } = await withSampleCache(sample, 'price', { analysis, moveDetails, pricePerBox }, () =>
-      runText(c.env, prompt, () => mockPriceReply(validatedRequest, pricePerBox), 'price'),
+    // Resolve before the cache lookup: both the key and the call must use the same Pricing selection.
+    const pricing = await resolveRole(c.env, 'price')
+    if (!pricing.available)
+      throw new Error(`${pricing.mode === 'binding' ? 'Workers AI binding' : 'AI Gateway'} unavailable`)
+    const { value, cached } = await withSampleCache(
+      sample,
+      'price',
+      {
+        analysis,
+        moveDetails,
+        pricePerBox,
+        pricing: { mode: pricing.mode, ...pricing.selection, revision: pricing.revision },
+      },
+      () => runText(c.env, prompt, () => mockPriceReply(validatedRequest, pricePerBox), 'price', pricing),
     )
     c.header('x-movers-ai-mode', value.mode)
     if (cached) c.header('x-movers-sample-cache', 'hit')

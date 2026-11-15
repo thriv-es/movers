@@ -7,12 +7,11 @@
  * Why this is a script and not a plain `wrangler pages dev ...`: a Workers AI binding is always remote, and Wrangler
  * refuses to start at all when it cannot open the remote session (not logged in, offline, several accounts and none
  * chosen). So the binding is not declared in wrangler.toml. This script adds it with `--ai AI` only when it can be
- * used, and when Wrangler fails to come up with it, restarts without it. The API then answers with the offline mock
- * and labels every response as demo data.
+ * used, and when Wrangler fails to come up with it, restarts without it. Unsaved local calls retain the
+ * Gateway/offline-mock behavior; saved binding roles report unavailable.
  *
- * Binding is skipped when AI_MODE=mock, or when a real CF_AIG_TOKEN is configured and AI_MODE is not `binding`.
- * `AI_MODE` is read from the shell first, then `.dev.vars` (the shell value is passed to the worker). `CF_AIG_TOKEN` is read
- * from `.dev.vars` only, because that is the only place the worker can see it.
+ * Binding is skipped only for AI_MODE=mock; a Gateway token can coexist with saved binding roles.
+ * `AI_MODE` is read from the shell first, then `.dev.vars` (the shell value is passed to the worker).
  *
  * Plain Node 22+, no dependencies.
  */
@@ -20,10 +19,10 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { devApiLaunch } from './dev-api-args.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const WRANGLER = join(ROOT, 'node_modules', '.bin', 'wrangler')
-const PLACEHOLDER_TOKEN = 'your_cloudflare_ai_gateway_token_here'
 const PORT = '4611'
 const STATIC_DIR = join(ROOT, 'scripts', 'dev-static')
 /** If Wrangler exits non-zero before it is ready within this window, treat it as "binding unavailable". */
@@ -43,11 +42,8 @@ function readDevVars() {
 const devVars = readDevVars()
 const setting = (name) => (process.env[name] ?? devVars[name] ?? '').trim()
 
-const aiMode = setting('AI_MODE').toLowerCase()
-const token = (devVars.CF_AIG_TOKEN ?? '').trim()
-const hasRealToken = token !== '' && token !== PLACEHOLDER_TOKEN
-
-const wantsBinding = aiMode === 'binding' || (aiMode !== 'mock' && aiMode !== 'gateway' && !hasRealToken)
+const launchConfig = { aiMode: setting('AI_MODE').toLowerCase(), shellMode: process.env.AI_MODE }
+const wantsBinding = devApiLaunch(launchConfig, STATIC_DIR, PORT).withBinding
 
 /** Applies ./migrations to the local D1 database so the API can save estimates, movers and quote requests. */
 function applyMigrations() {
@@ -62,23 +58,14 @@ function applyMigrations() {
   }
 }
 
-function baseArgs() {
-  // The D1 binding comes from wrangler.toml ([[d1_databases]]), so `pages dev` and `d1 migrations apply` share the
-  // same local database. Passing `--d1` here would create a second, empty one.
-  const args = ['pages', 'dev', STATIC_DIR, '--ip', '127.0.0.1', '--port', PORT]
-  // Wrangler reads .dev.vars itself; only a value that came from the shell needs to be passed on.
-  if (process.env.AI_MODE) args.push('--binding', `AI_MODE=${process.env.AI_MODE}`)
-  return args
-}
-
 applyMigrations()
 
 let child = null
 let stopping = false
 
 function start(withBinding) {
-  const args = baseArgs()
-  if (withBinding) args.push('--ai', 'AI')
+  // The D1 binding comes from wrangler.toml; passing --d1 here would create a second, empty database.
+  const { args } = devApiLaunch(launchConfig, STATIC_DIR, PORT, withBinding)
 
   console.log(
     withBinding
@@ -105,8 +92,8 @@ function start(withBinding) {
     if (earlyFailure) {
       console.warn(
         '\n[dev-api] Wrangler exited early while starting with the Workers AI binding (usually: not logged in, offline, or no account chosen; check the output above for the real reason).\n' +
-          '[dev-api] Restarting without it: AI answers will be the offline mock, shown in the app as "Demo data".\n' +
-          '[dev-api] To use real AI: run `wrangler login` (set CLOUDFLARE_ACCOUNT_ID if you have several accounts), or set CF_AIG_TOKEN in .dev.vars.\n',
+          '[dev-api] Restarting without it: unsaved local AI may use the Gateway or offline mock; saved binding roles will report unavailable.\n' +
+          '[dev-api] To enable binding roles: run `wrangler login` (set CLOUDFLARE_ACCOUNT_ID if you have several accounts).\n',
       )
       return start(false)
     }

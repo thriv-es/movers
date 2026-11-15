@@ -27,19 +27,78 @@ const moveDetails = {
   destinationElevator: true,
 }
 
-function request() {
+function request(sample = false, overrides: Record<string, unknown> = {}) {
   return price.request(
     '/',
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ analysis, moveDetails, sample: false }),
+      body: JSON.stringify({ analysis, moveDetails, sample }),
     },
-    { ENV: 'preview', PRICE_PER_BOX: '50' },
+    { ENV: 'preview', PRICE_PER_BOX: '50', CF_AIG_TOKEN: 'synthetic-test-token', ...overrides },
   )
 }
 
 describe('price route model reply', () => {
+  it('recomputes a cached sample price after the saved Pricing backend or model changes', async () => {
+    let selected = { backend: 'gateway', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' }
+    let revision = 1
+    const db = {
+      prepare: () => ({
+        first: async () => ({
+          revision,
+          roles_json: JSON.stringify({
+            chat: { backend: 'gateway', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' },
+            price: selected,
+            vision: { backend: 'gateway', model: '@cf/meta/llama-3.2-11b-vision-instruct' },
+          }),
+        }),
+      }),
+    } as unknown as D1Database
+    vi.mocked(runText).mockClear()
+    for (const labor of [100, 200, 300, 400]) {
+      vi.mocked(runText).mockResolvedValueOnce({
+        mode: 'binding',
+        text: JSON.stringify({ currency: 'USD', breakdown: { labor }, confidence: 'low' }),
+      })
+    }
+    const env = {
+      ENV: 'development',
+      MOVERS_DB: db,
+      AI: { run: async () => ({ response: '' }) },
+      CF_AIG_TOKEN: 'synthetic-token',
+    }
+    const first = await request(true, env)
+    const repeated = await request(true, env)
+    expect(first.status).toBe(200)
+    expect(repeated.headers.get('x-movers-sample-cache')).toBe('hit')
+    expect(runText).toHaveBeenCalledTimes(1)
+    selected = { backend: 'gateway', model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast' }
+    const newModel = await request(true, env)
+    expect(newModel.headers.get('x-movers-sample-cache')).toBeNull()
+    expect(((await newModel.json()) as { price: { total: number } }).price.total).toBe(200)
+    selected = { ...selected, backend: 'binding' }
+    const newBackend = await request(true, env)
+    expect(newBackend.headers.get('x-movers-sample-cache')).toBeNull()
+    expect(((await newBackend.json()) as { price: { total: number } }).price.total).toBe(300)
+    revision = 2
+    const newRevision = await request(true, env)
+    expect(newRevision.headers.get('x-movers-sample-cache')).toBeNull()
+    expect(((await newRevision.json()) as { price: { total: number } }).price.total).toBe(400)
+    expect(runText).toHaveBeenCalledTimes(4)
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const unavailable = await request(true, { ...env, AI: undefined })
+    expect(unavailable.status).toBe(500)
+    expect(unavailable.headers.get('x-movers-sample-cache')).toBeNull()
+    expect(await unavailable.json()).toEqual({ error: 'Workers AI binding unavailable' })
+    expect(errorLog).toHaveBeenCalledWith(
+      'Price API error:',
+      expect.objectContaining({ message: 'Workers AI binding unavailable' }),
+    )
+    errorLog.mockRestore()
+    expect(runText).toHaveBeenCalledTimes(4)
+  })
+
   it('returns a retryable error without fabricated price for malformed JSON', async () => {
     const res = await request()
     expect(res.status).toBe(503)

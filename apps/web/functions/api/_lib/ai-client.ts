@@ -53,15 +53,16 @@ async function run<T>(
   role: AiRole,
   backends: Record<Backend, (model: string) => Promise<T>>,
   mock: () => T,
+  resolvedRole?: Awaited<ReturnType<typeof resolveRole>>,
 ): Promise<{ value: T; mode: AiMode }> {
-  const { mode, selection, available } = await resolveRole(env, role)
+  const { mode, selection, available, revision } = resolvedRole ?? (await resolveRole(env, role))
   if (mode === 'mock') return { value: mock(), mode }
   if (!available) throw new Error(`${mode === 'binding' ? 'Workers AI binding' : 'AI Gateway'} unavailable`)
 
   try {
     return { value: await backends[mode](selection.model), mode }
   } catch {
-    if (env.ENV !== 'development' || env.MOVERS_DB || !resolveAiMode(env).allowMockFallback) {
+    if (env.ENV !== 'development' || revision > 0 || !resolveAiMode(env).allowMockFallback) {
       throw new Error(`${mode === 'binding' ? 'Workers AI binding' : 'AI Gateway'} request failed`)
     }
     console.warn(`[ai] ${mode} call failed, answering with the offline mock (demo data).`)
@@ -75,6 +76,7 @@ export async function runText(
   prompt: string,
   mock: () => string,
   purpose: TextPurpose = 'chat',
+  resolvedRole?: Awaited<ReturnType<typeof resolveRole>>,
 ): Promise<AiResult> {
   const { value, mode } = await run(
     env,
@@ -94,6 +96,7 @@ export async function runText(
       },
     },
     mock,
+    resolvedRole,
   )
   return { text: value, mode }
 }

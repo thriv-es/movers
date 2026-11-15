@@ -3,6 +3,7 @@ import {
   DEFAULT_ROLES,
   MODEL_CATALOG,
   readAiSettings,
+  readSavedAiSettings,
   updateAiSettings,
   validateRoles,
 } from '../functions/api/_lib/ai-settings'
@@ -85,6 +86,7 @@ describe('revisioned AI settings', () => {
   it('returns the existing model defaults at revision 0 when no row exists', async () => {
     expect(DEFAULT_ROLES).toEqual(initialRoles)
     expect(await readAiSettings(fakeDb())).toEqual({ revision: 0, roles: initialRoles })
+    expect(await readSavedAiSettings(fakeDb())).toBeNull()
   })
 
   it('accepts only one of two writes with the same expected revision', async () => {

@@ -70,10 +70,13 @@ interface AiSettingsRow {
   roles_json: string
 }
 
-export async function readAiSettings(db: D1Database): Promise<AiSettings> {
+export async function readSavedAiSettings(db: D1Database): Promise<AiSettings | null> {
   const row = await db.prepare('SELECT revision, roles_json FROM ai_settings WHERE id = 1').first<AiSettingsRow>()
-  if (!row) return { revision: 0, roles: DEFAULT_ROLES }
-  return { revision: row.revision, roles: validateRoles(JSON.parse(row.roles_json)) }
+  return row ? { revision: row.revision, roles: validateRoles(JSON.parse(row.roles_json)) } : null
+}
+
+export async function readAiSettings(db: D1Database): Promise<AiSettings> {
+  return (await readSavedAiSettings(db)) ?? { revision: 0, roles: DEFAULT_ROLES }
 }
 
 export async function updateAiSettings(

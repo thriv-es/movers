@@ -1,5 +1,5 @@
 import { VISION_MODEL, textModel } from './ai'
-import { type AiRole, type AiSelection, type AiSettings, readAiSettings } from './ai-settings'
+import { type AiRole, type AiSelection, type AiSettings, readSavedAiSettings } from './ai-settings'
 import type { Bindings } from './types'
 
 /**
@@ -64,7 +64,7 @@ export async function resolveRole(
   let settings: AiSettings | null = null
   if (env.ENV === 'development' && env.MOVERS_DB) {
     try {
-      settings = await readAiSettings(env.MOVERS_DB)
+      settings = await readSavedAiSettings(env.MOVERS_DB)
     } catch (error) {
       if (!forcedMock) throw error
     }

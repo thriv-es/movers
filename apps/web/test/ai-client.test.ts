@@ -215,6 +215,15 @@ const selectedRoles = {
 }
 
 describe('local role selections', () => {
+  it('retains legacy mock fallback for an unsaved local binding that fails', async () => {
+    const AI = binding(async () => {
+      throw new Error('synthetic offline failure')
+    })
+    const db = { prepare: () => ({ first: async () => null }) } as unknown as D1Database
+    expect(await runText(env({ MOVERS_DB: db, AI }), 'CHAT', mock)).toEqual({ text: 'MOCK ANSWER', mode: 'mock' })
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('offline mock'))
+  })
+
   it('routes chat, price, and vision to their independently selected model and backend', async () => {
     generateTextMock.mockResolvedValue({ text: 'chat answer' } as never)
     const AI = binding(async () => ({ response: 'binding answer' }))

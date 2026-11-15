@@ -122,6 +122,36 @@ function roleEnv(overrides: Record<string, unknown>): Bindings {
 }
 
 describe('resolveRole', () => {
+  it('keeps the unsaved local auto binding and its environment model instead of defaulting to Gateway', async () => {
+    const db = { prepare: () => ({ first: async () => null }) } as unknown as D1Database
+    expect(
+      await resolveRole(roleEnv({ MOVERS_DB: db, CF_AIG_TOKEN: '', AI, PRICE_MODEL: 'legacy-price' }), 'price'),
+    ).toEqual({
+      selection: { backend: 'binding', model: 'legacy-price' },
+      mode: 'binding',
+      available: true,
+      revision: 0,
+    })
+  })
+
+  it('keeps the unsaved local offline mock rather than requiring a Gateway token', async () => {
+    const db = { prepare: () => ({ first: async () => null }) } as unknown as D1Database
+    expect(await resolveRole(roleEnv({ MOVERS_DB: db, CF_AIG_TOKEN: '' }), 'chat')).toMatchObject({
+      mode: 'mock',
+      available: true,
+      revision: 0,
+    })
+  })
+
+  it('honors forced legacy AI_MODE=binding before the first save', async () => {
+    const db = { prepare: () => ({ first: async () => null }) } as unknown as D1Database
+    expect(await resolveRole(roleEnv({ MOVERS_DB: db, AI_MODE: 'binding', AI }), 'chat')).toMatchObject({
+      mode: 'binding',
+      available: true,
+      revision: 0,
+    })
+  })
+
   it('resolves each saved role independently with availability and revision', async () => {
     const { db } = settingsDb(4, roles)
     const env = roleEnv({ MOVERS_DB: db, AI })
