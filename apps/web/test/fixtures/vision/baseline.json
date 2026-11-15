@@ -1,0 +1,62 @@
+{
+  "mode": "mock",
+  "model": "mockAnalysisReply(1) offline static demo inventory; not vision",
+  "sampleVersion": "v3",
+  "recordedAt": "2026-11-15T16:17:41.000Z",
+  "analyses": [
+    {
+      "file": "living-room.jpg",
+      "parseOk": true,
+      "items": [
+        { "type": "sofa", "count": 1 },
+        { "type": "armchair", "count": 1 },
+        { "type": "coffee table", "count": 1 },
+        { "type": "bookshelf", "count": 1 },
+        { "type": "tv", "count": 1 },
+        { "type": "floor lamp", "count": 2 },
+        { "type": "dining table", "count": 1 },
+        { "type": "chairs", "count": 4 },
+        { "type": "upright piano", "count": 1 },
+        { "type": "small_moving_box_packed", "count": 6 }
+      ],
+      "latencyMs": null,
+      "costUsd": null
+    },
+    {
+      "file": "bedroom.jpg",
+      "parseOk": true,
+      "items": [
+        { "type": "sofa", "count": 1 },
+        { "type": "armchair", "count": 1 },
+        { "type": "coffee table", "count": 1 },
+        { "type": "bookshelf", "count": 1 },
+        { "type": "tv", "count": 1 },
+        { "type": "floor lamp", "count": 2 },
+        { "type": "dining table", "count": 1 },
+        { "type": "chairs", "count": 4 },
+        { "type": "upright piano", "count": 1 },
+        { "type": "small_moving_box_packed", "count": 6 }
+      ],
+      "latencyMs": null,
+      "costUsd": null
+    },
+    {
+      "file": "kitchen.jpg",
+      "parseOk": true,
+      "items": [
+        { "type": "sofa", "count": 1 },
+        { "type": "armchair", "count": 1 },
+        { "type": "coffee table", "count": 1 },
+        { "type": "bookshelf", "count": 1 },
+        { "type": "tv", "count": 1 },
+        { "type": "floor lamp", "count": 2 },
+        { "type": "dining table", "count": 1 },
+        { "type": "chairs", "count": 4 },
+        { "type": "upright piano", "count": 1 },
+        { "type": "small_moving_box_packed", "count": 6 }
+      ],
+      "latencyMs": null,
+      "costUsd": null
+    }
+  ]
+}

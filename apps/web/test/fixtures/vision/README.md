@@ -1,0 +1,21 @@
+# Three-photo offline vision evaluation (sample v3)
+
+Run from `apps/web`: `pnpm eval:vision`. This reads only `golden.json` and `baseline.json`; it never fetches an image, invokes AI, writes app data, or contacts a preview API. The evaluator requires exactly `living-room.jpg`, `bedroom.jpg`, and `kitchen.jpg` in each fixture. Precision and recall are **item-count micro-averages over these three photos only**; count error is the absolute count difference for gold labels, not for unrelated false positives. A parse failure scores no predicted items. `rawDuplicateLabels` counts repeated canonical label entries before ignoring labels; `rawAliasLabels` counts entries whose original labels use a configured alias. The evaluator normalizes case/whitespace, maps `couch` to `sofa` and `chairs`/`dining chairs` to `dining chair`, and filters the photo's `ignored` labels before scoring. The generic `chairs` mapping is a local convention for this static mock, **not** a general chair classifier; the bedroom's scored `chair` is deliberately distinct.
+
+## Label policy
+
+The images were reinspected at `apps/web/public/sample/`. Count only clearly visible, movable anchor furniture: living room: sofa (1), coffee table (1); bedroom: bed (1), chair (1); kitchen: dining table (1), dining chairs (6, including partly occluded chairs whose backs are visible). Do not score the wall-mounted TV, built-in/media cabinetry, partially visible sofa at the kitchen edge, uncertain bedside furniture, hanging lights, curtains, bedding, appliances, plants, or tiny loose decor. `ignored` records relevant excluded or ambiguous labels **per photo**, not a global list. Unlisted hallucinated inventory remains a false positive; this small anchor set is not exhaustive inventory ground truth.
+
+## Local/mock baseline, not live model accuracy
+
+No approved live call or recorded real per-photo model outputs were available in the workspace. `baseline.json` is explicitly `mode: mock`, `model: mockAnalysisReply(1) offline static demo inventory; not vision`, `sampleVersion: v3` (the app's `SAMPLE_VERSION`). Each photo's ten `items` entries are transcribed **unchanged** from the fixed inventory in `apps/web/functions/api/_lib/mock.ts` (`mockAnalysisReply`), as if the existing one-photo mock were invoked separately for each photo. The current mock route actually emits one aggregate mock answer for a multi-photo request, and this fixture is **not** a capture of three real model answers, the production route output, or a measured pre-change live accuracy result. The mock does not inspect any photo. `parseOk: true` means the static mock JSON is parseable, not that an image was analyzed. `latencyMs` and `costUsd` are `null` (unknown), not zero.
+
+This local/mock proxy yields: living room TP 2 / FP 16 / FN 0 / count error 0; bedroom TP 0 / FP 19 / FN 2 / count error 2; kitchen TP 5 / FP 13 / FN 2 / count error 2. Aggregate TP 7 / FP 48 / FN 4 / count error 4, precision 7/55, recall 7/11, raw duplicate labels 0, raw alias labels 3, parse failures 0. **Live per-photo precision, recall, latency, cost and actual pre-change model accuracy remain unmeasured.** Future authorized per-photo captures may replace the mock baseline with provenance recorded here; don't compare this mock proxy as if it were a model run.
+
+## Image attribution
+
+The sample images are resized/recompressed from Wikimedia Commons; all are by [Shixart1985](https://commons.wikimedia.org/wiki/User:Shixart1985) and licensed [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/). Source/creator/license details are also retained in `apps/web/public/sample/LICENSE.md`.
+
+- `living-room.jpg`: [Modern living room with stylish furniture and a view of the outdoors in a cozy apartment setting](https://commons.wikimedia.org/wiki/File:Modern_living_room_with_stylish_furniture_and_a_view_of_the_outdoors_in_a_cozy_apartment_setting.jpg).
+- `bedroom.jpg`: [Cozy bedroom with a large bed and simple decor in a modern home](https://commons.wikimedia.org/wiki/File:Cozy_bedroom_with_a_large_bed_and_simple_decor_in_a_modern_home.jpg).
+- `kitchen.jpg`: [Modern kitchen and dining area in a bright apartment on a sunny day with simple decor and furniture](https://commons.wikimedia.org/wiki/File:Modern_kitchen_and_dining_area_in_a_bright_apartment_on_a_sunny_day_with_simple_decor_and_furniture.jpg).
