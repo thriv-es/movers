@@ -294,6 +294,13 @@ describe('photo analysis through the Workers AI binding (one image per call)', (
     expect((await res.json()) as { items: unknown }).toMatchObject({ items: [{ type: 'sofa', count: 1 }] })
   })
 
+  it.each(['constructor', '__proto__'])('returns a valid inventory for the %s label', async (type) => {
+    const AI = { run: vi.fn(async () => ({ response: inventory(type, 100) })) }
+    const res = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env({ ENV: 'preview', AI }))
+    expect(res.status).toBe(200)
+    expect((await res.json()) as { items: unknown }).toMatchObject({ items: [{ type, count: 1 }] })
+  })
+
   it('reports ANALYSIS_FAILED when a photo is still not analyzed after the retry', async () => {
     const AI = { run: vi.fn(async () => ({ response: 'no JSON here' })) }
     const res = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env({ ENV: 'preview', AI }))

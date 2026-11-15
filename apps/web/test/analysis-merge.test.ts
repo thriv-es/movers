@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ReviewStep } from '../src/components/estimate/ReviewStep'
 import { type ModelAnalysis, mergeAnalyses, parseModelAnalysis } from '../functions/api/_lib/analysis-merge'
 import { IMAGE_ANALYSIS_PROMPT } from '../functions/api/_lib/prompts'
+import { canonicalItemType } from '../src/lib/item-aliases'
 
 const livingRoom: ModelAnalysis = {
   items: [
@@ -50,6 +51,12 @@ describe('parseModelAnalysis', () => {
     expect(() => parseModelAnalysis('I see a sofa and two lamps.')).toThrow()
     expect(() => parseModelAnalysis('{"total_volume_cubic_feet":40}')).toThrow(/items/)
     expect(() => parseModelAnalysis('{"items":[]}')).toThrow(/total_volume/)
+  })
+})
+
+describe('canonicalItemType', () => {
+  it.each(['constructor', '__proto__'])('keeps %s as a plain item label', (type) => {
+    expect(canonicalItemType(type)).toBe(type)
   })
 })
 

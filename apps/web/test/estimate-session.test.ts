@@ -2,7 +2,7 @@
  * The sessionStorage mirror of the estimator (MOVERS-12): round trip, version mismatch, garbage, sample seed.
  */
 import { createElement } from 'react'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { HelmetProvider } from 'react-helmet-async'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -173,6 +173,32 @@ describe('estimate review and API', () => {
     expect(yes).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(no)
     expect(onWholeMoveCovered).toHaveBeenCalledWith(false)
+  })
+
+  it('consolidates saved couch and edited sofa rows before add, count edits, and removal', async () => {
+    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      ...EMPTY_SESSION, step: 'review',
+      analysis: { ...analysis, specialHandling: [{ item: 'couch', reason: 'Needs extra movers' }] },
+      items: [{ type: 'Couch', count: 1 }, { type: 'Sofa', count: 5 }, { type: 'piano', count: 2 }],
+      price: savedPrice, estimateId: 'stale-id',
+    }))
+    render(createElement(HelmetProvider, null, createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage))))
+    const savedItems = () => JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).items
+    await waitFor(() => expect(savedItems()).toEqual([{ type: 'Sofa', count: 6 }, { type: 'piano', count: 2 }]))
+    expect(screen.getByLabelText('Sofa count')).toHaveTextContent('6')
+    expect(screen.queryByLabelText('Couch count')).not.toBeInTheDocument()
+    expect(screen.getByText('Needs extra movers')).toBeInTheDocument()
+    expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({ price: null, estimateId: null })
+
+    fireEvent.change(screen.getByLabelText('Add something we missed'), { target: { value: 'couch' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(savedItems()).toEqual([{ type: 'Sofa', count: 7 }, { type: 'piano', count: 2 }]))
+    fireEvent.click(screen.getByRole('button', { name: 'One more Sofa' }))
+    await waitFor(() => expect(savedItems()).toEqual([{ type: 'Sofa', count: 8 }, { type: 'piano', count: 2 }]))
+    fireEvent.click(screen.getByRole('button', { name: 'One fewer Sofa' }))
+    await waitFor(() => expect(savedItems()).toEqual([{ type: 'Sofa', count: 7 }, { type: 'piano', count: 2 }]))
+    fireEvent.click(within(screen.getByLabelText('Sofa count')).getByRole('button', { name: 'Remove' }))
+    await waitFor(() => expect(savedItems()).toEqual([{ type: 'piano', count: 2 }]))
   })
 
   it('renders server reasons instead of claiming photos covered the move', async () => {

@@ -1,5 +1,5 @@
 import { Badge, Button, Caption, Field, Input, Panel } from '@movers/ui'
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import type { AnalysisResult, DetectedItem } from '@/data'
 import type { FollowUpAnswers, FollowUpKey } from '@/lib/estimate-session'
 import { canonicalItemType } from '@/lib/item-aliases'
@@ -48,17 +48,38 @@ export function ReviewStep({
   const [newCount, setNewCount] = useState('1')
   const [resolvedDuplicates, setResolvedDuplicates] = useState<string[]>([])
 
-  const special = new Map(analysis.specialHandling.map((entry) => [entry.item.toLowerCase(), entry.reason]))
+  // A saved pre-alias review can have both labels. Keep its edited canonical label and sum every count.
+  const reviewItems = useMemo(() => {
+    const grouped = new Map<string, DetectedItem>()
+    for (const item of items) {
+      const key = canonicalItemType(item.type)
+      const existing = grouped.get(key)
+      if (!existing) grouped.set(key, item)
+      else grouped.set(key, {
+        ...existing,
+        type: existing.type.trim().toLowerCase() !== key && item.type.trim().toLowerCase() === key
+          ? item.type : existing.type,
+        count: existing.count + item.count,
+      })
+    }
+    return [...grouped.values()]
+  }, [items])
+
+  useEffect(() => {
+    if (reviewItems.length !== items.length) onItemsChange(reviewItems)
+  }, [items, reviewItems, onItemsChange])
+
+  const special = new Map(analysis.specialHandling.map((entry) => [canonicalItemType(entry.item), entry.reason]))
   const duplicates = analysis.possibleDuplicates.filter(
-    (dup) => !resolvedDuplicates.includes(dup.item) && items.some((item) => sameType(item.type, dup.item)),
+    (dup) => !resolvedDuplicates.includes(dup.item) && reviewItems.some((item) => sameType(item.type, dup.item)),
   )
 
   const setCount = (type: string, count: number) => {
     if (count <= 0) {
-      onItemsChange(items.filter((item) => !sameType(item.type, type)))
+      onItemsChange(reviewItems.filter((item) => !sameType(item.type, type)))
       return
     }
-    onItemsChange(items.map((item) => (sameType(item.type, type) ? { ...item, count } : item)))
+    onItemsChange(reviewItems.map((item) => (sameType(item.type, type) ? { ...item, count } : item)))
   }
 
   const addItem = (event: FormEvent) => {
@@ -66,9 +87,9 @@ export function ReviewStep({
     const type = newType.trim()
     const count = Math.max(1, Math.round(Number(newCount) || 1))
     if (!type) return
-    const existing = items.find((item) => sameType(item.type, type))
+    const existing = reviewItems.find((item) => sameType(item.type, type))
     if (existing) setCount(existing.type, existing.count + count)
-    else onItemsChange([...items, { type, count }])
+    else onItemsChange([...reviewItems, { type, count }])
     setNewType('')
     setNewCount('1')
   }
@@ -78,7 +99,7 @@ export function ReviewStep({
     setResolvedDuplicates((current) => [...current, type])
   }
 
-  const total = items.reduce((sum, item) => sum + item.count, 0)
+  const total = reviewItems.reduce((sum, item) => sum + item.count, 0)
   const unanswered = FOLLOW_UP_QUESTIONS.filter((q) => followUps[q.key] === null).length
 
   return (
@@ -88,13 +109,13 @@ export function ReviewStep({
           <Caption accent="sky">What we counted</Caption>
         </div>
         <p className="mv-lede">
-          {total} item{total === 1 ? '' : 's'} across {items.length} kind{items.length === 1 ? '' : 's'}, roughly{' '}
+          {total} item{total === 1 ? '' : 's'} across {reviewItems.length} kind{reviewItems.length === 1 ? '' : 's'}, roughly{' '}
           {analysis.estimatedBoxes.min} to {analysis.estimatedBoxes.max} boxes. Fix anything we got wrong.
         </p>
 
         <ul className="est-items" aria-label="Detected items">
-          {items.map((item) => {
-            const reason = special.get(item.type.toLowerCase())
+          {reviewItems.map((item) => {
+            const reason = special.get(canonicalItemType(item.type))
             return (
               <li key={item.type} className="est-item">
                 <div className="est-item__name">
@@ -241,7 +262,7 @@ export function ReviewStep({
         <Button variant="ghost" onClick={onBack}>
           Back
         </Button>
-        <Button variant="primary" onClick={onConfirm} disabled={items.length === 0}>
+        <Button variant="primary" onClick={onConfirm} disabled={reviewItems.length === 0}>
           Confirm and price it
         </Button>
       </div>
