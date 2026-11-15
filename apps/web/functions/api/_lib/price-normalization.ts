@@ -38,6 +38,8 @@ export function normalizePriceReply(raw: unknown, hasItems: boolean): {
     const label = rawLabel.trim()
     if (label.length < 1 || label.length > 120) throw new PriceFormatError('Invalid label')
     const key = label.toLowerCase()
+    // Zod's record parser drops this own key, leaving the returned total inconsistent with its breakdown.
+    if (key === '__proto__') throw new PriceFormatError('Invalid label')
     const previous = lines.get(key)
     lines.set(key, { label: previous?.label ?? label, cents: (previous?.cents ?? 0) + cents })
   }

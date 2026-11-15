@@ -33,6 +33,13 @@ describe('normalizePriceReply', () => {
     expect(() => normalizePriceReply(raw, true)).toThrow(PriceFormatError)
   })
 
+  it('rejects prototype-shadowing labels that downstream parsing drops', () => {
+    const breakdown = JSON.parse('{"__proto__":1,"labor":2}') as Record<string, number>
+    expect(Object.hasOwn(breakdown, '__proto__')).toBe(true)
+    expect(() => normalizePriceReply({ currency: 'USD', breakdown }, true)).toThrow(PriceFormatError)
+    expect(() => normalizePriceReply({ currency: 'USD', breakdown: { ' __PROTO__ ': 1 } }, true)).toThrow(PriceFormatError)
+  })
+
   it('requires a plain reply object', () => {
     expect(() => normalizePriceReply(null, false)).toThrow(PriceFormatError)
     expect(() => normalizePriceReply([], false)).toThrow(PriceFormatError)

@@ -53,6 +53,16 @@ describe('price route model reply', () => {
     expect(body).not.toHaveProperty('price')
   })
 
+  it('returns no price when a prototype-shadowing line would be dropped downstream', async () => {
+    const breakdown = JSON.parse('{"__proto__":1,"labor":2}') as Record<string, number>
+    vi.mocked(runText).mockResolvedValueOnce({ text: JSON.stringify({ currency: 'USD', breakdown }), mode: 'binding' })
+    const res = await request()
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body).toEqual({ code: 'PRICE_UNAVAILABLE', error: 'Pricing is temporarily unavailable. Please retry.' })
+    expect(body).not.toHaveProperty('price')
+  })
+
   it('ranges the server-summed total rather than the model total', async () => {
     vi.mocked(runText).mockResolvedValueOnce({
       text: JSON.stringify({ currency: 'USD', total: 3439, breakdown: { labor: 1500, travel: 1470 }, confidence: 'high' }),
