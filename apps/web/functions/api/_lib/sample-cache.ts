@@ -7,7 +7,7 @@
  */
 
 /** Bump when the sample answers change shape or content, so stale cache entries are not served. */
-export const SAMPLE_VERSION = 'v2'
+export const SAMPLE_VERSION = 'v3'
 
 const ORIGIN = 'https://sample.movers.invalid'
 const TTL_SECONDS = 60 * 60 * 24 * 30

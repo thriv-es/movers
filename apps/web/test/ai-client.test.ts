@@ -43,24 +43,48 @@ describe('binding mode', () => {
     expect(generateTextMock).not.toHaveBeenCalled()
   })
 
-  it('sends images to the vision model as image_url data-URL parts', async () => {
-    const AI = binding(async () => ({ response: '{"items":[]}' }))
+  it('runs the vision model once per photo (one image_url data-URL part each) and keeps the order', async () => {
+    let calls = 0
+    const AI = binding(async () => ({ response: `{"photo":${++calls}}` }))
     const result = await runVision(env({ AI }), 'PROMPT', [image, { ...image, mimeType: 'image/png' }], mock)
 
     expect(result.mode).toBe('binding')
-    expect(AI.run).toHaveBeenCalledWith(VISION_MODEL, {
+    expect(result.texts).toEqual(['{"photo":1}', '{"photo":2}'])
+    expect(AI.run).toHaveBeenCalledTimes(2)
+    expect(AI.run).toHaveBeenNthCalledWith(1, VISION_MODEL, {
       messages: [
         {
           role: 'user',
           content: [
             { type: 'text', text: 'PROMPT' },
             { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,/9j/2Q==' } },
+          ],
+        },
+      ],
+      max_tokens: 2048,
+    })
+    expect(AI.run).toHaveBeenNthCalledWith(2, VISION_MODEL, {
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'PROMPT' },
             { type: 'image_url', image_url: { url: 'data:image/png;base64,/9j/2Q==' } },
           ],
         },
       ],
       max_tokens: 2048,
     })
+  })
+
+  it('falls back to a single mock answer for all photos when one photo call fails outside production', async () => {
+    let calls = 0
+    const AI = binding(async () => {
+      if (++calls === 2) throw new Error('photo 2 failed')
+      return { response: 'ok' }
+    })
+    const result = await runVision(env({ AI }), 'PROMPT', [image, image], mock)
+    expect(result).toEqual({ texts: ['MOCK ANSWER'], mode: 'mock' })
   })
 
   it('encodes images larger than one String.fromCharCode chunk', async () => {
@@ -122,7 +146,7 @@ describe('mock mode', () => {
     const auto = await runVision(env({}), 'PROMPT', [image], mock)
 
     expect(forced).toEqual({ text: 'MOCK ANSWER', mode: 'mock' })
-    expect(auto).toEqual({ text: 'MOCK ANSWER', mode: 'mock' })
+    expect(auto).toEqual({ texts: ['MOCK ANSWER'], mode: 'mock' })
     expect(AI.run).not.toHaveBeenCalled()
     expect(generateTextMock).not.toHaveBeenCalled()
   })
@@ -143,11 +167,12 @@ describe('gateway mode', () => {
     expect(AI.run).not.toHaveBeenCalled()
   })
 
-  it('calls generateText exactly as the analyze route did: vision model with image parts', async () => {
+  it('calls generateText once per photo: vision model with one image part', async () => {
     generateTextMock.mockResolvedValue({ text: 'gateway vision' } as never)
-    const result = await runVision(env({ CF_AIG_TOKEN: 'token' }), 'PROMPT', [image], mock)
+    const result = await runVision(env({ CF_AIG_TOKEN: 'token' }), 'PROMPT', [image, image], mock)
 
-    expect(result).toEqual({ text: 'gateway vision', mode: 'gateway' })
+    expect(result).toEqual({ texts: ['gateway vision', 'gateway vision'], mode: 'gateway' })
+    expect(generateTextMock).toHaveBeenCalledTimes(2)
     const args = generateTextMock.mock.calls[0]?.[0] as Record<string, any>
     expect(Object.keys(args).sort()).toEqual(['messages', 'model'])
     expect(args.model.modelId).toBe(VISION_MODEL)
@@ -156,7 +181,7 @@ describe('gateway mode', () => {
         role: 'user',
         content: [
           { type: 'text', text: 'PROMPT' },
-          { type: 'image', image: image.data, mimeType: 'image/jpeg' },
+          { type: 'image', image: image.data, mediaType: 'image/jpeg' },
         ],
       },
     ])

@@ -233,3 +233,38 @@ describe('anywhere but local development: the mock is never served', () => {
     vi.unstubAllGlobals()
   })
 })
+
+describe('photo analysis through the Workers AI binding (one image per call)', () => {
+  const inventory = (type: string, volume: number) =>
+    JSON.stringify({ items: [{ type, count: 1 }], total_volume_cubic_feet: volume, unseen_areas: ['garage'] })
+
+  it('analyzes each photo separately, retries a photo whose answer is not JSON, and merges the inventories', async () => {
+    const answers = [inventory('sofa', 100), 'Sorry, I cannot see a kitchen here.', inventory('fridge', 60)]
+    const AI = { run: vi.fn(async () => ({ response: answers.shift() ?? '' })) }
+    const bindings = env({ ENV: 'preview', AI })
+
+    const res = await post(
+      analyze,
+      { imageUrls: ['http://localhost/api/images/a.png', 'http://localhost/api/images/b.png'] },
+      bindings,
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get(MODE_HEADER)).toBe('binding')
+    expect(AI.run).toHaveBeenCalledTimes(3)
+    const body = (await res.json()) as { items: unknown; totalVolumeCubicFeet: number; unseenAreas: string[] }
+    expect(body.items).toEqual([
+      { type: 'sofa', count: 1 },
+      { type: 'fridge', count: 1 },
+    ])
+    expect(body.totalVolumeCubicFeet).toBe(160)
+    expect(body.unseenAreas).toEqual(['garage'])
+  })
+
+  it('reports ANALYSIS_FAILED when a photo is still not analyzed after the retry', async () => {
+    const AI = { run: vi.fn(async () => ({ response: 'no JSON here' })) }
+    const res = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env({ ENV: 'preview', AI }))
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { code: string }).code).toBe('ANALYSIS_FAILED')
+    expect(AI.run).toHaveBeenCalledTimes(2)
+  })
+})

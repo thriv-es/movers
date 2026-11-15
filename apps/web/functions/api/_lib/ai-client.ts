@@ -47,29 +47,33 @@ function toDataUrl(image: AiImage): string {
   return `data:${image.mimeType};base64,${btoa(binary)}`
 }
 
-async function run(env: Bindings, backends: Record<Backend, () => Promise<string>>, mock: () => string) {
+async function run<T>(
+  env: Bindings,
+  backends: Record<Backend, () => Promise<T>>,
+  mock: () => T,
+): Promise<{ value: T; mode: AiMode }> {
   const { mode, allowMockFallback } = resolveAiMode(env)
-  if (mode === 'mock') return { text: mock(), mode } satisfies AiResult
+  if (mode === 'mock') return { value: mock(), mode }
 
   try {
-    return { text: await backends[mode](), mode } satisfies AiResult
+    return { value: await backends[mode](), mode }
   } catch (error) {
     if (!allowMockFallback) throw error
     const reason = error instanceof Error ? error.message : String(error)
     console.warn(`[ai] ${mode} call failed, answering with the offline mock (demo data). Reason: ${reason}`)
-    return { text: mock(), mode: 'mock' } satisfies AiResult
+    return { value: mock(), mode: 'mock' }
   }
 }
 
 /** `purpose` picks the model: `CHAT_MODEL` for chat turns, `PRICE_MODEL` for the pricing call (see `ai.ts`). */
-export function runText(
+export async function runText(
   env: Bindings,
   prompt: string,
   mock: () => string,
   purpose: TextPurpose = 'chat',
 ): Promise<AiResult> {
   const model = textModel(env, purpose)
-  return run(
+  const { value, mode } = await run(
     env,
     {
       gateway: async () => {
@@ -87,48 +91,67 @@ export function runText(
     },
     mock,
   )
+  return { text: value, mode }
 }
 
-export function runVision(env: Bindings, prompt: string, images: AiImage[], mock: () => string): Promise<AiResult> {
-  return run(
+export interface AiVisionResult {
+  /** One answer per photo on the real backends; the mock answers once for the whole set. */
+  texts: string[]
+  mode: AiMode
+}
+
+/**
+ * Workers AI's Llama 3.2 Vision accepts one image per request (several images fail with error 3030), so the real
+ * backends run the prompt once per photo, in parallel, and the caller merges the answers (`analysis-merge.ts`).
+ */
+export async function runVision(
+  env: Bindings,
+  prompt: string,
+  images: AiImage[],
+  mock: () => string,
+): Promise<AiVisionResult> {
+  const { value, mode } = await run(
     env,
     {
-      gateway: async () => {
-        const ai = createWorkersAI(env.CF_AIG_TOKEN)
-        const { text } = await generateText({
-          model: ai(VISION_MODEL),
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                ...images.map((img) => ({
-                  type: 'image' as const,
-                  image: img.data,
-                  mimeType: img.mimeType,
-                })),
+      gateway: () =>
+        Promise.all(
+          images.map(async (img) => {
+            const ai = createWorkersAI(env.CF_AIG_TOKEN)
+            const { text } = await generateText({
+              model: ai(VISION_MODEL),
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: prompt },
+                    { type: 'image', image: img.data, mediaType: img.mimeType },
+                  ],
+                },
               ],
-            },
-          ],
-        })
-        return text
-      },
-      binding: async () => {
-        const output = await requireBinding(env).run(VISION_MODEL, {
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                ...images.map((img) => ({ type: 'image_url', image_url: { url: toDataUrl(img) } })),
+            })
+            return text
+          }),
+        ),
+      binding: () =>
+        Promise.all(
+          images.map(async (img) => {
+            const output = await requireBinding(env).run(VISION_MODEL, {
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: prompt },
+                    { type: 'image_url', image_url: { url: toDataUrl(img) } },
+                  ],
+                },
               ],
-            },
-          ],
-          max_tokens: BINDING_MAX_TOKENS,
-        })
-        return readBindingText(output)
-      },
+              max_tokens: BINDING_MAX_TOKENS,
+            })
+            return readBindingText(output)
+          }),
+        ),
     },
-    mock,
+    () => [mock()],
   )
+  return { texts: value, mode }
 }

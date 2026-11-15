@@ -2,24 +2,13 @@ import { Hono } from 'hono'
 import type { Bindings } from '../_lib/types'
 import type { AnalysisResult } from '../../../src/data'
 import { zAnalysisResult, zAnalyzeRequest } from '../../../src/data'
-import { extractAndRepairJSON } from '../_lib/json-utils'
 import { type AiImage, runVision } from '../_lib/ai-client'
+import { type ModelAnalysis, mergeAnalyses, parseModelAnalysis } from '../_lib/analysis-merge'
 import { mockAnalysisReply } from '../_lib/mock'
 import { IMAGE_ANALYSIS_PROMPT } from '../_lib/prompts'
 import { withSampleCache } from '../_lib/sample-cache'
 
 const analyze = new Hono<{ Bindings: Bindings }>()
-
-interface ModelAnalysis {
-  items: Array<{ type: string; count: number }>
-  total_volume_cubic_feet: number
-  estimated_boxes_min?: number
-  estimated_boxes_max?: number
-  boxes_explanation?: string
-  special_handling?: Array<{ item?: unknown; reason?: unknown }>
-  possible_duplicates?: Array<{ item?: unknown; count?: unknown }>
-  unseen_areas?: unknown[]
-}
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
 
@@ -58,6 +47,45 @@ async function fetchImages(c: { env: Bindings }, imageUrls: string[]): Promise<A
   return images
 }
 
+interface PhotoAnalysis {
+  analysis: ModelAnalysis
+  mode: string
+}
+
+/** A photo's answer was not the inventory JSON even after one retry. Thrown, so the sample cache never stores it. */
+class AnalysisFormatError extends Error {}
+
+/**
+ * One vision call per photo (the model takes a single image), merged into one inventory. A photo whose answer is not
+ * valid inventory JSON is asked once more; the model's output format is not deterministic.
+ */
+async function analyzePhotos(env: Bindings, images: AiImage[]): Promise<PhotoAnalysis> {
+  const first = await runVision(env, IMAGE_ANALYSIS_PROMPT, images, () => mockAnalysisReply(images.length))
+  const parts = first.texts.map(tryParse)
+
+  // the mock answers once for all photos, so a retry only makes sense when there is one answer per photo
+  if (first.texts.length === images.length) {
+    for (const [index, part] of parts.entries()) {
+      if (part || !images[index]) continue
+      const retry = await runVision(env, IMAGE_ANALYSIS_PROMPT, [images[index]], () => mockAnalysisReply(1))
+      parts[index] = tryParse(retry.texts[0] ?? '')
+    }
+  }
+
+  const good = parts.filter((part): part is ModelAnalysis => part !== null)
+  if (good.length !== parts.length) throw new AnalysisFormatError(`${parts.length - good.length} photo(s) not analyzed`)
+  return { analysis: mergeAnalyses(good), mode: first.mode }
+}
+
+function tryParse(text: string): ModelAnalysis | null {
+  try {
+    return parseModelAnalysis(text)
+  } catch {
+    console.warn('AI response not in expected format:', text.substring(0, 300))
+    return null
+  }
+}
+
 analyze.post('/', async (c) => {
   try {
     const parsed = zAnalyzeRequest.safeParse(await c.req.json().catch(() => null))
@@ -72,19 +100,14 @@ analyze.post('/', async (c) => {
     }
 
     // the sample photos never change, so their analysis is keyed on the sample version and image count only
-    const { value, cached } = await withSampleCache(sample, 'analyze', { count: images.length }, () =>
-      runVision(c.env, IMAGE_ANALYSIS_PROMPT, images, () => mockAnalysisReply(images.length)),
-    )
-    c.header('x-movers-ai-mode', value.mode)
-    if (cached) c.header('x-movers-sample-cache', 'hit')
-
-    let llmData: ModelAnalysis
+    let value: PhotoAnalysis
+    let cached: boolean
     try {
-      llmData = extractAndRepairJSON(value.text)
-      if (!llmData.items || !Array.isArray(llmData.items)) throw new Error('Missing items array')
-      if (typeof llmData.total_volume_cubic_feet !== 'number') throw new Error('Missing total_volume_cubic_feet')
-    } catch {
-      console.warn('AI response not in expected format:', value.text.substring(0, 300))
+      ;({ value, cached } = await withSampleCache(sample, 'analyze', { count: images.length }, () =>
+        analyzePhotos(c.env, images),
+      ))
+    } catch (error) {
+      if (!(error instanceof AnalysisFormatError)) throw error
       return c.json(
         {
           error: "We couldn't analyze these images. Please try uploading clearer photos of your items.",
@@ -93,6 +116,10 @@ analyze.post('/', async (c) => {
         400,
       )
     }
+    c.header('x-movers-ai-mode', value.mode)
+    if (cached) c.header('x-movers-sample-cache', 'hit')
+
+    const llmData = value.analysis
 
     const items = llmData.items
       .map((item) => ({ type: item.type || 'unknown', count: item.count || 1 }))
