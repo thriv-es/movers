@@ -196,6 +196,26 @@ describe('conversation evaluator opt-in and privacy boundaries', () => {
       want: true,
     },
     { from: 'Springfield', to: 'Springfield', text: 'Which state or country is each Springfield in?', want: true },
+    { from: 'Springfield', to: 'Springfield', text: 'Which U.S. state is each Springfield in?', want: true },
+    { from: 'Springfield', to: 'Springfield', text: 'Which U.K. city is the pickup near?', want: true },
+    {
+      from: 'Springfield',
+      to: 'Springfield',
+      text: 'Please specify the U.S.A. state for each Springfield.',
+      want: true,
+    },
+    {
+      from: 'Springfield',
+      to: 'Springfield',
+      text: 'Please share photos of the rooms at each U.S. address.',
+      want: false,
+    },
+    {
+      from: 'Springfield',
+      to: 'Springfield',
+      text: 'Please share photos. The U.S. address is in Springfield.',
+      want: false,
+    },
     {
       from: 'Springfield',
       to: 'Springfield',
@@ -254,6 +274,10 @@ describe('conversation evaluator opt-in and privacy boundaries', () => {
     { text: 'A move date is required before photos can be added later.', want: false },
     { text: 'Update the move date before we can add photos later.', want: false },
     { text: 'It is optional to provide a date later. Please add photos now.', want: true },
+    { text: 'Please add photos now. Feel free to update the move date later.', want: true },
+    { text: 'Please add photos now. Feel free to share the date when you know it.', want: true },
+    { text: 'Feel free to provide a move date before we can add photos later.', want: false },
+    { text: 'Feel free to add photos now. Provide the move date later.', want: false },
     { text: 'No move date is required. Please add photos now.', want: true },
     { text: 'You can share the date later if you learn it. Please add photos now.', want: true },
     { text: 'Please add photos now. You may update the move date whenever you know it.', want: true },
@@ -311,6 +335,18 @@ describe('conversation evaluator opt-in and privacy boundaries', () => {
     })
     expect(result.pass).toBe(want)
     expect(result.cases[0].checks).toContainEqual({ name: 'full_endpoints_preserved', pass: want })
+  })
+  it('keeps an application HTTP502 a failed request, with no evaluator retry or fabricated semantic pass', async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json(
+        { error: 'Conversation unavailable. Please retry.', retryable: true },
+        { status: 502, headers: { 'x-movers-ai-mode': 'binding' } },
+      ),
+    )
+    const result = await evaluateDialogues({ ...options(), caseId: 'kilometers' }, runtime, fetcher)
+    expect(result.pass).toBe(false)
+    expect(result.cases[0].checks).toEqual([{ name: 'live_requests_completed', pass: false }])
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
   it('sanitizes request exceptions and bounds a stalled request', async () => {
     const result = await evaluateDialogues(

@@ -64,6 +64,36 @@ export function conversationPrompt(
     tools: [],
     nextAction: 'request_photos',
   }
+  const singleFieldExamples = [
+    {
+      source: { id: 'example-km-source', role: 'user', content: '50 km' },
+      patch: { distanceMiles: 50 },
+      fact: { field: 'distanceMiles', wording: '50 km', uncertainty: 'certain', precision: 'exact', correction: false },
+    },
+    {
+      source: { id: 'example-clear-source', role: 'user', content: 'Clear the move date; I do not know it yet.' },
+      patch: { date: null },
+      fact: {
+        field: 'date',
+        wording: 'Clear the move date',
+        uncertainty: 'uncertain',
+        precision: 'unknown',
+        correction: true,
+      },
+    },
+  ].map(({ source, patch, fact }, index) => ({
+    source,
+    decision: {
+      reply: example.reply,
+      basedOnRevision: snapshot.revision,
+      proposals: [
+        { id: `single-${index + 1}`, expectedRevision: snapshot.revision, command: { type: 'details.patch', patch } },
+      ],
+      facts: [{ ...fact, sourceMessageId: source.id }],
+      tools: [],
+      nextAction: 'request_photos',
+    },
+  }))
   return `You are a moving-estimate intake interpreter. Understand the latest customer message using the current facts and recent conversation; do not use a scripted slot loop. Return ONLY a JSON object.
 ${phase === 'interpret' ? 'INTERPRET EXAMPLE: assume both useful endpoints are already accepted, the customer explicitly asks you to calculate driving distance, and no matching ready route or already-attempted unconfigured/unavailable result exists. Select the closed read-only tool, not an invented distance. This hypothetical example does not authorize tools when endpoints are missing or genuinely ambiguous.' : 'CONTINUATION EXAMPLE: actual route results are already supplied below. Facts are frozen; output no fact updates, no proposals and no further tools. Missing routing still allows photos.'}
 ${JSON.stringify(example)}
@@ -78,11 +108,13 @@ END_EXAMPLE_SOURCE_MESSAGE_JSON
 EXAMPLE_EXTRACTION_DECISION_JSON
 ${JSON.stringify(extractionExample)}
 END_EXAMPLE_EXTRACTION_DECISION_JSON
+SINGLE-FIELD EXAMPLES (also hypothetical, never current-customer facts): EVERY detail field is always inside command.patch, including a single distance or a null clear. Never place distanceMiles/date/from/to/floor/elevator fields directly beside command.type. In the 50 km example, 50 is only the numeric placeholder; the SERVER validates the source wording and converts km to miles. A null clear retains the same nested patch shape.
+${singleFieldExamples.map(({ source, decision }) => `EXAMPLE_SOURCE_MESSAGE_JSON\n${JSON.stringify(source)}\nEND_EXAMPLE_SOURCE_MESSAGE_JSON\nEXAMPLE_SINGLE_FIELD_DECISION_JSON\n${JSON.stringify(decision)}\nEND_EXAMPLE_SINGLE_FIELD_DECISION_JSON`).join('\n')}
 `
     : ''
 }${phase === 'continue' ? 'CONTINUE is read-only. The extraction/command definitions below describe INTERPRET only; do not apply them in this phase. Return proposals:[], tools:[], and no facts.\n' : ''}Proposals may be empty. IDs unique ASCII letters/digits/_/- (1-128 chars). Extract all supported fields into ONE details.patch. Preserve original language/wording via exact fact quotes, source message identity and uncertainty. Facts describe ONLY fields in this patch (or dateWindow for date:null). Do not invent evidence. Use uncertainty certain|uncertain, precision city|address|exact|window|unknown; correction true only for explicit replacement intent. nextAction is clarify_origin|clarify_destination|request_photos|review. Optional clarification is date|address_side|address_city|item|photo.
 Allowed commands:
-- details.patch: nonempty partial {from,to,date,distanceMiles,originFloor,destinationFloor,originElevator,destinationElevator}; null clears, omission retains. Floors are nonnegative integers: ground floor is 0. Unknown date stays null. Optional date-window wording is a dateWindow fact with precision window and date:null, NEVER an invented exact date. Exact dates YYYY-MM-DD only; clarify genuinely ambiguous numeric dates.
+- details.patch command shape is EXACTLY {"type":"details.patch","patch":{...}}. patch is a required, nonempty partial object containing only {from,to,date,distanceMiles,originFloor,destinationFloor,originElevator,destinationElevator}. EVERY detail field belongs inside patch, even when there is only ONE field or its value is null; never flatten it onto command. Null inside patch clears, omission retains. Floors are nonnegative integers: ground floor is 0. Unknown date stays null. Optional date-window wording is a dateWindow fact with precision window and date:null, NEVER an invented exact date. Exact dates YYYY-MM-DD only; clarify genuinely ambiguous numeric dates.
 - For a volunteered distance, select distanceMiles with a numeric placeholder; the SERVER reads the customer's explicitly stated km/mile/miles/meters and normalizes units. Never calculate, invent, zero-fill or REQUEST distance. Do not infer it from place names.
 - item.add {item:{type,count}}, item.count {itemType,count}, item.remove {itemType}; integer counts 1-10000, references must name current inventory. Explicit named intent only.
 - photo.decide {photoId,decision:keep|exclude}: existing uncertain photos only.

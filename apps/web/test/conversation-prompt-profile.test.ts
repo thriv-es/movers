@@ -81,6 +81,52 @@ it.each([false, true])(
     expect(parsed.tools).toEqual([])
   },
 )
+it.each([
+  { retry: false, field: 'distanceMiles' },
+  { retry: true, field: 'distanceMiles' },
+  { retry: false, field: 'date' },
+  { retry: true, field: 'date' },
+])('single-field $field example stays nested, sourced and read-only (retry $retry)', ({ retry, field }) => {
+  const captured = { ...snapshot, revision: 7, moveDetails: { ...snapshot.moveDetails, date: '2027-01-11' } }
+  const before = structuredClone(captured)
+  const values = conversationPrompt(messages, captured, retry, {
+    phase: 'interpret',
+    retry,
+    snapshot: captured,
+    toolResults: [],
+  })
+    .split('\n')
+    .filter((line) => line.startsWith('{') && line.endsWith('}'))
+    .map((line) => JSON.parse(line))
+  const decision = values.find((value) => {
+    const patch = value.proposals?.[0]?.command?.patch
+    return patch && Object.keys(patch).length === 1 && field in patch
+  })
+  expect(decision).toBeDefined()
+  const source = values.find((value) => value.role === 'user' && value.id === decision.facts[0].sourceMessageId)
+  expect(source).toBeDefined()
+  const parsed = parseConversationDecision(JSON.stringify(decision), captured, [source])
+  expect(parsed.tools).toEqual([])
+  expect(parsed.response.proposals).toHaveLength(1)
+  const command = parsed.response.proposals[0].command
+  if (command.type !== 'details.patch') throw new Error('Missing nested details command')
+  expect(Object.keys(command.patch)).toEqual([field])
+  expect(command.facts).toHaveLength(1)
+  expect(command.facts?.[0].sourceMessageId).toBe(source.id)
+  expect(source.content).toContain(command.facts?.[0].wording)
+  if (field === 'distanceMiles') {
+    expect(source.content).toBe('50 km')
+    expect(command.patch.distanceMiles).toBeCloseTo(31.0685596118667, 10)
+  } else {
+    expect(command.patch.date).toBeNull()
+    expect(command.facts?.[0]).toMatchObject({ field: 'date', precision: 'unknown', correction: true })
+  }
+  expect(captured).toEqual(before)
+  const malformed = structuredClone(decision)
+  const { patch, ...envelope } = malformed.proposals[0].command
+  malformed.proposals[0].command = { ...envelope, ...patch }
+  expect(() => parseConversationDecision(JSON.stringify(malformed), captured, [source])).toThrow()
+})
 it('does not show any nonempty extraction example in continuation', () => {
   const prompt = conversationPrompt(messages, snapshot, false, {
     phase: 'continue',

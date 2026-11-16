@@ -154,7 +154,7 @@ function demandsOptionalDetail(text) {
     if (/\b(?:no|not|don.t|do not)\s+(?:really\s+)?$/i.test(before)) return false
     if (/\b(?:before|first|so (?:we|you|i)|in order to|must|need|require|required)\b/i.test(clause)) return true
     return !(
-      /\boptional\s+to\s*$/i.test(before) ||
+      /\b(?:optional|feel free)\s+to\s*$/i.test(before) ||
       /\b(?:if you (?:learn|know|have|decide)|when you (?:know|learn|decide)|whenever you|you (?:can|may|could))\b/i.test(
         clause,
       )
@@ -162,7 +162,9 @@ function demandsOptionalDetail(text) {
   })
 }
 function usefulAmbiguityResponse(text) {
-  return (text.match(/[^.!?;]+[.!?;]?/g) ?? []).some((clause) => {
+  // Dotted initialisms qualify geography; their internal periods are not sentence boundaries.
+  const semanticText = text.replace(/\b(?:[a-z]\.\s*){2,}/gi, (initialism) => initialism.replaceAll('.', ''))
+  return (semanticText.match(/[^.!?;]+[.!?;]?/g) ?? []).some((clause) => {
     // The request's object must be geography, not photos that merely happen to mention an address.
     const clarification =
       /\b(?:which|what|provide|share|specify|clarify|confirm|tell me|need)\s+(?:(?!photos?\b|pictures?\b|images?\b)\w+\s+){0,6}(?:states?|countr(?:y|ies)|regions?|cit(?:y|ies)|address(?:es)?|springfields?)\b/i.test(
