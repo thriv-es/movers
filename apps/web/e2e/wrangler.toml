@@ -1,0 +1,13 @@
+# Test-only resources: no account IDs, remote bindings, AI declaration, or credentials.
+name = "movers-offline-e2e"
+compatibility_date = "2025-05-01"
+send_metrics = false
+
+[[d1_databases]]
+binding = "MOVERS_DB"
+database_name = "movers-offline-e2e"
+database_id = "00000000-0000-4000-8000-000000000000"
+
+[[r2_buckets]]
+binding = "MOVERS_BUCKET"
+bucket_name = "movers-offline-e2e"
