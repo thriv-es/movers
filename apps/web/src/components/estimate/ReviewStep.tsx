@@ -194,6 +194,9 @@ export function ReviewStep({
               </ul>
             </div>
           ) : null}
+          {!unresolved && reviewItems.length === 0 ? (
+            <p>No accepted inventory remains. Add an item or return to Photos before pricing.</p>
+          ) : null}
           <ul className="est-items" aria-label="Detected items">
             {reviewItems.map((item) => {
               const reason = special.get(canonicalItemType(item.type))

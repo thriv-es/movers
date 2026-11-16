@@ -101,7 +101,8 @@ export default function EstimatePage(): JSX.Element {
 
   const goTo = useCallback(
     (step: StepKey) => {
-      if ((step === 'estimate' || step === 'schedule') && evidence.unresolvedCount > 0) return
+      if ((step === 'estimate' || step === 'schedule') && (evidence.unresolvedCount > 0 || session.items.length === 0))
+        return
       setVerified(null)
       update((current) => ({
         step,
@@ -115,7 +116,7 @@ export default function EstimatePage(): JSX.Element {
           : {}),
       }))
     },
-    [update, evidence.unresolvedCount],
+    [update, evidence.unresolvedCount, session.items.length],
   )
 
   // a saved session can point at review or estimate without an analysis (for example after "Use my own photos")
@@ -329,6 +330,13 @@ export default function EstimatePage(): JSX.Element {
         if (!session.analysis) return null
         if (evidence.unresolvedCount > 0)
           return <p>Return to Review and decide every uncertain photo before pricing.</p>
+        if (session.items.length === 0)
+          return (
+            <div className="mv-stack">
+              <p>No accepted inventory remains. Add an item or return to Photos before pricing.</p>
+              <Button onClick={() => goTo('review')}>Back to Review</Button>
+            </div>
+          )
         if (!visionVerified) return <p role="status">{freshnessError ?? 'Checking photo analysis settings...'}</p>
         return (
           <EstimateStep

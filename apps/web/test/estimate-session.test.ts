@@ -534,6 +534,116 @@ describe('request-aware photo review', () => {
   }
   const draft = () => JSON.parse(window.sessionStorage.getItem(SESSION_KEY) ?? '{}')
 
+  const uncertainOnly = {
+    ...mixed,
+    items: [],
+    totalVolumeCubicFeet: 0,
+    estimatedBoxes: { min: 0, max: 0 },
+    photoAssessments: mixed.photoAssessments.slice(1, 2),
+  }
+
+  it('keeps uncertain-only inventory empty until every decision resolves, persists Keep, then prices accepted totals', async () => {
+    const view = mount('review', 'current-vision', {
+      ...uncertainOnly,
+      photoAssessments: [
+        ...uncertainOnly.photoAssessments,
+        { url: 'https://example.test/d.jpg', status: 'uncertain', reason: 'Check another photo.' },
+      ],
+    })
+    expect(screen.getByRole('button', { name: 'Confirm and price it' })).toBeDisabled()
+    expect(screen.getByLabelText('Add something we missed')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Keep photo 1' }))
+    expect(draft().items).toEqual([])
+    expect(screen.getByLabelText('Add something we missed')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Exclude photo 2' }))
+    expect(draft().items).toEqual([{ type: 'sofa', count: 2 }])
+    expect(draft().analysis.items).toEqual([])
+    expect(screen.getByRole('button', { name: 'Confirm and price it' })).toBeEnabled()
+    view.unmount()
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
+    expect(screen.getByRole('button', { name: 'Keep photo 1' })).toHaveAttribute('aria-pressed', 'true')
+    expect(draft().items).toEqual([{ type: 'sofa', count: 2 }])
+    let priced: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string, request?: RequestInit) => {
+        if (path === '/api/ai-status') return Response.json({ visionRevision: 99, visionFingerprint: 'current-vision' })
+        if (path === '/api/movers') return Response.json({ movers: [] })
+        if (path === '/api/price') {
+          priced = JSON.parse(request?.body as string)
+          return Response.json({ price: savedPrice })
+        }
+        if (path === '/api/estimates') return Response.json({ id: 'kept-id', storage: 'memory' })
+        throw new Error(`Unexpected ${path}`)
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and price it' }))
+    await waitFor(() => expect(draft().estimateId).toBe('kept-id'))
+    expect(priced).toMatchObject({
+      analysis: {
+        items: [{ type: 'sofa', count: 2 }],
+        totalVolumeCubicFeet: 160,
+        estimatedBoxes: { min: 3, max: 5 },
+        visionFingerprint: 'current-vision',
+      },
+      review: { photoEvidence: { excludedCount: 1, unresolvedCount: 0 } },
+    })
+  })
+
+  it('keeps Exclude-all empty and blocks pricing until inventory is explicitly added', async () => {
+    const { calls } = mount('review', 'current-vision', uncertainOnly)
+    fireEvent.click(screen.getByRole('button', { name: 'Exclude photo 1' }))
+    expect(draft().items).toEqual([])
+    expect(screen.getByRole('button', { name: 'Confirm and price it' })).toBeDisabled()
+    expect(screen.getByText(/add an item or return to photos before pricing/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and price it' }))
+    await act(async () => {})
+    expect(draft().step).toBe('review')
+    expect(calls).not.toContain('/api/price')
+    expect(calls).not.toContain('/api/estimates')
+    fireEvent.change(screen.getByLabelText('Add something we missed'), { target: { value: 'table' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add', exact: true }))
+    expect(draft().items).toEqual([{ type: 'table', count: 1 }])
+    expect(screen.getByRole('button', { name: 'Confirm and price it' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Keep photo 1' })).toBeDisabled()
+  })
+
+  it('blocks restored empty estimates from pricing or lead writes even when all photos were excluded', async () => {
+    const view = mount('review', 'current-vision', uncertainOnly)
+    fireEvent.click(screen.getByRole('button', { name: 'Exclude photo 1' }))
+    const saved = draft()
+    view.unmount()
+    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...saved, step: 'estimate' }))
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
+    await screen.findByText(/add an item or return to photos before pricing/i)
+    expect(screen.queryByRole('region', { name: 'Your estimate' })).not.toBeInTheDocument()
+    expect(view.calls).not.toContain('/api/price')
+    expect(view.calls).not.toContain('/api/estimates')
+  })
+
+  it.each(['review', 'estimate'])(
+    'invalidates stale uncertain-only evidence on %s re-entry without pricing or lead writes',
+    async (step) => {
+      const { calls } = mount(step, 'new-vision', uncertainOnly)
+      await waitFor(() => expect(draft().step).toBe('upload'))
+      expect(draft()).toMatchObject({ analysis: null, items: [], photoDecisions: {}, price: null, estimateId: null })
+      expect(calls).not.toContain('/api/price')
+      expect(calls).not.toContain('/api/estimates')
+    },
+  )
+
   it.each(['keep', 'exclude'] as const)(
     'persists %s and gates edits, merges only kept aliases, then locks decisions',
     async (decision) => {
@@ -663,7 +773,7 @@ describe('request-aware photo review', () => {
     )
   })
 
-  it('shows all-uncertain 400 reasons on Photos and cannot restore an old review', async () => {
+  it('shows genuinely empty uncertain-photo failure reasons on Photos and cannot restore an old review', async () => {
     window.sessionStorage.setItem(
       SESSION_KEY,
       JSON.stringify({
@@ -686,7 +796,7 @@ describe('request-aware photo review', () => {
           {
             code: 'NO_USABLE_PHOTOS',
             error: 'Upload clearer usable photos.',
-            photoAssessments: [mixed.photoAssessments[1]],
+            photoAssessments: [{ ...mixed.photoAssessments[1], candidates: { items: [], total_volume_cubic_feet: 0 } }],
           },
           { status: 400 },
         ),

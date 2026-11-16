@@ -78,13 +78,6 @@ analyze.post('/', async (c) => {
       .map((item) => ({ type: item.type || 'unknown', count: item.count || 1 }))
       .filter((item) => item.type && item.type.trim() !== '' && item.count > 0)
 
-    if (items.length === 0) {
-      return c.json(
-        { error: 'No items detected in images. Please upload photos with visible items.', photoLinkStatuses },
-        400,
-      )
-    }
-
     const totalVol = llmData.total_volume_cubic_feet
     const estimatedBoxes = analysisBoxes(totalVol, llmData.estimated_boxes_min, llmData.estimated_boxes_max)
     const boxesExplanation =

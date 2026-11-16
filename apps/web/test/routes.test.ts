@@ -642,7 +642,7 @@ describe('semantic photo route responses', () => {
       }
       const bindings = env({ ENV: 'preview', AI })
       const res = await post(analyze, body, bindings)
-      expect(res.status).toBe(allUncertain ? 400 : 200)
+      expect(res.status).toBe(200)
       const text = await res.text()
       expect(text.includes(sentinel)).toBe(false)
       expect(entries.some((entry) => entry.includes(sentinel))).toBe(false)
@@ -709,15 +709,43 @@ describe('semantic photo route responses', () => {
     },
   )
 
-  it.each(['unrelated', 'uncertain', 'empty'])(
+  it('returns uncertain-only candidates for Review without inventing confirmed items, volume or boxes', async () => {
+    const AI = {
+      run: vi.fn(async () => ({
+        response: JSON.stringify({
+          verdict: 'uncertain',
+          reason: 'PRIVATE',
+          inventory: { items: [{ type: 'couch', count: 2 }], total_volume_cubic_feet: 160 },
+        }),
+      })),
+    }
+    const res = await post(analyze, analyzeBody(), env({ ENV: 'preview', AI }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      items: [],
+      totalVolumeCubicFeet: 0,
+      estimatedBoxes: { min: 0, max: 0 },
+      visionRevision: expect.any(Number),
+      visionFingerprint: expect.any(String),
+      photoAssessments: [
+        {
+          status: 'uncertain',
+          candidates: { items: [{ type: 'sofa', count: 2 }], total_volume_cubic_feet: 160 },
+        },
+      ],
+    })
+    expect(AI.run).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['unrelated', 'empty-uncertain', 'empty'])(
     'returns retryable NO_USABLE_PHOTOS with %s assessments',
     async (kind) => {
       const AI = {
         run: vi.fn(async () => ({
           response: JSON.stringify({
-            verdict: kind === 'empty' ? 'relevant' : kind,
+            verdict: kind === 'empty' ? 'relevant' : kind === 'empty-uncertain' ? 'uncertain' : kind,
             reason: 'PRIVATE',
-            inventory: { items: kind === 'empty' ? [] : [{ type: 'chair', count: 1 }], total_volume_cubic_feet: 0 },
+            inventory: { items: kind === 'unrelated' ? [{ type: 'chair', count: 1 }] : [], total_volume_cubic_feet: 0 },
           }),
         })),
       }
@@ -725,7 +753,7 @@ describe('semantic photo route responses', () => {
       expect(res.status).toBe(400)
       expect(await res.json()).toMatchObject({
         code: 'NO_USABLE_PHOTOS',
-        photoAssessments: [{ status: kind === 'empty' ? 'relevant' : kind }],
+        photoAssessments: [{ status: kind === 'empty' ? 'relevant' : kind === 'empty-uncertain' ? 'uncertain' : kind }],
       })
     },
   )

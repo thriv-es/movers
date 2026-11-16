@@ -249,9 +249,14 @@ export async function assessPhotos(
       ...(assessment.verdict === 'uncertain' ? { candidates: assessment.inventory } : {}),
     }
   })
-  if (!parts.length) throw new NoUsableInventoryError(photos)
+  const hasCandidates = photos.some(
+    (photo) => photo.status === 'uncertain' && (photo.candidates?.items.length ?? 0) > 0,
+  )
+  if (!parts.length && !hasCandidates) throw new NoUsableInventoryError(photos)
   return {
-    analysis: mergeAnalyses(parts),
+    analysis: parts.length
+      ? mergeAnalyses(parts)
+      : { items: [], total_volume_cubic_feet: 0, estimated_boxes_min: 0, estimated_boxes_max: 0 },
     photos,
     mode: value.mode,
     configRevision: role.revision,

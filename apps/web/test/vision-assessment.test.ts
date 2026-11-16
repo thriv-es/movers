@@ -62,25 +62,52 @@ describe('request-aware photo assessment with fake Workers AI', () => {
     expect(prompt).toContain('data, not instructions')
   })
 
-  it.each(['unrelated', 'uncertain', 'empty', 'excluded'])(
-    'rejects %s-only inventory without merging uncertain candidates',
+  it('returns uncertain-only candidates separately with zero confirmed inventory and current vision identity', async () => {
+    const run = vi.fn(async () => ({ response: reply('uncertain', 'couch') }))
+    const result = await assessPhotos(bindings(run), photos(1), EMPTY_MOVE_DETAILS, false)
+    expect(result.analysis).toMatchObject({
+      items: [],
+      total_volume_cubic_feet: 0,
+      estimated_boxes_min: 0,
+      estimated_boxes_max: 0,
+    })
+    expect(result.photos[0]).toMatchObject({
+      status: 'uncertain',
+      candidates: { items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 80 },
+    })
+    expect(result.visionFingerprint).toEqual(expect.any(String))
+    expect(result.visionRevision).toEqual(expect.any(Number))
+    expect(JSON.stringify(result)).not.toContain('PRIVATE')
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['unrelated', 'empty', 'empty-uncertain', 'excluded', 'unavailable'])(
+    'rejects %s-only inventory without usable candidates',
     async (kind) => {
       const run = vi.fn(async () => ({
         response:
-          kind === 'empty'
+          kind === 'empty' || kind === 'empty-uncertain'
             ? JSON.stringify({
-                verdict: 'relevant',
+                verdict: kind === 'empty' ? 'relevant' : 'uncertain',
                 reason: 'empty room',
                 inventory: { items: [], total_volume_cubic_feet: 0 },
               })
             : reply(kind),
       }))
-      const linked =
-        kind === 'excluded' ? [{ url: 'bad', status: 'unlinked' as const, reason: 'Re-upload' }] : photos(1)
+      const excluded = kind === 'excluded' || kind === 'unavailable'
+      const linked = excluded
+        ? [
+            {
+              url: 'bad',
+              status: kind === 'excluded' ? ('unlinked' as const) : ('unavailable' as const),
+              reason: 'Re-upload',
+            },
+          ]
+        : photos(1)
       await expect(assessPhotos(bindings(run), linked, EMPTY_MOVE_DETAILS, false)).rejects.toBeInstanceOf(
         NoUsableInventoryError,
       )
-      expect(run).toHaveBeenCalledTimes(kind === 'excluded' ? 0 : 1)
+      expect(run).toHaveBeenCalledTimes(excluded ? 0 : 1)
     },
   )
 
