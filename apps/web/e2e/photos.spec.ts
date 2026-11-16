@@ -7,6 +7,7 @@ import {
   photos,
   session,
   priceButton,
+  expectPriceBlocked,
   manifestPanel,
   review,
   state,
@@ -35,8 +36,9 @@ test('one mounted conversation: ten receipts, review, explicit price/save/date a
   await expectMounted()
   await send(page, '15 miles')
   await expectMounted()
+  await page.getByRole('button', { name: 'Review move details', exact: true }).click()
   await page.getByRole('button', { name: 'Confirm move details', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Details confirmed', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: /Move details confirmed · Reopen details/ })).toBeVisible()
   await expectMounted()
   await upload(page, [9, 0, 7, 2, 8, 5, 1, 6, 4, 3])
   await expectMounted()
@@ -60,7 +62,7 @@ test('one mounted conversation: ten receipts, review, explicit price/save/date a
     'tool chest',
   ])
   expect(result.totalVolumeCubicFeet).toBe(120)
-  await expect(priceButton(page)).toBeDisabled()
+  await expectPriceBlocked(page)
   await expect(page.getByLabel('Add something we missed')).toBeDisabled()
   // Bind each decision to a known source filename and its accepted local photo ID, never completion order.
   const uploaded = await session(page)
@@ -76,7 +78,7 @@ test('one mounted conversation: ten receipts, review, explicit price/save/date a
   await photoCard(keptPhoto)
     .getByRole('button', { name: /^Keep photo / })
     .click()
-  await expect(priceButton(page)).toBeDisabled()
+  await expectPriceBlocked(page)
   await photoCard(excludedPhoto)
     .getByRole('button', { name: /^Exclude photo / })
     .click()
@@ -95,7 +97,7 @@ test('one mounted conversation: ten receipts, review, explicit price/save/date a
   await priceButton(page).click()
   expect((await priced).status()).toBe(200)
   expect((await saved).status()).toBe(201)
-  await expect(page.getByRole('region', { name: 'Estimate confirmation' })).toContainText('Saved reference')
+  await expect(page.getByRole('button', { name: /View estimate/ })).toContainText('Saved reference')
   const sent = (await priced).request().postDataJSON()
   // Independent oracle from the declared provider script: #10 bookshelf is kept; #9 armchair and #7/#8 are excluded.
   const expectedPricedItems = [
@@ -172,6 +174,7 @@ test('one mounted conversation: ten receipts, review, explicit price/save/date a
   expect((await session(page)).followUps).toEqual(durable.followUps)
   expect((await session(page)).duplicateResolutions).toEqual({ sofa: 'same' })
   expect([...(await session(page)).items].sort((a, b) => a.type.localeCompare(b.type))).toEqual(expectedPricedItems)
+  await page.getByRole('button', { name: /Reopen review/ }).click()
   await expect(page.getByText('Answered: same', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /^(Same|Different) sofa$/ })).toHaveCount(0)
   expect(writes(await state(request))).toEqual(writes(before))
@@ -186,7 +189,7 @@ test('uncertain-only candidates require Keep before accepted inventory and compl
   expect(result.items).toEqual([])
   expect(result.totalVolumeCubicFeet).toBe(0)
   expect(result.estimatedBoxes).toEqual({ min: 0, max: 0 })
-  await expect(priceButton(page)).toBeDisabled()
+  await expectPriceBlocked(page)
   await expect(page.getByLabel('Add something we missed')).toBeDisabled()
   await page.getByRole('button', { name: 'Keep photo 1', exact: true }).click()
   await expect(manifestPanel(page)).toContainText('armchair')
@@ -204,10 +207,10 @@ test('excluding every uncertain photo blocks empty pricing across reload; explic
   await page.getByRole('button', { name: 'Exclude photo 1', exact: true }).click()
   await page.getByRole('button', { name: 'Exclude photo 2', exact: true }).click()
   await review(page, { duplicates: [] })
-  await expect(priceButton(page)).toBeDisabled()
+  await expectPriceBlocked(page)
   await page.reload()
   await expect(manifestPanel(page)).toContainText('No accepted inventory remains.')
-  await expect(priceButton(page)).toBeDisabled()
+  await expectPriceBlocked(page)
   expect(writes(await state(request))).toEqual([])
   await page.getByLabel('Add something we missed').fill('fixture trunk')
   await page.getByRole('button', { name: 'Add', exact: true }).click()
@@ -276,7 +279,7 @@ test('unrelated-only photos remain rejected without usable inventory', async ({ 
   const response = await analyze(page)
   expect(response.status()).toBe(400)
   expect((await response.json()).code).toBe('NO_USABLE_PHOTOS')
-  await expect(priceButton(page)).toBeDisabled()
+  await expectPriceBlocked(page)
 })
 
 test('reset removes local receipts, objects and synthetic leads', async ({ page, request }) => {
@@ -405,7 +408,7 @@ test('save failure retries only save rather than repricing', async ({ page, requ
   await expect(page.getByRole('button', { name: 'Retry save', exact: true })).toBeEnabled()
   expect((await state(request)).estimates).toBe(0)
   await page.getByRole('button', { name: 'Retry save', exact: true }).click()
-  await expect(page.getByRole('region', { name: 'Estimate confirmation' })).toContainText('Saved reference')
+  await expect(page.getByRole('button', { name: /View estimate/ })).toContainText('Saved reference')
   expect((await state(request)).estimates).toBe(1)
   expect((await state(request)).requests.filter((entry) => entry.path === '/api/price')).toHaveLength(1)
   expect((await state(request)).requests.filter((entry) => entry.path === '/api/estimates')).toHaveLength(2)

@@ -23,12 +23,13 @@ test('combined answer updates one revision, contextual street retains city, expl
   request,
 }) => {
   await page.goto('/estimate')
-  await expect(log(page)).toContainText('Tell me where')
+  await expect(log(page)).toContainText('Where are you moving from and to?')
   expect(writes(await state(request))).toEqual([])
   const before = await session(page)
   const response = await send(page, 'from Tel Aviv to Raanana on 1.1.2027')
   expect(response.status()).toBe(200)
-  expect((await response.json()).reply).toMatch(/distance|miles/i)
+  expect((await response.json()).reply).toMatch(/photo/i)
+  await expect(log(page)).not.toContainText(/how many miles|how far/i)
   const after = await session(page)
   expect(after.revision).toBe(before.revision + 1)
   expect(after.moveDetails).toMatchObject({
@@ -322,6 +323,7 @@ test('migrated fresh runtime is ready before endpoints; unseeded concurrent evid
   await page.goto('/estimate')
   await send(page, 'from Tel Aviv to Raanana on 1.1.2027')
   await send(page, '15 miles')
+  await page.getByRole('button', { name: 'Review move details', exact: true }).click()
   await page.getByRole('button', { name: 'Confirm move details', exact: true }).click()
   await upload(page, [2])
   expect((await analyze(page)).status()).toBe(200)

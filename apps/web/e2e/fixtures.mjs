@@ -41,6 +41,7 @@ export async function openPhotos(page) {
   await send(page, 'from Tel Aviv to Raanana on 1.1.2027')
   await expect(page.getByLabel('Moving from', { exact: true })).toHaveValue('Tel Aviv')
   await send(page, '15 miles')
+  await page.getByRole('button', { name: 'Review move details', exact: true }).click()
   await page.getByRole('button', { name: 'Confirm move details', exact: true }).click()
 }
 
@@ -57,6 +58,17 @@ export async function analyze(page) {
   const response = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/analyze')
   await page.getByRole('button', { name: /^Analyse (again|\d+ photos?)$/ }).click()
   return response
+}
+
+export async function expectPriceBlocked(page) {
+  const reopen = page.getByRole('button', { name: 'Review estimate requirements', exact: true })
+  if (await reopen.count()) await reopen.click()
+  const button = priceButton(page)
+  if (await button.count()) await expect(button).toBeDisabled()
+  else {
+    await expect(button).toHaveCount(0)
+    expect((await session(page)).analysis).toBeNull()
+  }
 }
 
 export const priceButton = (page) =>

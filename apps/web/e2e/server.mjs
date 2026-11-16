@@ -67,6 +67,7 @@ let chatDelay = 0
 let conversationFailure = false
 let conversationMode = 'normal'
 let conversationCalls = 0
+let conversationContinuations = 0
 let conversationCommands = null
 let saveFailures = 0
 let emailLogsSuppressed = 0
@@ -194,8 +195,10 @@ const env = {
           return { response: 'synthetic-private-envelope-invalid-json' }
         // Refresh keeps the transcript, including the prior assistant's proposal guidance.
         const answer = messages.findLast((message) => message.role === 'user')?.content ?? ''
+        const continuation = content.includes('PHASE: continue')
+        if (continuation) conversationContinuations++
         let commands = conversationCommands ?? []
-        if (conversationCommands === null) {
+        if (conversationCommands === null && !continuation) {
           let patch
           if (answer === 'from Tel Aviv to Raanana on 1.1.2027')
             patch = { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' }
@@ -203,13 +206,34 @@ const env = {
             patch = { from: `12 Main Street, ${snapshot.moveDetails.from}` }
           else if (answer === 'origin address: 9 Oak Street, Haifa') patch = { from: '9 Oak Street, Haifa' }
           else if (answer === '15 miles') patch = { distanceMiles: 15 }
+          else if (answer === 'tel aviv') patch = { from: 'Tel Aviv' }
+          else if (answer.startsWith('dizingoff 100 tel-aviv moving to raanana to bezalel street 2'))
+            patch = { from: 'dizingoff 100 tel-aviv', to: 'bezalel street 2, raanana' }
+          else if (answer === '2027-01-11') patch = { date: answer }
+          else if (answer === '50 km' || answer === '50 mile')
+            patch = { distanceMiles: 50 } // Server, not fixture, owns units.
+          else if (answer === 'Change only pickup to 10 Herzl Street, Haifa') patch = { from: '10 Herzl Street, Haifa' }
+          else if (answer === 'Moving from Springfield to Springfield')
+            patch = { from: 'Springfield', to: 'Springfield' }
           commands = patch ? [{ type: 'details.patch', patch }] : []
         }
+        const repeatedOptional = answer === 'I do not know the date or any more street details.'
         return {
           response: JSON.stringify({
-            reply: 'Scripted provider envelope, never displayed.',
+            reply: repeatedOptional
+              ? 'What is the move date?'
+              : answer.startsWith('Ignore')
+                ? 'I saved the estimate, booked your move and sent quote requests.'
+                : 'Scripted provider envelope, never displayed.',
+            ...(repeatedOptional ? { clarification: 'date' } : {}),
             basedOnRevision: snapshot.revision,
-            proposals: commands.map((command, index) => ({
+            nextAction:
+              (snapshot.moveDetails.from && snapshot.moveDetails.to) || commands.some((command) => command.patch?.to)
+                ? 'request_photos'
+                : 'clarify_destination',
+            tools:
+              !continuation && answer.includes('calculate the driving distance') ? [{ type: 'resolve_route' }] : [],
+            proposals: (continuation ? [] : commands).map((command, index) => ({
               id: `script-${index}`,
               expectedRevision: snapshot.revision,
               command,
@@ -290,6 +314,7 @@ app.post('/__e2e/reset', async (c) => {
   conversationFailure = false
   conversationMode = 'normal'
   conversationCalls = 0
+  conversationContinuations = 0
   conversationCommands = null
   saveFailures = 0
   emailLogsSuppressed = 0
@@ -327,6 +352,7 @@ app.get('/__e2e/state', async (c) =>
     calls,
     requests,
     conversationCalls,
+    conversationContinuations,
     entered,
     emailLogsSuppressed,
     movers: await db.prepare('SELECT COUNT(*) AS count FROM movers').first('count'),

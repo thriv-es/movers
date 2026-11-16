@@ -10,6 +10,7 @@ import {
   analyze,
   review,
   priceButton,
+  expectPriceBlocked,
 } from './fixtures.mjs'
 
 const composer = (page) => page.getByRole('textbox', { name: 'Message', exact: true })
@@ -111,13 +112,14 @@ for (const resolution of ['same', 'different']) {
     )
     await page.reload()
     await expect(page.getByRole('log')).toContainText('Your earlier draft is here')
+    await page.getByRole('button', { name: 'Review move details', exact: true }).click()
     await page.getByRole('button', { name: 'Confirm move details', exact: true }).click()
     const row = page.getByRole('listitem', { name: `${label} count`, exact: true })
     await row.getByRole('button', { name: `One more ${label}`, exact: true }).click()
     expect((await session(page)).items[0]).toEqual({ type: label, count: 3 })
     await row.getByRole('button', { name: `One fewer ${label}`, exact: true }).click()
     expect((await session(page)).items[0]).toEqual({ type: label, count: 2 })
-    await expect(priceButton(page)).toBeDisabled()
+    await expectPriceBlocked(page)
     await review(page, { duplicates: [{ item: label, count: 2, resolution }] })
     await expect(priceButton(page)).toBeEnabled()
     const expectedCount = resolution === 'same' ? 1 : 2

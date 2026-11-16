@@ -12,6 +12,7 @@ import {
   analyze,
   review,
   priceButton,
+  expectPriceBlocked,
 } from './fixtures.mjs'
 
 const answer = (page) => page.getByRole('textbox', { name: 'Message', exact: true })
@@ -33,7 +34,7 @@ async function saveExplicitly(page) {
   )
   await priceButton(page).click()
   expect((await saved).status()).toBe(201)
-  await expect(page.getByRole('region', { name: 'Estimate confirmation' })).toContainText('Saved reference')
+  await expect(page.getByRole('button', { name: /View estimate/ })).toContainText('Saved reference')
 }
 
 async function history(page) {
@@ -102,10 +103,11 @@ for (const mode of ['untouched', 'edited', 'cleared']) {
     // A real manifest edit invalidates dependent analysis/price/save, not the mounted card's local edit intent.
     await page.getByLabel('Move date', { exact: true }).fill('2027-02-02')
     await expect(date).toHaveCount(0)
-    await expect(priceButton(page)).toBeDisabled()
+    await expectPriceBlocked(page)
     expect((await session(page)).price).toBeNull()
     expect((await session(page)).estimateId).toBeNull()
     expect(writes(await state(request))).toEqual(before)
+    await page.getByRole('button', { name: 'Review move details', exact: true }).click()
     await page.getByRole('button', { name: 'Confirm move details', exact: true }).click()
     expect((await analyze(page)).status()).toBe(200)
     await review(page, { duplicates: [] })
@@ -242,13 +244,12 @@ for (const viewport of [
       .getByRole('group', { name: 'Does this cover the whole move?' })
       .getByRole('button', { name: 'Yes', exact: true })
     await expect(coverage).toBeInViewport({ ratio: 1 })
-    await expect(latest).not.toBeInViewport()
+    // A contextual widget may fit beside the latest bubble; preserve the actual reader position either way.
     const before = await log.evaluate((node) => ({ top: node.scrollTop, height: node.scrollHeight }))
     await coverage.click()
     await expect(coverage).toHaveAttribute('aria-pressed', 'true')
     await expect.poll(() => log.evaluate((node) => node.scrollHeight)).toBeGreaterThan(before.height)
     await expect.poll(() => log.evaluate((node, top) => Math.abs(node.scrollTop - top), before.top)).toBeLessThan(3)
-    await expect(latest).not.toBeInViewport()
     await answer(page).fill('Card-bottom draft')
     await expect.poll(() => log.evaluate((node, top) => Math.abs(node.scrollTop - top), before.top)).toBeLessThan(3)
     expect(await composer?.evaluate((node) => node === document.querySelector('#conversation-message'))).toBe(true)
@@ -287,9 +288,10 @@ for (const version of [3, 4]) {
     expect(migrated.analysis).toBeNull()
     expect(migrated.items).toEqual([])
     expect(migrated.detailsConfirmed).toBe(false)
+    await page.getByRole('button', { name: 'Review move details', exact: true }).click()
     await page.getByRole('button', { name: 'Confirm move details', exact: true }).click()
     await expect(page.getByRole('button', { name: /^Analyse / })).toBeDisabled()
-    await expect(priceButton(page)).toBeDisabled()
+    await expectPriceBlocked(page)
     const before = await state(request)
     await page.reload()
     expect((await state(request)).calls).toEqual(before.calls)

@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "eval:vision": "node scripts/evaluate-vision.mjs",
+    "eval:conversation": "node scripts/evaluate-conversation.mjs",
     "smoke": "node scripts/smoke.mjs",
     "seed": "node scripts/seed.mjs",
     "deploy": "pnpm build && wrangler pages deploy dist --project-name=movers",
