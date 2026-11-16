@@ -29,8 +29,9 @@ export function validateDetailFacts(
   messages: ChatMessage[],
 ): DetailCommand | null {
   if (command.route) throw new Error('Invalid conversation output') // provider success is server-only
-  const latest = messages.at(-1)
-  const source = latest?.role === 'user' ? latest : undefined
+  // Refresh retains prior assistant replies. Ground only in the latest actual user,
+  // never an assistant tail or an arbitrary older fact-selected message.
+  const source = messages.filter((message) => message.role === 'user').at(-1)
   const patch = { ...command.patch }
   const facts = [...(command.facts ?? supplied)]
   if (facts.some((fact) => !source || fact.sourceMessageId !== source.id || !source.content.includes(fact.wording)))

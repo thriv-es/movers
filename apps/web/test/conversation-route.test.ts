@@ -39,6 +39,88 @@ function fakeAI(outputs: (string | Error)[]) {
 afterEach(() => vi.restoreAllMocks())
 
 describe('POST conversation', () => {
+  it.each([false, true])(
+    'grounds Refresh in the latest user before trailing assistant messages (explicit facts: %s)',
+    async (explicit) => {
+      const state = snapshot()
+      state.revision = 4
+      state.moveDetails.from = 'Current panel origin'
+      state.moveDetails.date = '2027-02-02'
+      const history = [
+        { id: 'older-user', role: 'user', content: 'from Haifa' },
+        { id: 'question', role: 'assistant', content: 'Where are you moving?' },
+        { id: 'refresh-user', role: 'user', content: 'from Tel Aviv to Raanana on 1.1.2027' },
+        { id: 'prior-response', role: 'assistant', content: 'Please attach photos.' },
+      ]
+      const facts = ['from', 'to'].map((field) => ({
+        field,
+        sourceMessageId: 'refresh-user',
+        wording: field === 'from' ? 'Tel Aviv' : 'Raanana',
+        uncertainty: 'certain',
+        precision: 'city',
+        correction: false,
+      }))
+      const { run, env } = fakeAI([
+        valid({
+          basedOnRevision: 4,
+          proposals: [
+            {
+              id: 'refresh',
+              expectedRevision: 4,
+              command: { type: 'details.patch', patch: { from: 'Tel Aviv', to: 'Raanana' } },
+            },
+          ],
+          ...(explicit ? { facts } : {}),
+        }),
+      ])
+      const response = await request({ messages: history, snapshot: state }, env)
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({
+        basedOnRevision: 4,
+        proposals: [
+          {
+            expectedRevision: 4,
+            command: {
+              patch: { from: 'Tel Aviv', to: 'Raanana' },
+              facts: [{ sourceMessageId: 'refresh-user' }, { sourceMessageId: 'refresh-user' }],
+            },
+          },
+        ],
+      })
+      expect(state.moveDetails).toMatchObject({ from: 'Current panel origin', date: '2027-02-02' })
+      expect(JSON.stringify(run.mock.calls[0])).toContain('Current panel origin')
+      expect(run).toHaveBeenCalledTimes(1)
+    },
+  )
+  it.each([
+    ['older-user', 'Haifa'],
+    ['prior-response', 'Please attach photos.'],
+    ['refresh-user', 'invented source quote'],
+  ])('does not let Refresh ground facts in older/assistant/invented evidence: %s', async (sourceMessageId, wording) => {
+    const history = [
+      { id: 'older-user', role: 'user', content: 'from Haifa' },
+      { id: 'refresh-user', role: 'user', content: 'from Tel Aviv to Raanana' },
+      { id: 'prior-response', role: 'assistant', content: 'Please attach photos.' },
+    ]
+    const output = valid({
+      facts: [
+        {
+          field: 'from',
+          sourceMessageId: 'refresh-user',
+          wording: 'Tel Aviv',
+          uncertainty: 'certain',
+          precision: 'city',
+          correction: false,
+        },
+        { field: 'to', sourceMessageId, wording, uncertainty: 'certain', precision: 'city', correction: false },
+      ],
+    })
+    const { run, env } = fakeAI([output, output])
+    const response = await request({ messages: history, snapshot: snapshot() }, env)
+    expect(response.status).toBe(502)
+    expect(await response.json()).toEqual({ error: 'Conversation unavailable. Please retry.', retryable: true })
+    expect(run).toHaveBeenCalledTimes(2)
+  })
   it('never sends locations to routing after development auto mode falls back to mock', async () => {
     const { run, env } = fakeAI([new Error('provider unavailable')])
     env.ENV = 'development'
