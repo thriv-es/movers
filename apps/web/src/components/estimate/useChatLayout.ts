@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useRef } from 'react'
 
-/** Keep the page still: only the transcript follows, and only while its reader is near the end. */
+/** Keep the page still: follow only near the active target; trailing cards are a separate reading position. */
 export function useChatLayout({ follow = 'bottom' }: { follow?: 'bottom' | 'conversation' } = {}) {
   const stepRef = useRef<HTMLDivElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
@@ -32,8 +32,9 @@ export function useChatLayout({ follow = 'bottom' }: { follow?: 'bottom' | 'conv
     if (!log || !content) return
     const onScroll = () => {
       following.current =
-        log.scrollHeight - log.clientHeight - log.scrollTop <= 64 ||
-        (follow === 'conversation' && Math.abs(log.scrollTop - followTop(log)) <= 64)
+        follow === 'conversation'
+          ? Math.abs(log.scrollTop - followTop(log)) <= 64
+          : log.scrollHeight - log.clientHeight - log.scrollTop <= 64
     }
     log.addEventListener('scroll', onScroll, { passive: true })
     const observer = new ResizeObserver(followLatest)

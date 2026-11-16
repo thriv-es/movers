@@ -814,7 +814,7 @@ describe('persistent estimator conversation', () => {
     expect(screen.getByLabelText('Message')).toBeInTheDocument()
   })
 
-  it('preserves transcript position unless near-bottom and measures short visual viewports without outer scrolling', async () => {
+  it('preserves history and trailing-card reader positions and measures short visual viewports without outer scrolling', async () => {
     const viewport = Object.assign(new EventTarget(), { height: 420, offsetTop: 0 })
     vi.stubGlobal('visualViewport', viewport)
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
@@ -847,7 +847,8 @@ describe('persistent estimator conversation', () => {
     log.scrollTop = 2790
     fireEvent.scroll(log)
     fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '51' } })
-    expect(scroll).toHaveBeenCalledWith({ top: 1000, behavior: 'instant' })
+    expect(log.scrollTop).toBe(2790)
+    expect(scroll).not.toHaveBeenCalled()
     expect(outer).not.toHaveBeenCalled()
     viewport.height = 300
     fireEvent(viewport, new Event('resize'))
@@ -1086,6 +1087,78 @@ describe('persistent estimator conversation', () => {
       fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Reading the cards' } })
       expect(log.scrollTop).toBe(2500)
       expect(scroll).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['draft edit', 'manifest change', 'card answer'] as const)(
+    'preserves a bottom-of-card-stack reader during %s, then resumes on explicit Send',
+    async (change) => {
+      const pending = deferred<Response>()
+      api((path) => (path === '/api/chat' ? pending.promise : undefined))
+      vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(5000)
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300)
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+        const log = document.querySelector('.conv-feed')
+        const anchorTop = this.textContent?.includes('Resumed synthetic reply')
+          ? 1800
+          : this.textContent?.includes('Explicit synthetic Send')
+            ? 1600
+            : 1000
+        return {
+          top: this.hasAttribute('data-conversation-anchor') ? anchorTop - (log?.scrollTop ?? 0) + 20 : 20,
+        } as DOMRect
+      })
+      Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+        configurable: true,
+        value: vi.fn(function (this: HTMLElement, options: ScrollToOptions) {
+          this.scrollTop = options.top ?? 0
+          this.dispatchEvent(new Event('scroll'))
+        }),
+      })
+      mount(
+        ready({
+          messages: Array.from({ length: 80 }, (_, index) => ({
+            id: `reader-history-${index}`,
+            role: index === 79 ? 'assistant' : 'user',
+            content: `Synthetic reader history ${index}`,
+          })),
+          analysis: {
+            ...analysis,
+            possibleDuplicates: Array.from({ length: 20 }, (_, index) => ({
+              item: `synthetic item ${index}`,
+              count: 2,
+            })),
+          },
+          items: Array.from({ length: 50 }, (_, index) => ({ type: `synthetic item ${index}`, count: 2 })),
+        }),
+      )
+      const log = screen.getByRole('log', { name: 'Move conversation' })
+      const composer = screen.getByLabelText('Message')
+      expect(log.scrollTop).toBe(1000)
+      log.scrollTop = 4700
+      fireEvent.scroll(log)
+      const scroll = vi.mocked(log.scrollTo)
+      scroll.mockClear()
+      if (change === 'draft edit') fireEvent.change(composer, { target: { value: 'Unsent reader draft' } })
+      else if (change === 'manifest change')
+        fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '44' } })
+      else
+        fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'No' }))
+      expect(log.scrollTop).toBe(4700)
+      expect(scroll).not.toHaveBeenCalled()
+      expect(screen.getByLabelText('Message')).toBe(composer)
+      fireEvent.change(composer, { target: { value: 'Explicit synthetic Send' } })
+      expect(scroll).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(log.scrollTop).toBe(1600)
+      await act(async () =>
+        pending.resolve(
+          Response.json({ reply: 'Resumed synthetic reply', moveDetails: draft().moveDetails, finished: false }),
+        ),
+      )
+      expect(log.scrollTop).toBe(1800)
+      expect(screen.getByText('Resumed synthetic reply')).toBeInTheDocument()
+      expect(screen.getByLabelText('Message')).toBe(composer)
     },
   )
 
