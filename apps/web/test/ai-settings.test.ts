@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { resolveRole } from '../functions/api/_lib/ai-mode'
+import type { Bindings } from '../functions/api/_lib/types'
 import {
   DEFAULT_ROLES,
   MODEL_CATALOG,
@@ -87,6 +89,59 @@ describe('revisioned AI settings', () => {
     expect(DEFAULT_ROLES).toEqual(initialRoles)
     expect(await readAiSettings(fakeDb())).toEqual({ revision: 0, roles: initialRoles })
     expect(await readSavedAiSettings(fakeDb())).toBeNull()
+  })
+
+  it('rejects a stale first write without changing legacy binding or mock, then accepts revision 0', async () => {
+    const db = fakeDb()
+    const selected = { ...initialRoles, price: { backend: 'binding', model: textAlternative } }
+    expect(await updateAiSettings(db, 1, selected)).toBeNull()
+    expect(await readSavedAiSettings(db)).toBeNull()
+    const binding = {
+      ENV: 'development',
+      MOVERS_DB: db,
+      AI: { run: async () => ({ response: '' }) },
+      PRICE_MODEL: 'legacy-price',
+    } as unknown as Bindings
+    expect(await resolveRole(binding, 'price')).toMatchObject({
+      selection: { backend: 'binding', model: 'legacy-price' },
+      mode: 'binding',
+      available: true,
+      revision: 0,
+    })
+    expect(await resolveRole({ ENV: 'development', MOVERS_DB: db } as Bindings, 'price')).toMatchObject({
+      mode: 'mock',
+      available: true,
+      revision: 0,
+    })
+    expect(await updateAiSettings(db, 0, selected)).toEqual({ revision: 1, roles: selected })
+    expect(await resolveRole(binding, 'price')).toMatchObject({
+      selection: selected.price,
+      mode: 'binding',
+      revision: 1,
+    })
+  })
+
+  it('does not treat an existing revision-0 bootstrap row as a saved selection', async () => {
+    const db = fakeDb()
+    await db
+      .prepare('INSERT OR IGNORE INTO ai_settings (id, revision, roles_json) VALUES (1, 0, ?)')
+      .bind(JSON.stringify(initialRoles))
+      .run()
+    expect(await readAiSettings(db)).toEqual({ revision: 0, roles: initialRoles })
+    expect(await readSavedAiSettings(db)).toBeNull()
+    expect(
+      await resolveRole(
+        {
+          ENV: 'development',
+          MOVERS_DB: db,
+          AI_MODE: 'binding',
+          AI: { run: async () => ({ response: '' }) },
+        } as unknown as Bindings,
+        'price',
+      ),
+    ).toMatchObject({ mode: 'binding', available: true })
+    const selected = { ...initialRoles, price: { backend: 'binding', model: textAlternative } }
+    expect(await updateAiSettings(db, 0, selected)).toEqual({ revision: 1, roles: selected })
   })
 
   it('accepts only one of two writes with the same expected revision', async () => {

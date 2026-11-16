@@ -72,7 +72,9 @@ interface AiSettingsRow {
 
 export async function readSavedAiSettings(db: D1Database): Promise<AiSettings | null> {
   const row = await db.prepare('SELECT revision, roles_json FROM ai_settings WHERE id = 1').first<AiSettingsRow>()
-  return row ? { revision: row.revision, roles: validateRoles(JSON.parse(row.roles_json)) } : null
+  if (!row) return null
+  const roles = validateRoles(JSON.parse(row.roles_json))
+  return row.revision === 0 ? null : { revision: row.revision, roles }
 }
 
 export async function readAiSettings(db: D1Database): Promise<AiSettings> {
@@ -85,10 +87,12 @@ export async function updateAiSettings(
   roles: unknown,
 ): Promise<AiSettings | null> {
   const validated = validateRoles(roles)
-  await db
-    .prepare('INSERT OR IGNORE INTO ai_settings (id, revision, roles_json) VALUES (1, 0, ?)')
-    .bind(JSON.stringify(DEFAULT_ROLES))
-    .run()
+  if (expectedRevision === 0) {
+    await db
+      .prepare('INSERT OR IGNORE INTO ai_settings (id, revision, roles_json) VALUES (1, 0, ?)')
+      .bind(JSON.stringify(DEFAULT_ROLES))
+      .run()
+  }
   const result = await db
     .prepare('UPDATE ai_settings SET roles_json = ?, revision = revision + 1 WHERE id = 1 AND revision = ?')
     .bind(JSON.stringify(validated), expectedRevision)

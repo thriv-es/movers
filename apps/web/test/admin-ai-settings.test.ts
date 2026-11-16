@@ -105,6 +105,31 @@ describe('local-only admin AI settings', () => {
     expect(current.settings.revision).toBe(0)
   })
 
+  it('keeps legacy auto binding after a stale first PATCH and accepts the next revision-0 PATCH', async () => {
+    const db = fakeDb()
+    const local = env({ MOVERS_DB: db, AI: { run: async () => ({ response: '' }) } })
+    const changed = { ...roles, price: { backend: 'binding', model: textModel } }
+    const stale = await admin.request(
+      'http://localhost/ai-settings',
+      patch({ expectedRevision: 1, roles: changed }),
+      local,
+    )
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toEqual({ error: 'Settings changed; reload and retry.' })
+    const current = await admin.request('http://localhost/ai-settings', {}, local)
+    expect(await current.json()).toMatchObject({
+      settings: { revision: 0, roles },
+      effective: { chat: { mode: 'binding', available: true }, price: { mode: 'binding', available: true } },
+    })
+    const saved = await admin.request(
+      'http://localhost/ai-settings',
+      patch({ expectedRevision: 0, roles: changed }),
+      local,
+    )
+    expect(saved.status).toBe(200)
+    expect(await saved.json()).toMatchObject({ settings: { revision: 1, roles: changed } })
+  })
+
   it('increments revision on save and returns 409 for a stale writer', async () => {
     const db = fakeDb()
     const changed = { ...roles, price: { backend: 'binding', model: textModel } }
