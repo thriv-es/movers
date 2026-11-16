@@ -381,7 +381,7 @@ describe('estimate session', () => {
       ],
       needsPhotoReupload: true,
     })
-    expect(screen.getByRole('button', { name: 'Analyse 1 photo' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Analyse 1 photo' })).toBeDisabled()
 
     fireEvent.click(within(screen.getByAltText('room-a.jpg').closest('li')!).getByRole('button', { name: 'Remove' }))
     await waitFor(() =>
@@ -391,6 +391,10 @@ describe('estimate session', () => {
       ]),
     )
     expect(screen.getByAltText('room-b.jpg')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Analyse 1 photo' })).toBeDisabled()
+    fireEvent.click(within(screen.getByAltText('room-b.jpg').closest('li')!).getByRole('button', { name: 'Remove' }))
+    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).needsPhotoReupload).toBe(false))
+    expect(screen.getByRole('button', { name: 'Analyse 1 photo' })).toBeEnabled()
 
     const fetch = vi.fn(async (_path: string, _request: RequestInit) => Response.json(analysis))
     vi.stubGlobal('fetch', fetch)
@@ -699,6 +703,97 @@ describe('request-aware photo review', () => {
     await screen.findByText(/Photo 1: Please check this photo/)
     expect(screen.queryByRole('button', { name: 'Keep photo 1' })).not.toBeInTheDocument()
     expect(draft()).toMatchObject({ step: 'upload', analysis: null, photoDecisions: {}, price: null, estimateId: null })
+  })
+
+  it.each(['photos', 'details'] as const)(
+    'restores failed photo reasons after refresh and clears them on %s changes',
+    async (change) => {
+      const session = sampleSession(window.location.origin)
+      window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(session))
+      const assessments = [
+        { url: session.photoUrls[0], status: 'unrelated', reason: 'No movable inventory was found.' },
+      ]
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          Response.json(
+            {
+              code: 'NO_USABLE_PHOTOS',
+              error: 'Upload usable photos.',
+              photoAssessments: assessments,
+            },
+            { status: 400 },
+          ),
+        ),
+      )
+      const mountPage = () =>
+        render(
+          createElement(
+            HelmetProvider,
+            null,
+            createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+          ),
+        )
+      const view = mountPage()
+      fireEvent.click(screen.getByRole('button', { name: 'Analyse 3 photos' }))
+      await screen.findByText(/Photo 1: No movable inventory/)
+      expect(draft()).toMatchObject({ analysis: null, failedPhotoAssessments: assessments, price: null })
+      view.unmount()
+      mountPage()
+      expect(screen.getByText(/Photo 1: No movable inventory/)).toBeInTheDocument()
+      if (change === 'photos') fireEvent.click(screen.getByRole('button', { name: 'Use my own photos' }))
+      else {
+        fireEvent.click(screen.getByRole('button', { name: /2 Details/i }))
+        fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '99' } })
+        fireEvent.submit(screen.getByRole('form', { name: 'Move details' }))
+      }
+      await waitFor(() => expect(draft().failedPhotoAssessments).toEqual([]))
+      expect(screen.queryByText(/Photo 1: No movable inventory/)).not.toBeInTheDocument()
+    },
+  )
+
+  it('retains last failure reasons during a retry and clears them after successful analysis', async () => {
+    const session = sampleSession(window.location.origin)
+    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(session))
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string) => {
+        if (path === '/api/ai-status') return Response.json({ visionRevision: 1, visionFingerprint: 'current-vision' })
+        return Response.json(
+          { code: 'NO_USABLE_PHOTOS', error: 'Try again.', photoAssessments: [mixed.photoAssessments[1]] },
+          { status: 400 },
+        )
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Analyse 3 photos' }))
+    await screen.findByText(/Photo 1: Please check this photo/)
+    expect(draft().failedPhotoAssessments).toEqual([
+      { url: 'https://example.test/b.jpg', status: 'uncertain', reason: 'Please check this photo.' },
+    ])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string) =>
+        path === '/api/ai-status' ? Response.json({ visionRevision: 1, visionFingerprint: 'current-vision' }) : pending,
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Analyse 3 photos' }))
+    expect(screen.getByText(/Photo 1: Please check this photo/)).toBeInTheDocument()
+    expect(draft().failedPhotoAssessments).toHaveLength(1)
+    await act(async () => {
+      finish(Response.json(analysis))
+    })
+    await waitFor(() => expect(draft()).toMatchObject({ step: 'review', analysis, failedPhotoAssessments: [] }))
   })
 
   it('does not restore old analysis after leaving Photos and changing details during analysis', async () => {

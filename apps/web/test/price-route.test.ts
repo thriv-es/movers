@@ -1,7 +1,7 @@
 // @vitest-environment node
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { runText } from '../functions/api/_lib/ai-client'
-import { sampleCacheKey, writeSampleCache } from '../functions/api/_lib/sample-cache'
+import { readSampleCache, sampleCacheKey, writeSampleCache } from '../functions/api/_lib/sample-cache'
 import price from '../functions/api/_routes/price'
 import { resolveRole } from '../functions/api/_lib/ai-mode'
 import { visionStatus } from '../functions/api/_lib/vision-fingerprint'
@@ -44,6 +44,8 @@ async function request(sample = false, overrides: Record<string, unknown> = {}) 
     env,
   )
 }
+
+beforeEach(() => vi.mocked(runText).mockReset().mockResolvedValue({ text: '{bad', mode: 'binding' }))
 
 describe('price route model reply', () => {
   it('recomputes a cached sample price after the saved Pricing backend or model changes', async () => {
@@ -184,6 +186,56 @@ describe('price route model reply', () => {
     expect(repeated.headers.get('x-movers-sample-cache')).toBe('hit')
     expect(runText).toHaveBeenCalledTimes(1)
   })
+
+  it.each([false, true])(
+    'recovers after malformed sample pricing without retaining invalid raw answers (legacy cache=%s)',
+    async (legacy) => {
+      const env = {
+        ENV: 'development',
+        MOVERS_DB: { prepare: () => ({ first: async () => null }) },
+        CF_AIG_TOKEN: 'synthetic-token',
+        PRICE_PER_BOX: legacy ? '56' : '55',
+      } as unknown as Bindings
+      const current = await visionStatus(await resolveRole(env, 'vision'))
+      const key = await sampleCacheKey('price', {
+        analysis: { ...current, ...analysis },
+        moveDetails: {
+          from: moveDetails.from,
+          to: moveDetails.to,
+          date: moveDetails.date,
+          distanceMiles: moveDetails.distanceMiles,
+          originFloor: moveDetails.originFloor,
+          destinationFloor: moveDetails.destinationFloor,
+          originElevator: moveDetails.originElevator,
+          destinationElevator: moveDetails.destinationElevator,
+        },
+        pricePerBox: Number(env.PRICE_PER_BOX),
+        pricing: {
+          mode: 'gateway',
+          backend: 'gateway',
+          model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+          revision: 0,
+        },
+      })
+      if (legacy) await writeSampleCache(key, JSON.stringify({ mode: 'gateway', text: '{bad cached private text' }))
+      vi.mocked(runText).mockClear()
+      vi.mocked(runText)
+        .mockResolvedValueOnce({ mode: 'gateway', text: '{bad provider private text' })
+        .mockResolvedValueOnce({
+          mode: 'gateway',
+          text: JSON.stringify({ currency: 'USD', breakdown: { labor: 250 }, confidence: 'low' }),
+        })
+      expect((await request(true, env)).status).toBe(503)
+      expect(await readSampleCache(key)).toBeNull()
+      const recovered = await request(true, env)
+      expect(recovered.status).toBe(200)
+      expect(recovered.headers.get('x-movers-sample-cache')).toBeNull()
+      expect(await recovered.json()).toMatchObject({ price: { total: 250 } })
+      expect((await request(true, env)).headers.get('x-movers-sample-cache')).toBe('hit')
+      expect(runText).toHaveBeenCalledTimes(2)
+      expect(await readSampleCache(key)).not.toContain('private text')
+    },
+  )
 
   it('returns a retryable error without fabricated price for malformed JSON', async () => {
     const res = await request()

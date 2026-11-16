@@ -118,7 +118,14 @@ describe('local-only admin AI settings', () => {
     expect(await stale.json()).toEqual({ error: 'Settings changed; reload and retry.' })
     const current = await admin.request('http://localhost/ai-settings', {}, local)
     expect(await current.json()).toMatchObject({
-      settings: { revision: 0, roles },
+      settings: {
+        revision: 0,
+        roles: {
+          chat: { ...roles.chat, backend: 'binding' },
+          price: { ...roles.price, backend: 'binding' },
+          vision: { ...roles.vision, backend: 'binding' },
+        },
+      },
       effective: { chat: { mode: 'binding', available: true }, price: { mode: 'binding', available: true } },
     })
     const saved = await admin.request(
@@ -128,6 +135,68 @@ describe('local-only admin AI settings', () => {
     )
     expect(saved.status).toBe(200)
     expect(await saved.json()).toMatchObject({ settings: { revision: 1, roles: changed } })
+  })
+
+  it('preserves effective auto-binding and the environment Chat model when revision 0 is saved unchanged', async () => {
+    const local = env({
+      MOVERS_DB: fakeDb(),
+      AI: { run: async () => ({ response: '' }) },
+      CHAT_MODEL: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
+    })
+    const current = await (await admin.request('http://localhost/ai-settings', {}, local)).json()
+    const saved = await admin.request(
+      'http://localhost/ai-settings',
+      patch({
+        expectedRevision: current.settings.revision,
+        roles: current.settings.roles,
+      }),
+      local,
+    )
+    expect(saved.status).toBe(200)
+    expect(await saved.json()).toMatchObject({
+      settings: {
+        revision: 1,
+        roles: {
+          chat: { backend: 'binding', model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast' },
+          price: { backend: 'binding', model: textModel },
+          vision: { backend: 'binding', model: visionModel },
+        },
+      },
+      effective: {
+        chat: { mode: 'binding', available: true },
+        price: { mode: 'binding', available: true },
+        vision: { mode: 'binding', available: true },
+      },
+    })
+  })
+
+  it('changes only the explicitly selected role to an unavailable Gateway', async () => {
+    const local = env({ MOVERS_DB: fakeDb(), AI: { run: async () => ({ response: '' }) } })
+    const current = await (await admin.request('http://localhost/ai-settings', {}, local)).json()
+    const response = await admin.request(
+      'http://localhost/ai-settings',
+      patch({
+        expectedRevision: 0,
+        roles: { ...current.settings.roles, price: roles.price },
+      }),
+      local,
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      settings: {
+        revision: 1,
+        roles: {
+          chat: { backend: 'binding', model: textModel },
+          price: roles.price,
+          vision: { backend: 'binding', model: visionModel },
+        },
+      },
+      effective: {
+        chat: { mode: 'binding', available: true },
+        price: { mode: 'gateway', available: false },
+        vision: { mode: 'binding', available: true },
+      },
+    })
   })
 
   it('increments revision on save and returns 409 for a stale writer', async () => {

@@ -59,6 +59,15 @@ export async function writeSampleCache(key: string, text: string): Promise<void>
   }
 }
 
+async function deleteSampleCache(key: string): Promise<void> {
+  memory.delete(key)
+  try {
+    await workersCache()?.delete(key)
+  } catch {
+    // A failed cache operation must not prevent a fresh computation.
+  }
+}
+
 /** Serves `compute()` from the cache when `sample` is set; otherwise runs it every time. */
 export async function withSampleCache<T>(
   sample: boolean | undefined,
@@ -77,6 +86,7 @@ export async function withSampleCache<T>(
     } catch {
       // a corrupt entry is recomputed below
     }
+    await deleteSampleCache(key)
   }
   const value = await compute()
   if (cacheWhen(value)) await writeSampleCache(key, JSON.stringify(value))

@@ -53,6 +53,15 @@ price.post('/', async (c) => {
     const pricing = await resolveRole(c.env, 'price')
     if (!pricing.available)
       throw new Error(`${pricing.mode === 'binding' ? 'Workers AI binding' : 'AI Gateway'} unavailable`)
+    const normalizeAnswer = (text: string) => {
+      let raw: unknown
+      try {
+        raw = extractAndRepairJSON(text)
+      } catch {
+        throw new PriceFormatError('Invalid price JSON')
+      }
+      return normalizePriceReply(raw, analysis.items.length > 0)
+    }
     const { value, cached } = await withSampleCache(
       sample,
       'price',
@@ -62,25 +71,32 @@ price.post('/', async (c) => {
         pricePerBox,
         pricing: { mode: pricing.mode, ...pricing.selection, revision: pricing.revision },
       },
-      () => runText(c.env, prompt, () => mockPriceReply(validatedRequest, pricePerBox), 'price', pricing),
-      (answer) => answer.mode === pricing.mode,
+      async () => {
+        const answer = await runText(
+          c.env,
+          prompt,
+          () => mockPriceReply(validatedRequest, pricePerBox),
+          'price',
+          pricing,
+        )
+        // Never retain malformed raw answers, even when their runtime mode matches.
+        normalizeAnswer(answer.text)
+        return answer
+      },
+      (answer) => {
+        if (answer.mode !== pricing.mode) return false
+        try {
+          normalizeAnswer(answer.text)
+          return true
+        } catch {
+          return false
+        }
+      },
     )
     c.header('x-movers-ai-mode', value.mode)
     if (cached) c.header('x-movers-sample-cache', 'hit')
 
-    let priceData: ReturnType<typeof normalizePriceReply>
-    try {
-      let raw: unknown
-      try {
-        raw = extractAndRepairJSON(value.text)
-      } catch {
-        throw new PriceFormatError('Invalid price JSON')
-      }
-      priceData = normalizePriceReply(raw, analysis.items.length > 0)
-    } catch (error) {
-      if (!(error instanceof PriceFormatError)) throw error
-      return c.json({ code: 'PRICE_UNAVAILABLE', error: 'Pricing is temporarily unavailable. Please retry.' }, 503)
-    }
+    const priceData = normalizeAnswer(value.text)
 
     const verdict = priceConfidence(validatedRequest, priceData.confidence)
     const { currency, total, breakdown, explanation } = priceData
@@ -91,6 +107,8 @@ price.post('/', async (c) => {
 
     return c.json(zPriceResult.parse({ price: priced } satisfies PriceResult))
   } catch (error) {
+    if (error instanceof PriceFormatError)
+      return c.json({ code: 'PRICE_UNAVAILABLE', error: 'Pricing is temporarily unavailable. Please retry.' }, 503)
     console.error('Price API error:', error)
     return c.json({ error: error instanceof Error ? error.message : 'Internal server error' }, 500)
   }

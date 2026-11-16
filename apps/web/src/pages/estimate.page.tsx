@@ -109,6 +109,7 @@ export default function EstimatePage(): JSX.Element {
           ? {
               ...clearedAnalysis(),
               analysis: current.analysis,
+              failedPhotoAssessments: current.failedPhotoAssessments,
               items: current.analysis?.items ?? [],
             }
           : {}),
@@ -140,7 +141,13 @@ export default function EstimatePage(): JSX.Element {
         moveDetails,
         step: 'upload',
         ...clearedAnalysis(),
-        ...(!changed ? { analysis: current.analysis, items: current.analysis?.items ?? [] } : {}),
+        ...(!changed
+          ? {
+              analysis: current.analysis,
+              items: current.analysis?.items ?? [],
+              failedPhotoAssessments: current.failedPhotoAssessments,
+            }
+          : {}),
       }))
     },
     [session.moveDetails, update],
@@ -166,6 +173,7 @@ export default function EstimatePage(): JSX.Element {
     (analysis: AnalysisResult) =>
       update({
         analysis,
+        failedPhotoAssessments: [],
         photoDecisions: {},
         photoDecisionsLocked: false,
         items: analysis.items,
@@ -278,11 +286,22 @@ export default function EstimatePage(): JSX.Element {
             needsPhotoReupload={session.needsPhotoReupload}
             sample={session.sample}
             hasAnalysis={session.analysis !== null}
-            photoAssessments={session.analysis?.photoAssessments}
+            photoAssessments={
+              session.failedPhotoAssessments.length > 0
+                ? session.failedPhotoAssessments
+                : session.analysis?.photoAssessments
+            }
             confirmChange={confirmPhotoChange}
             onPhotosChange={onPhotosChange}
             onAnalyzed={onAnalyzed}
-            onAnalyzeStart={() => update(clearedAnalysis())}
+            onAnalyzeStart={() =>
+              update((current) => ({ ...clearedAnalysis(), failedPhotoAssessments: current.failedPhotoAssessments }))
+            }
+            onAnalyzeFailure={(assessments) =>
+              update({
+                failedPhotoAssessments: assessments.map(({ url, status, reason }) => ({ url, status, reason })),
+              })
+            }
             onUseOwnPhotos={useOwnPhotos}
             onUseSample={startSample}
             onBack={() => goTo('details')}

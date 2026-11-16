@@ -44,7 +44,10 @@ async function settingsResponse(env: Bindings) {
     resolveRole(env, 'vision'),
   ])
   return {
-    settings,
+    settings:
+      settings.revision === 0
+        ? { revision: 0, roles: { chat: chat.selection, price: price.selection, vision: vision.selection } }
+        : settings,
     effective: {
       chat: { mode: chat.mode, available: chat.available },
       price: { mode: price.mode, available: price.available },

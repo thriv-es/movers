@@ -53,6 +53,7 @@ export function reviewedAnalysis(analysis: AnalysisResult, decisions: Decisions)
 export function clearedAnalysis(): Partial<EstimateSession> {
   return {
     analysis: null,
+    failedPhotoAssessments: [],
     items: [],
     photoDecisions: {},
     photoDecisionsLocked: false,

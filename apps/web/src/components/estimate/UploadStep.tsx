@@ -19,6 +19,7 @@ interface UploadStepProps {
   onPhotosChange: (refs: PhotoRef[], legacyUrls: string[]) => void
   onAnalyzed: (analysis: AnalysisResult) => void
   onAnalyzeStart?: () => void
+  onAnalyzeFailure: (assessments: NonNullable<AnalysisResult['photoAssessments']>) => void
   onUseOwnPhotos: () => void
   onUseSample: () => void
   onBack: () => void
@@ -76,6 +77,7 @@ export function UploadStep({
   onPhotosChange,
   onAnalyzed,
   onAnalyzeStart,
+  onAnalyzeFailure,
   onUseOwnPhotos,
   onUseSample,
   onBack,
@@ -83,7 +85,6 @@ export function UploadStep({
   const [cards, setCards] = useState<PhotoCard[]>(() =>
     photoUrls.map((url) => fromUrl(url, photoRefs.find((ref) => ref.url === url) ?? null)),
   )
-  const [failedAssessments, setFailedAssessments] = useState<NonNullable<AnalysisResult['photoAssessments']>>([])
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
@@ -180,17 +181,16 @@ export function UploadStep({
 
   const analyze = async () => {
     const refs = cards.flatMap((card) => (usable(card.ref) ? [card.ref] : []))
-    if (refs.length === 0) return
+    if (refs.length === 0 || needsPhotoReupload) return
     onAnalyzeStart?.()
     setAnalyzing(true)
-    setFailedAssessments([])
     setError(null)
     try {
       const result = await analyzeApi(sessionId, refs, moveDetails, sample)
       if (active.current) onAnalyzed(result)
     } catch (caught) {
       if (!active.current) return
-      if (caught instanceof EstimateApiError) setFailedAssessments(caught.photoAssessments)
+      onAnalyzeFailure(caught instanceof EstimateApiError ? caught.photoAssessments : [])
       setError(caught instanceof Error ? caught.message : 'We could not read the photos. Try again.')
     } finally {
       if (active.current) setAnalyzing(false)
@@ -207,7 +207,8 @@ export function UploadStep({
       </div>
       {needsPhotoReupload ? (
         <p className="est-error" role="alert">
-          Re-upload your photos to continue. Your previous photos are shown for reference only.
+          Re-upload your photos to continue, or remove each previous photo you no longer need. Your previous photos are
+          shown for reference only.
         </p>
       ) : null}
       {sample ? (
@@ -291,13 +292,11 @@ export function UploadStep({
         </p>
       ) : null}
 
-      {(failedAssessments.length > 0 ? failedAssessments : photoAssessments).some(
-        (photo) => photo.status !== 'relevant',
-      ) ? (
+      {photoAssessments.some((photo) => photo.status !== 'relevant') ? (
         <div>
           <p>Some photos could not be included. Upload usable photos of the items being moved, then analyze again.</p>
           <ul aria-label="Photo assessment reasons">
-            {(failedAssessments.length > 0 ? failedAssessments : photoAssessments).map((photo, index) =>
+            {photoAssessments.map((photo, index) =>
               photo.status !== 'relevant' ? (
                 <li key={photo.url}>
                   Photo {index + 1}: {photo.reason}
@@ -318,7 +317,11 @@ export function UploadStep({
         <Button variant="ghost" onClick={onBack} disabled={analyzing}>
           Back
         </Button>
-        <Button variant="primary" onClick={analyze} disabled={ready.length === 0 || pending || analyzing}>
+        <Button
+          variant="primary"
+          onClick={analyze}
+          disabled={ready.length === 0 || needsPhotoReupload || pending || analyzing}
+        >
           {hasAnalysis
             ? 'Analyse again'
             : analyzing

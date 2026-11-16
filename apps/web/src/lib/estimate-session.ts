@@ -41,6 +41,8 @@ export interface EstimateSession {
   /** Legacy own-photo thumbnails need new uploads before analysis. */
   needsPhotoReupload: boolean
   analysis: AnalysisResult | null
+  /** Sanitized failure evidence is not a successful analysis or review inventory. */
+  failedPhotoAssessments: NonNullable<AnalysisResult['photoAssessments']>
   photoDecisions: Record<string, 'keep' | 'exclude'>
   photoDecisionsLocked: boolean
   /** The inventory as the customer confirmed it; starts as the detected items. */
@@ -65,6 +67,7 @@ export const EMPTY_SESSION: EstimateSession = {
   photoRefs: [],
   needsPhotoReupload: false,
   analysis: null,
+  failedPhotoAssessments: [],
   photoDecisions: {},
   photoDecisionsLocked: false,
   items: [],
