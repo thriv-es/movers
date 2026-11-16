@@ -127,6 +127,52 @@ it.each([
   malformed.proposals[0].command = { ...envelope, ...patch }
   expect(() => parseConversationDecision(JSON.stringify(malformed), captured, [source])).toThrow()
 })
+it.each([false, true])(
+  'retains both uncertain city labels in the ambiguous prompt example through the actual protocol (retry %s)',
+  async (retry) => {
+    const captured = conversationSnapshot(createConversationSession())
+    const values = conversationPrompt([], captured, retry)
+      .split('\n')
+      .filter((line) => line.startsWith('{') && line.endsWith('}'))
+      .map((line) => JSON.parse(line))
+    const decision = values.find((value) => value.clarification === 'geo_identity')
+    expect(decision).toBeDefined()
+    const source = values.find((value) => value.role === 'user' && value.id === decision.facts[0].sourceMessageId)
+    expect(source.content).toBe('Moving from Springfield to Springfield; I do not know which state.')
+    const response = await runConversationAgent({
+      snapshot: captured,
+      messages: [source],
+      model: async () => ({ mode: 'binding', text: JSON.stringify(decision) }),
+    })
+    expect(response.proposals).toHaveLength(1)
+    expect(response.proposals[0].command).toMatchObject({
+      type: 'details.patch',
+      patch: { from: 'Springfield', to: 'Springfield' },
+      facts: [
+        {
+          field: 'from',
+          wording: 'Springfield',
+          sourceMessageId: source.id,
+          uncertainty: 'uncertain',
+          precision: 'city',
+          correction: false,
+        },
+        {
+          field: 'to',
+          wording: 'Springfield',
+          sourceMessageId: source.id,
+          uncertainty: 'uncertain',
+          precision: 'city',
+          correction: false,
+        },
+      ],
+    })
+    expect(response.agent?.nextAction).toBe('clarify_origin')
+    expect(response.reply).toMatch(/state|country/i)
+    expect(response.reply).not.toMatch(/photo/i)
+    expect(decision.tools).toEqual([])
+  },
+)
 it('does not show any nonempty extraction example in continuation', () => {
   const prompt = conversationPrompt(messages, snapshot, false, {
     phase: 'continue',

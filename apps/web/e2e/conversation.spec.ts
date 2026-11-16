@@ -43,6 +43,34 @@ async function history(page) {
   await expect.poll(() => feed(page).evaluate((node) => node.scrollHeight - node.clientHeight)).toBeGreaterThan(1000)
 }
 
+test('keyboard Confirm move details hands collapsed focus to its summary without stealing composer or manifest focus', async ({
+  page,
+  request,
+}) => {
+  await page.goto('/estimate')
+  await send(page, 'from Tel Aviv to Raanana on 1.1.2027')
+  await send(page, '15 miles')
+  const summary = page.getByRole('button', { name: 'Review move details', exact: true })
+  await summary.focus()
+  await page.keyboard.press('Enter')
+  const confirm = page.getByRole('button', { name: 'Confirm move details', exact: true })
+  await confirm.focus()
+  await expect(confirm).toBeFocused()
+  const outer = await page.evaluate(() => window.scrollY)
+  await page.keyboard.press('Enter')
+  await expect(confirm).toHaveCount(0)
+  const confirmed = page.getByRole('button', { name: 'Move details confirmed · Reopen details', exact: true })
+  await expect(confirmed).toBeFocused()
+  expect(await page.evaluate(() => window.scrollY)).toBe(outer)
+  await answer(page).focus()
+  await answer(page).fill('Keep this draft and focus')
+  await expect(answer(page)).toBeFocused()
+  await page.getByLabel('Moving from', { exact: true }).fill('Updated manifest origin')
+  await expect(page.getByLabel('Moving from', { exact: true })).toBeFocused()
+  await expect(answer(page)).toHaveValue('Keep this draft and focus')
+  expect(writes(await state(request))).toEqual([])
+})
+
 test('expired suggestion Refresh after failure and panel edits uses old answer/current revision and requires Accept', async ({
   page,
   request,

@@ -185,7 +185,7 @@ export function ConversationFeed({
           ))}
         <div ref={summariesRef} className="mv-actions" aria-label="Move stage summaries">
           {readiness.canRequestPhotos || session.photos.length || session.analysis ? (
-            <Button size="sm" variant="ghost" onClick={() => reopen('details')}>
+            <Button size="sm" variant="ghost" data-stage-summary="details" onClick={() => reopen('details')}>
               {session.detailsConfirmed ? 'Move details confirmed · Reopen details' : 'Review move details'}
             </Button>
           ) : null}
@@ -218,7 +218,7 @@ export function ConversationFeed({
           ) : null}
         </div>
         {stage === 'details' ? (
-          <Panel as="section" className="mv-stack" aria-label="Confirm move details">
+          <Panel as="section" className="mv-stack" aria-label="Confirm move details" data-conversation-stage="details">
             <Caption accent="tape">The move we are estimating</Caption>
             <p>
               {session.moveDetails.from ? displayFact(session.moveDetails.from) : 'Origin needed'} →{' '}

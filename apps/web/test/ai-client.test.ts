@@ -118,6 +118,42 @@ describe('binding mode', () => {
     },
   )
 
+  it('serializes legacy structured Price binding responses as valid JSON without the surrounding reasoning envelope', async () => {
+    const AI = binding(async () => ({ response: { total: 100, currency: 'USD' }, reasoning: 'private' }))
+    const result = await runText(env({ AI, AI_MODE: 'binding' }), 'PRICE', mock, 'price')
+    expect(result).toEqual({ text: '{"total":100,"currency":"USD"}', mode: 'binding' })
+    expect(JSON.parse(result.text)).toEqual({ total: 100, currency: 'USD' })
+    expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('serializes legacy structured Vision binding responses in photo order without surrounding reasoning', async () => {
+    let photo = 0
+    const AI = binding(async () => ({ response: { photo: ++photo, items: [] }, reasoning: 'private' }))
+    const result = await runVision(env({ AI, AI_MODE: 'binding' }), 'VISION', [image, image], mock)
+    expect(result).toEqual({ texts: ['{"photo":1,"items":[]}', '{"photo":2,"items":[]}'], mode: 'binding' })
+    expect(result.texts.map((text) => JSON.parse(text))).toEqual([
+      { photo: 1, items: [] },
+      { photo: 2, items: [] },
+    ])
+    expect(mock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { response: {} },
+    { response: [] },
+    { response: '' },
+    { response: { reasoning: 'private' } },
+    { response: { reasoning_content: 'private' } },
+    { choices: [{ message: { content: '', reasoning_content: 'private' } }] },
+  ])('does not promote empty or reasoning-only structured content into Price/Vision answers: %j', async (output) => {
+    const AI = binding(async () => output)
+    const local = env({ AI, AI_MODE: 'binding' })
+    await expect(runText(local, 'PRICE', mock, 'price')).rejects.toThrow('Workers AI binding request failed')
+    // Vision keeps its caller-owned malformed-assessment retry: empty text, never serialized reasoning.
+    expect(await runVision(local, 'VISION', [image], mock)).toEqual({ texts: [''], mode: 'binding' })
+    expect(mock).not.toHaveBeenCalled()
+  })
+
   it('falls back to the labelled mock when the call fails outside production', async () => {
     const AI = binding(async () => {
       throw new Error('Not logged in')

@@ -129,11 +129,13 @@ export async function runConversationAgent(input: AgentInput): Promise<Conversat
     }
     if (nextAction !== 'review') {
       reply =
-        nextAction === 'request_photos'
-          ? 'Please attach photos of the rooms and large items in this chat.'
-          : nextAction === 'clarify_origin'
-            ? 'Which city is the pickup in? A street address is useful if known.'
-            : 'Which city is the delivery in? A street address is useful if known.'
+        final.clarification === 'geo_identity'
+          ? `Could a postcode or nearby landmark identify the ${nextAction === 'clarify_destination' ? 'delivery' : 'pickup'} city? Please include the state or country if known.`
+          : nextAction === 'request_photos'
+            ? 'Please attach photos of the rooms and large items in this chat.'
+            : nextAction === 'clarify_origin'
+              ? 'Which city is the pickup in? A street address is useful if known.'
+              : 'Which city is the delivery in? A street address is useful if known.'
     } else if (final.clarification)
       reply = 'Please use the move details and photo review controls to check what is already known.'
   }

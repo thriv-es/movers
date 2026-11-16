@@ -72,11 +72,12 @@ export const zConversationResponse = z
 export type ConversationResponse = z.infer<typeof zConversationResponse>
 
 // Model-only selector: no free text, status, amount or success claim can become visible prose.
-const zClarification = z.enum(['date', 'address_side', 'address_city', 'item', 'photo'])
+const zClarification = z.enum(['date', 'address_side', 'address_city', 'geo_identity', 'item', 'photo'])
 const clarificationReplies: Record<z.infer<typeof zClarification>, string> = {
   date: 'Please clarify the date using YYYY-MM-DD.',
   address_side: 'Is that street address for the origin or destination?',
   address_city: 'Please provide the complete street address and city for this replacement.',
+  geo_identity: 'Which state or country identifies these cities? A postcode can help.',
   item: 'Which named inventory item should be changed? Please use its review control to confirm.',
   photo: 'Which uncertain photo do you mean? Please use its Keep or Exclude review controls.',
 }
@@ -140,6 +141,12 @@ export function parseConversationDecision(
 ): ConversationDecision {
   if (text.length > 24000) throw new Error('Invalid conversation output')
   const turn = zModelConversationTurn.parse(JSON.parse(text))
+  if (
+    turn.clarification === 'geo_identity' &&
+    turn.nextAction !== 'clarify_origin' &&
+    turn.nextAction !== 'clarify_destination'
+  )
+    throw new Error('Invalid conversation output')
   const ids = new Set<string>()
   const targets = new Set<string>()
   if (turn.basedOnRevision !== snapshot.revision) throw new Error('Invalid conversation revision')
@@ -198,7 +205,9 @@ export function parseConversationDecision(
   const nextAction =
     turn.nextAction === 'request_photos' && !photoContext ? defaultAction : (turn.nextAction ?? defaultAction)
   const actionReply = turn.clarification
-    ? clarificationReplies[turn.clarification]
+    ? turn.clarification === 'geo_identity' && ['clarify_origin', 'clarify_destination'].includes(nextAction)
+      ? `Which state or country is the ${nextAction === 'clarify_origin' ? 'pickup' : 'delivery'} city in? A postcode can help.`
+      : clarificationReplies[turn.clarification]
     : nextAction === 'clarify_origin'
       ? 'What is the origin city or address?'
       : nextAction === 'clarify_destination'

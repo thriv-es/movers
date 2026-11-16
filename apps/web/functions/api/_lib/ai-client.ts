@@ -34,11 +34,20 @@ function requireBinding(env: Bindings): Ai {
   return env.AI
 }
 
-/** Only visible string content is accepted; reasoning and arbitrary objects are never surfaced. */
-function readBindingText(output: unknown, allowEmpty = false): string {
+/** Chat requires visible strings. Price/Vision also accept legacy structured .response payloads;
+ * their callers still validate the domain JSON. Never serialize the provider envelope or reasoning-only content.
+ */
+function readBindingText(output: unknown, role: AiRole, allowEmpty = false): string {
   const value = output as { response?: unknown; choices?: { message?: { content?: unknown } }[] } | null
   const response = value?.response ?? value?.choices?.[0]?.message?.content
-  const text = typeof response === 'string' ? response : ''
+  const structured =
+    role !== 'chat' &&
+    response === value?.response &&
+    response !== null &&
+    typeof response === 'object' &&
+    !Array.isArray(response) &&
+    Object.keys(response).some((key) => !['reasoning', 'reasoning_content'].includes(key))
+  const text = typeof response === 'string' ? response : structured ? JSON.stringify(response) : ''
   if (!allowEmpty && !text.trim()) throw new Error('Workers AI returned an empty response')
   return text
 }
@@ -110,7 +119,7 @@ export async function runText(
             ? { max_completion_tokens: BINDING_MAX_TOKENS, reasoning_effort: 'none' }
             : { max_tokens: BINDING_MAX_TOKENS }),
         })
-        return readBindingText(output)
+        return readBindingText(output, purpose)
       },
     },
     mock,
@@ -175,7 +184,7 @@ export async function runVision(
               max_tokens: BINDING_MAX_TOKENS,
             })
             // Empty vision replies are malformed assessments, so the caller owns their bounded retry.
-            return readBindingText(output, true)
+            return readBindingText(output, 'vision', true)
           }),
         ),
     },
