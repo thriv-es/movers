@@ -47,11 +47,71 @@ interface AssessedPhoto {
   inventory?: z.infer<typeof zPhotoInventory>
 }
 
-function parseAssessment(text: string): AssessedPhoto | null {
+function privateDetailMatcher(details: MoveDetails): (text: string) => boolean {
+  const normalize = (text: string) =>
+    text
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim()
+  const fragments = new Set<string>()
+  for (const value of Object.values(details)) {
+    if (value === null) continue
+    const normalized = normalize(String(value))
+    if (!normalized) continue
+    fragments.add(normalized)
+    // Also protect distinctive address/date fragments, without treating short fragments of longer addresses as secrets.
+    for (const word of normalized.split(' ')) if (word.length >= 4) fragments.add(word)
+  }
+  return (text) => {
+    const normalized = ` ${normalize(text)} `
+    return [...fragments].some((fragment) => normalized.includes(` ${fragment} `))
+  }
+}
+
+function sanitizeInventory(
+  inventory: z.infer<typeof zPhotoInventory>,
+  isPrivate: (text: string) => boolean,
+): z.infer<typeof zPhotoInventory> {
+  return {
+    ...inventory,
+    // Drop unsafe labels rather than inventing an item or area from redacted private context.
+    items: inventory.items.filter((item) => !isPrivate(item.type)),
+    ...(inventory.boxes_explanation !== undefined
+      ? {
+          boxes_explanation: isPrivate(inventory.boxes_explanation)
+            ? 'Box estimate based on visible movable items only.'
+            : inventory.boxes_explanation,
+        }
+      : {}),
+    ...(inventory.special_handling
+      ? {
+          special_handling: inventory.special_handling
+            .filter((entry) => !isPrivate(entry.item))
+            .map((entry) => ({
+              ...entry,
+              reason: isPrivate(entry.reason)
+                ? 'Needs special handling based on visible item characteristics.'
+                : entry.reason,
+            })),
+        }
+      : {}),
+    ...(inventory.possible_duplicates
+      ? { possible_duplicates: inventory.possible_duplicates.filter((entry) => !isPrivate(entry.item)) }
+      : {}),
+    ...(inventory.unseen_areas ? { unseen_areas: inventory.unseen_areas.filter((area) => !isPrivate(area)) } : {}),
+  }
+}
+
+function parseAssessment(text: string, isPrivate: (text: string) => boolean): AssessedPhoto | null {
   try {
     const data = envelope.parse(JSON.parse(text))
     if (data.verdict === 'unrelated') return { verdict: data.verdict }
-    const inventory = zPhotoInventory.parse(parseModelAnalysis(JSON.stringify(data.inventory)))
+    if (!data.inventory || typeof data.inventory !== 'object' || Array.isArray(data.inventory)) return null
+    const inventory = sanitizeInventory(
+      zPhotoInventory.parse(parseModelAnalysis(JSON.stringify(data.inventory))),
+      isPrivate,
+    )
     return { verdict: data.verdict, inventory: { ...inventory, items: mergeAnalyses([inventory]).items } }
   } catch {
     // Neither raw replies nor free-form model reasons are logged or returned: they may echo private details.
@@ -84,6 +144,7 @@ export async function assessPhotos(
   }
   // Parse again to restrict prompt/cache context to confirmed fields, even for non-route callers.
   const confirmed = zMoveDetails.parse(details)
+  const isPrivate = privateDetailMatcher(confirmed)
   const role = await resolveRole(env, 'vision')
   if (!role.available) throw new Error('Vision provider unavailable')
   const prompt = photoAssessmentPrompt(confirmed)
@@ -92,6 +153,8 @@ export async function assessPhotos(
     'analyze',
     {
       role: 'vision',
+      // Bypass earlier v5 values that could contain unsanitized inventory text.
+      inventoryPrivacyVersion: 1,
       backend: role.mode,
       model: role.selection.model,
       configRevision: role.revision,
@@ -126,7 +189,7 @@ export async function assessPhotos(
                 role,
               )
               modes[index] = result.mode
-              parsed = result.texts.length === 1 ? parseAssessment(result.texts[0] ?? '') : null
+              parsed = result.texts.length === 1 ? parseAssessment(result.texts[0] ?? '', isPrivate) : null
               if (parsed) break
             }
             if (!parsed) throw new AnalysisFormatError()

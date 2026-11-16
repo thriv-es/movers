@@ -495,6 +495,77 @@ describe('semantic photo route responses', () => {
     expect(JSON.stringify(AI.run.mock.calls)).not.toContain('CHAT MUST NOT REACH VISION')
   })
 
+  it.each([false, true])(
+    'does not expose or cache confirmed-detail echoes in inventory (all uncertain: %s)',
+    async (allUncertain) => {
+      const sentinel = allUncertain ? 'PrivateOnlyCandidateAddress' : 'PrivateMixedInventoryAddress'
+      const entries: string[] = []
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(png, { headers: { 'content-type': 'image/png' } })),
+      )
+      vi.stubGlobal('caches', {
+        default: {
+          match: async () => undefined,
+          put: async (_key: string, response: Response) => {
+            entries.push(await response.text())
+          },
+        },
+      })
+      const verdicts = allUncertain ? ['uncertain'] : ['relevant', 'uncertain']
+      const answers = verdicts.map((verdict) =>
+        JSON.stringify({
+          verdict,
+          reason: `Photo at ${sentinel}`,
+          inventory: {
+            items: [
+              { type: 'sofa', count: 1 },
+              { type: sentinel, count: 1 },
+            ],
+            total_volume_cubic_feet: 80,
+            boxes_explanation: `Packing at ${sentinel}`,
+            special_handling: [
+              { item: 'piano', reason: `Access at ${sentinel}` },
+              { item: sentinel, reason: 'heavy' },
+            ],
+            possible_duplicates: [{ item: sentinel, count: 2 }],
+            unseen_areas: [`Storage at ${sentinel}`],
+          },
+        }),
+      )
+      const AI = { run: vi.fn(async () => ({ response: answers.shift() })) }
+      const body = {
+        ...analyzeBody(
+          verdicts.map((_, index) => `http://localhost/sample/${index === 0 ? 'bedroom' : 'kitchen'}.jpg`),
+          true,
+        ),
+        moveDetails: { ...EMPTY_MOVE_DETAILS, from: sentinel },
+      }
+      const bindings = env({ ENV: 'preview', AI })
+      const res = await post(analyze, body, bindings)
+      expect(res.status).toBe(allUncertain ? 400 : 200)
+      const text = await res.text()
+      expect(text.includes(sentinel)).toBe(false)
+      expect(entries.some((entry) => entry.includes(sentinel))).toBe(false)
+      expect(entries).toHaveLength(allUncertain ? 0 : 1)
+      const result = JSON.parse(text)
+      const candidate = result.photoAssessments[allUncertain ? 0 : 1].candidates
+      expect(candidate.items).toEqual([{ type: 'sofa', count: 1 }])
+      expect(candidate.special_handling).toEqual([{ item: 'piano', reason: expect.any(String) }])
+      expect(candidate.possible_duplicates).toEqual([])
+      expect(candidate.unseen_areas).toEqual([])
+      if (!allUncertain) {
+        expect(result.specialHandling).toEqual([{ item: 'piano', reason: expect.any(String) }])
+        const hit = await post(analyze, body, bindings)
+        expect(hit.headers.get('x-movers-sample-cache')).toBe('hit')
+        expect((await hit.text()).includes(sentinel)).toBe(false)
+        expect(AI.run).toHaveBeenCalledTimes(2)
+      }
+      expect(console.warn).not.toHaveBeenCalled()
+      expect(console.error).not.toHaveBeenCalled()
+    },
+  )
+
   it.each(['unrelated', 'uncertain', 'empty'])(
     'returns retryable NO_USABLE_PHOTOS with %s assessments',
     async (kind) => {

@@ -5,6 +5,7 @@ import type { LinkedPhoto } from '../functions/api/_lib/photo-links'
 import type { Bindings } from '../functions/api/_lib/types'
 import { EMPTY_MOVE_DETAILS } from '../src/data'
 import * as aiMode from '../functions/api/_lib/ai-mode'
+import { sampleCacheKey, writeSampleCache } from '../functions/api/_lib/sample-cache'
 
 const inventory = (type = 'sofa') => ({ items: [{ type, count: 1 }], total_volume_cubic_feet: 80 })
 const reply = (verdict = 'relevant', type = 'sofa') =>
@@ -111,6 +112,169 @@ describe('request-aware photo assessment with fake Workers AI', () => {
     )
     expect(run).toHaveBeenCalledTimes(2)
     expect([log.mock.calls, warn.mock.calls, error.mock.calls]).toEqual([[], [], []])
+  })
+
+  it.each(['relevant', 'uncertain'])(
+    'retries an original inventory array once for %s instead of extracting its nested object',
+    async (verdict) => {
+      const answers = [
+        JSON.stringify({ verdict, reason: 'visible furniture', inventory: [inventory('chair')] }),
+        reply(verdict, 'sofa'),
+      ]
+      if (verdict === 'uncertain') answers.unshift(reply())
+      const run = vi.fn(async () => ({ response: answers.shift() }))
+      const result = await assessPhotos(
+        bindings(run),
+        photos(verdict === 'uncertain' ? 2 : 1),
+        EMPTY_MOVE_DETAILS,
+        false,
+      )
+      expect(run).toHaveBeenCalledTimes(verdict === 'uncertain' ? 3 : 2)
+      expect(result.analysis.items).toEqual([{ type: 'sofa', count: 1 }])
+      if (verdict === 'uncertain') expect(result.photos[1]?.candidates?.items).toEqual([{ type: 'sofa', count: 1 }])
+    },
+  )
+
+  it.each(['relevant', 'uncertain'])(
+    'fails with a format error after exactly two original %s inventory arrays',
+    async (verdict) => {
+      const run = vi.fn(async () => ({
+        response: JSON.stringify({ verdict, reason: 'visible furniture', inventory: [inventory()] }),
+      }))
+      await expect(assessPhotos(bindings(run), photos(1), EMPTY_MOVE_DETAILS, false)).rejects.toBeInstanceOf(
+        AnalysisFormatError,
+      )
+      expect(run).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it('sanitizes confirmed-detail echoes in every relevant and uncertain inventory text field before caching', async () => {
+    const sentinel = '7421 PrivacySentinel Avenue, ConfidentialCity, ZZ 90321'
+    const echoed = {
+      ...inventory(),
+      items: [
+        { type: 'sofa', count: 1 },
+        { type: `cabinet at ${sentinel}`, count: 1 },
+      ],
+      boxes_explanation: `Packing at ${sentinel}`,
+      special_handling: [
+        { item: 'piano', reason: `Access at ${sentinel}` },
+        { item: sentinel, reason: 'heavy' },
+      ],
+      possible_duplicates: [
+        { item: 'sofa', count: 2 },
+        { item: sentinel, count: 2 },
+      ],
+      unseen_areas: ['garage', `Closet at ${sentinel}`],
+    }
+    const entries: string[] = []
+    vi.stubGlobal('caches', {
+      default: {
+        match: async () => undefined,
+        put: async (_key: string, response: Response) => {
+          entries.push(await response.text())
+        },
+      },
+    })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const answers = ['relevant', 'uncertain'].map((verdict) =>
+      JSON.stringify({ verdict, reason: 'visible furniture', inventory: echoed }),
+    )
+    const run = vi.fn(async () => ({ response: answers.shift() }))
+    const result = await assessPhotos(bindings(run), photos(2), { ...EMPTY_MOVE_DETAILS, from: sentinel }, true)
+    // Assert booleans rather than printing synthetic raw AI text in expected RED diagnostics.
+    expect(entries.some((entry) => entry.includes('PrivacySentinel'))).toBe(false)
+    expect(JSON.stringify(result).includes('PrivacySentinel')).toBe(false)
+    expect(entries).toHaveLength(1)
+    expect(result.analysis.items).toEqual([{ type: 'sofa', count: 1 }])
+    expect(result.photos[1]?.candidates?.items).toEqual([{ type: 'sofa', count: 1 }])
+    expect(result.analysis.special_handling).toEqual([{ item: 'piano', reason: expect.any(String) }])
+    expect(result.analysis.possible_duplicates).toEqual([{ item: 'sofa', count: 2 }])
+    expect(result.analysis.unseen_areas).toEqual(['garage'])
+    const hit = await assessPhotos(bindings(run), photos(2), { ...EMPTY_MOVE_DETAILS, from: sentinel }, true)
+    expect(hit.cached).toBe(true)
+    expect(JSON.stringify(hit).includes('PrivacySentinel')).toBe(false)
+    expect(run).toHaveBeenCalledTimes(2)
+    expect([log.mock.calls, warn.mock.calls, error.mock.calls]).toEqual([[], [], []])
+  })
+
+  it('does not reuse vulnerable v5 cache entries created before inventory sanitization', async () => {
+    const details = { ...EMPTY_MOVE_DETAILS, from: 'LegacyPrivateAddress' }
+    const model = '@cf/meta/llama-3.2-11b-vision-instruct'
+    const oldKey = await sampleCacheKey('analyze', {
+      role: 'vision',
+      backend: 'binding',
+      model,
+      configRevision: 0,
+      moveDetails: details,
+      photos: ['/sample/0.jpg'],
+    })
+    await writeSampleCache(
+      oldKey,
+      JSON.stringify({
+        mode: 'binding',
+        assessments: [{ verdict: 'relevant', inventory: { ...inventory(), boxes_explanation: details.from } }],
+      }),
+    )
+    const run = vi.fn(async () => ({ response: reply() }))
+    const result = await assessPhotos(bindings(run), photos(1), details, true)
+    expect(JSON.stringify(result).includes('LegacyPrivateAddress')).toBe(false)
+    expect(result.cached).toBe(false)
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('removes case, punctuation and address-fragment echoes as well as destination and move-date echoes', async () => {
+    const run = vi.fn(async () => ({
+      response: JSON.stringify({
+        verdict: 'relevant',
+        reason: 'visible items',
+        inventory: {
+          ...inventory(),
+          boxes_explanation: 'Moving from 7421 PRIVACYSENTINEL AVENUE',
+          special_handling: [{ item: 'piano', reason: 'Deliver to DestinationSecret' }],
+          unseen_areas: ['ConfidentialCity garage', 'storage on 2027/06/17'],
+        },
+      }),
+    }))
+    const result = await assessPhotos(
+      bindings(run),
+      photos(1),
+      {
+        ...EMPTY_MOVE_DETAILS,
+        from: '7421 PrivacySentinel Avenue, ConfidentialCity, ZZ 90321',
+        to: 'DestinationSecret',
+        date: '2027-06-17',
+      },
+      false,
+    )
+    expect(/privacysentinel|destinationsecret|confidentialcity|2027/i.test(JSON.stringify(result))).toBe(false)
+    expect(result.analysis.items).toEqual([{ type: 'sofa', count: 1 }])
+  })
+
+  it('sanitizes numeric and boolean confirmed context echoed into arbitrary text, not structured inventory numbers', async () => {
+    const run = vi.fn(async () => ({
+      response: JSON.stringify({
+        verdict: 'relevant',
+        reason: 'visible furniture',
+        inventory: {
+          ...inventory(),
+          boxes_explanation: 'Move distance 471.5 miles',
+          special_handling: [{ item: 'piano', reason: 'Origin floor 4 and elevator true' }],
+          unseen_areas: ['Elevator true'],
+        },
+      }),
+    }))
+    const result = await assessPhotos(
+      bindings(run),
+      photos(1),
+      { ...EMPTY_MOVE_DETAILS, distanceMiles: 471.5, originFloor: 4, originElevator: true },
+      false,
+    )
+    expect(/471|floor 4|true/i.test(JSON.stringify(result.analysis))).toBe(false)
+    expect(result.analysis.items).toEqual([{ type: 'sofa', count: 1 }])
+    expect(result.analysis.total_volume_cubic_feet).toBe(80)
   })
 
   it('surfaces explicitly selected provider failure without mock fallback or malformed retry', async () => {
