@@ -70,9 +70,31 @@ export async function send(page, text) {
   await expect(page.getByRole('button', { name: 'Cancel reply', exact: true })).toHaveCount(0)
   return result
 }
-export async function review(page) {
-  const same = page.getByRole('button', { name: /^Same / })
-  while (await same.count()) await same.first().click()
+export async function review(page, { duplicates }) {
+  // Every caller declares whether duplicate coverage is expected; zero actions can never silently claim coverage.
+  expect((await session(page)).analysis.possibleDuplicates).toEqual(
+    duplicates.map(({ item, count }) => ({ item, count })),
+  )
+  await expect(page.getByRole('button', { name: /^(Same|Different) / })).toHaveCount(duplicates.length * 2)
+  for (const { item, count, resolution } of duplicates) {
+    expect(count).toBeGreaterThan(1)
+    const before = (await session(page)).items.find((entry) => entry.type === item)
+    expect(before).toEqual({ type: item, count })
+    await expect(
+      page.getByText(`Is ${item} the same item seen from different angles, or different items?`, { exact: true }),
+    ).toBeVisible()
+    await page
+      .getByRole('button', { name: `${resolution === 'same' ? 'Same' : 'Different'} ${item}`, exact: true })
+      .click()
+    expect((await session(page)).items.find((entry) => entry.type === item)).toEqual({
+      type: item,
+      count: resolution === 'same' ? 1 : count,
+    })
+  }
+  expect((await session(page)).duplicateResolutions).toEqual(
+    Object.fromEntries(duplicates.map(({ item, resolution }) => [item, resolution])),
+  )
+  await expect(page.getByRole('button', { name: /^(Same|Different) / })).toHaveCount(0)
   for (const name of ['Garage', 'Closets', 'Appliances'])
     await page.getByRole('group', { name, exact: true }).getByRole('button', { name: 'No', exact: true }).click()
   await page

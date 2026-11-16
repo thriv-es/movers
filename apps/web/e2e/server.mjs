@@ -95,12 +95,13 @@ async function hold(key) {
 }
 const byDigest = new Map()
 const inventory = (type = 'scripted chair') => ({
-  items: [{ type, count: 1 }],
+  // A real count-changing duplicate review: Same sofa reduces two scripted sightings to one.
+  items: [{ type, count: type === 'sofa' ? 2 : 1 }],
   total_volume_cubic_feet: 20,
   estimated_boxes_min: 1,
   estimated_boxes_max: 2,
   special_handling: [],
-  possible_duplicates: type === 'sofa' ? [{ item: 'sofa', count: 1 }] : [],
+  possible_duplicates: type === 'sofa' ? [{ item: 'sofa', count: 2 }] : [],
   unseen_areas: ['garage', 'closets'],
 })
 const env = {
@@ -166,8 +167,8 @@ const env = {
           'dining table',
           'microwave',
           'tool chest',
-          '',
-          '',
+          'unrelated beach umbrella',
+          'unrelated food platter',
           'armchair',
           'bookshelf',
         ][index - 1]
@@ -175,7 +176,8 @@ const env = {
           response: JSON.stringify({
             verdict,
             reason: 'Scripted fake AI, not image ground truth.',
-            ...(verdict === 'unrelated' ? {} : { inventory: inventory(item) }),
+            // Distractor inventory in unrelated envelopes must be discarded by the real verdict gate.
+            inventory: inventory(item),
           }),
         }
       }

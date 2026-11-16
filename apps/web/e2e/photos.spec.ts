@@ -22,10 +22,24 @@ test('one mounted conversation: ten receipts, review, explicit price/save/date a
   request,
 }) => {
   await page.setViewportSize({ width: 917, height: 987 })
-  await openPhotos(page)
+  await page.goto('/estimate')
   const composer = await page.getByRole('textbox', { name: 'Message', exact: true }).elementHandle()
   const log = await page.getByRole('log').elementHandle()
+  if (!composer || !log) throw new Error('Initial composer and conversation log must be mounted')
+  const expectMounted = async () => {
+    expect(await composer.evaluate((node) => node === document.querySelector('#conversation-message'))).toBe(true)
+    expect(await log.evaluate((node) => node === document.querySelector('[role="log"]'))).toBe(true)
+  }
+  await send(page, 'from Tel Aviv to Raanana on 1.1.2027')
+  await expect(page.getByLabel('Moving from', { exact: true })).toHaveValue('Tel Aviv')
+  await expectMounted()
+  await send(page, '15 miles')
+  await expectMounted()
+  await page.getByRole('button', { name: 'Confirm move details', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Details confirmed', exact: true })).toBeDisabled()
+  await expectMounted()
   await upload(page, [9, 0, 7, 2, 8, 5, 1, 6, 4, 3])
+  await expectMounted()
   const response = await analyze(page)
   expect(response.status()).toBe(200)
   const result = await response.json()
@@ -48,16 +62,30 @@ test('one mounted conversation: ten receipts, review, explicit price/save/date a
   expect(result.totalVolumeCubicFeet).toBe(120)
   await expect(priceButton(page)).toBeDisabled()
   await expect(page.getByLabel('Add something we missed')).toBeDisabled()
-  // Upload completion order is intentionally not assumed. Keep one uncertain, exclude the other.
-  const keep = page.getByRole('button', { name: /^Keep photo / })
-  await keep.first().click()
+  // Bind each decision to a known source filename and its accepted local photo ID, never completion order.
+  const uploaded = await session(page)
+  const keptPhoto = uploaded.photos.find((photo) => new URL(photo.url).pathname.endsWith(photos[9].file))
+  const excludedPhoto = uploaded.photos.find((photo) => new URL(photo.url).pathname.endsWith(photos[8].file))
+  if (!keptPhoto || !excludedPhoto) throw new Error('Both declared uncertain fixture sources must be uploaded')
+  expect(keptPhoto.id).not.toBe(excludedPhoto.id)
+  const photoCard = (photo) =>
+    page
+      .getByRole('list', { name: 'Selected photos' })
+      .getByRole('listitem')
+      .filter({ has: page.locator(`img[src="${photo.url}"]`) })
+  await photoCard(keptPhoto)
+    .getByRole('button', { name: /^Keep photo / })
+    .click()
   await expect(priceButton(page)).toBeDisabled()
-  const exclude = page.getByRole('button', { name: /^Exclude photo / })
-  const pressed = await exclude.first().getAttribute('aria-pressed')
-  expect(pressed).toBe('false')
-  await exclude.nth(1).click()
+  await photoCard(excludedPhoto)
+    .getByRole('button', { name: /^Exclude photo / })
+    .click()
+  expect((await session(page)).photoDecisions).toEqual({ [keptPhoto.url]: 'keep', [excludedPhoto.url]: 'exclude' })
+  await expectMounted()
   await expect(page.getByLabel('Add something we missed')).toBeEnabled()
-  await review(page)
+  await review(page, { duplicates: [{ item: 'sofa', count: 2, resolution: 'same' }] })
+  expect((await session(page)).duplicateResolutions).toEqual({ sofa: 'same' })
+  await expectMounted()
   expect(writes(await state(request))).toEqual([])
   await expect(priceButton(page)).toBeEnabled()
   const priced = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/price')
@@ -69,8 +97,27 @@ test('one mounted conversation: ten receipts, review, explicit price/save/date a
   expect((await saved).status()).toBe(201)
   await expect(page.getByRole('region', { name: 'Estimate confirmation' })).toContainText('Saved reference')
   const sent = (await priced).request().postDataJSON()
+  // Independent oracle from the declared provider script: #10 bookshelf is kept; #9 armchair and #7/#8 are excluded.
+  const expectedPricedItems = [
+    { type: 'bed', count: 1 },
+    { type: 'bookshelf', count: 1 },
+    { type: 'desk', count: 1 },
+    { type: 'dining table', count: 1 },
+    { type: 'microwave', count: 1 },
+    { type: 'sofa', count: 1 },
+    { type: 'tool chest', count: 1 },
+  ]
+  expect([...sent.analysis.items].sort((a, b) => a.type.localeCompare(b.type))).toEqual(expectedPricedItems)
+  for (const excludedType of ['armchair', 'unrelated beach umbrella', 'unrelated food platter'])
+    expect(sent.analysis.items.some((item) => item.type === excludedType)).toBe(false)
   expect(sent.analysis.totalVolumeCubicFeet).toBe(140)
-  expect(sent.review.photoEvidence).toEqual({ excludedCount: 3, unresolvedCount: 0 })
+  expect(sent.analysis.possibleDuplicates).toEqual([{ item: 'sofa', count: 2 }])
+  expect(sent.review).toEqual({
+    followUps: { garage: false, closets: false, appliances: false },
+    wholeMoveCovered: true,
+    photoEvidence: { excludedCount: 3, unresolvedCount: 0 },
+  })
+  await expectMounted()
   await expect(page.getByLabel('Preferred move date')).toHaveValue('2027-01-01')
   await page.getByLabel('Your name', { exact: true }).fill('Synthetic Browser')
   await page.getByLabel('Email', { exact: true }).fill('browser@example.invalid')
@@ -96,8 +143,7 @@ test('one mounted conversation: ten receipts, review, explicit price/save/date a
   await expect(page.getByRole('region', { name: 'Mover quote requests' })).toContainText(
     'recorded for Synthetic Fixture Movers a',
   )
-  expect(await composer?.evaluate((node) => node === document.querySelector('#conversation-message'))).toBe(true)
-  expect(await log?.evaluate((node) => node === document.querySelector('[role="log"]'))).toBe(true)
+  await expectMounted()
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue('Preserved composer draft')
   const before = await state(request)
   expect(before.uploads.map((entry) => entry.file).sort()).toEqual(photos.map((photo) => photo.file).sort())
@@ -117,12 +163,17 @@ test('one mounted conversation: ten receipts, review, explicit price/save/date a
       .every((entry) => entry.status === 200),
   ).toBe(true)
   const durable = await session(page)
+  expect(durable.duplicateResolutions).toEqual({ sofa: 'same' })
+  expect([...durable.items].sort((a, b) => a.type.localeCompare(b.type))).toEqual(expectedPricedItems)
   await page.reload()
   await expect(page.getByRole('region', { name: 'Date request' })).toContainText('Requested 2027-01-01')
   await expect(page.getByRole('region', { name: 'Mover quote requests' })).toContainText('recorded for')
   expect((await session(page)).photoDecisions).toEqual(durable.photoDecisions)
   expect((await session(page)).followUps).toEqual(durable.followUps)
-  expect((await session(page)).duplicateResolutions).toEqual(durable.duplicateResolutions)
+  expect((await session(page)).duplicateResolutions).toEqual({ sofa: 'same' })
+  expect([...(await session(page)).items].sort((a, b) => a.type.localeCompare(b.type))).toEqual(expectedPricedItems)
+  await expect(page.getByText('Answered: same', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^(Same|Different) sofa$/ })).toHaveCount(0)
   expect(writes(await state(request))).toEqual(writes(before))
 })
 
@@ -139,7 +190,7 @@ test('uncertain-only candidates require Keep before accepted inventory and compl
   await expect(page.getByLabel('Add something we missed')).toBeDisabled()
   await page.getByRole('button', { name: 'Keep photo 1', exact: true }).click()
   await expect(manifestPanel(page)).toContainText('armchair')
-  await review(page)
+  await review(page, { duplicates: [] })
   await expect(priceButton(page)).toBeEnabled()
 })
 
@@ -152,7 +203,7 @@ test('excluding every uncertain photo blocks empty pricing across reload; explic
   expect((await analyze(page)).status()).toBe(200)
   await page.getByRole('button', { name: 'Exclude photo 1', exact: true }).click()
   await page.getByRole('button', { name: 'Exclude photo 2', exact: true }).click()
-  await review(page)
+  await review(page, { duplicates: [] })
   await expect(priceButton(page)).toBeDisabled()
   await page.reload()
   await expect(manifestPanel(page)).toContainText('No accepted inventory remains.')
@@ -185,7 +236,7 @@ test('stale vision fingerprint rejects real pricing without restoring old analys
   await openPhotos(page)
   await upload(page, [0])
   expect((await analyze(page)).status()).toBe(200)
-  await review(page)
+  await review(page, { duplicates: [{ item: 'sofa', count: 2, resolution: 'same' }] })
   const draft = await session(page)
   expect((await request.post('/__e2e/change-vision')).ok()).toBe(true)
   const response = await request.post('/api/price', {
@@ -302,7 +353,7 @@ for (const boundary of ['preflight', 'price', 'analysis']) {
     await upload(page, [0])
     if (boundary !== 'analysis') {
       await analyze(page)
-      await review(page)
+      await review(page, { duplicates: [{ item: 'sofa', count: 2, resolution: 'same' }] })
     }
     const key =
       boundary === 'preflight'
@@ -348,7 +399,7 @@ test('save failure retries only save rather than repricing', async ({ page, requ
   await openPhotos(page)
   await upload(page, [2])
   await analyze(page)
-  await review(page)
+  await review(page, { duplicates: [] })
   await request.post('/__e2e/scenario', { data: { name: 'normal', saveFailures: 1 } })
   await priceButton(page).click()
   await expect(page.getByRole('button', { name: 'Retry save', exact: true })).toBeEnabled()
@@ -367,7 +418,7 @@ test('reload during committed save preserves unknown outcome and never offers a 
   await openPhotos(page)
   await upload(page, [2])
   await analyze(page)
-  await review(page)
+  await review(page, { duplicates: [] })
   await gate(request, 'after:POST /api/estimates')
   await priceButton(page).click()
   await entered(request, 'after:POST /api/estimates')

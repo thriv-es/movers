@@ -24,7 +24,7 @@ async function acceptedInventory(page) {
   await openPhotos(page)
   await upload(page, [2])
   expect((await analyze(page)).status()).toBe(200)
-  await review(page)
+  await review(page, { duplicates: [] })
 }
 
 async function saveExplicitly(page) {
@@ -108,7 +108,7 @@ for (const mode of ['untouched', 'edited', 'cleared']) {
     expect(writes(await state(request))).toEqual(before)
     await page.getByRole('button', { name: 'Confirm move details', exact: true }).click()
     expect((await analyze(page)).status()).toBe(200)
-    await review(page)
+    await review(page, { duplicates: [] })
     await saveExplicitly(page)
     await expect(date).toHaveValue(mode === 'untouched' ? '2027-02-02' : mode === 'edited' ? '2027-03-10' : '')
     await expect(answer(page)).toHaveValue('Date-card draft survives')
