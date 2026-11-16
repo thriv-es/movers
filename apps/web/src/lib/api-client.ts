@@ -14,6 +14,7 @@ import type {
 import { zPhotoAssessment, zVisionStatus } from '@/data'
 import { recordAiMode } from '@/lib/ai-mode-store'
 import type { PhotoRef } from '@/lib/estimate-session'
+import type { ConversationSnapshot } from '../data/z-common/z-conversation'
 
 /**
  * API client for the estimator. Relative URLs are proxied to the Functions backend in dev and served
@@ -62,11 +63,16 @@ export async function checkVision(analysis: AnalysisResult): Promise<void> {
     throw new ReanalyzeRequiredError()
 }
 
-async function postJson<T>(path: string, body: unknown, options: { ai?: boolean } = {}): Promise<T> {
+async function postJson<T>(
+  path: string,
+  body: unknown,
+  options: { ai?: boolean; signal?: AbortSignal } = {},
+): Promise<T> {
   const response = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: options.signal,
   })
   if (!response.ok) throw await readError(response)
   if (options.ai) recordAiMode(response)
@@ -90,8 +96,25 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 /** One chat turn: the server replies with plain text plus the structured move details it has so far. */
-export function chatApi(messages: ChatMessage[], moveDetails?: Partial<MoveDetails>): Promise<ChatApiResponse> {
-  return postJson<ChatApiResponse>('/api/chat', { messages, moveDetails }, { ai: true })
+export function chatApi(
+  messages: ChatMessage[],
+  moveDetails?: Partial<MoveDetails>,
+  signal?: AbortSignal,
+): Promise<ChatApiResponse> {
+  return postJson<ChatApiResponse>('/api/chat', { messages, moveDetails }, { ai: true, signal })
+}
+
+/** Task 2 adapter: the legacy route ignores snapshot until Task 3's state-aware protocol lands. */
+export function conversationChatApi(
+  messages: ChatMessage[],
+  snapshot: ConversationSnapshot,
+  signal?: AbortSignal,
+): Promise<ChatApiResponse> {
+  return postJson<ChatApiResponse>(
+    '/api/chat',
+    { messages, moveDetails: snapshot.moveDetails, snapshot },
+    { ai: true, signal },
+  )
 }
 
 /**

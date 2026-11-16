@@ -464,3 +464,181 @@
   padding: 3rem 1rem;
   text-align: center;
 }
+
+/* Continuous estimator: viewport bounded, two independent scroll regions, no wizard body. */
+.est-shell:has(.conv-page) {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.est-shell__body:has(.conv-page) {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 0.65rem 0.75rem 0;
+  max-width: 82rem;
+}
+.est-shell:has(.conv-page) .est-foot {
+  display: none;
+}
+.conv-page {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.conv-head {
+  margin-bottom: 0.65rem;
+  gap: 0;
+  flex: 0 0 auto;
+}
+.conv-head h1 {
+  font-size: clamp(1rem, 2.3vw, 1.65rem);
+}
+.conv-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  height: max(0px, calc(var(--est-chat-height, 75dvh) - 0.5rem));
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  /* Respect the measured VisualViewport height instead of growing under the keyboard. */
+  flex: 0 1 auto;
+}
+.conv-chat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0.65rem;
+  gap: 0.5rem;
+  overflow: hidden;
+}
+.conv-chat__head,
+.conv-drawer__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+}
+.conv-feed {
+  min-height: 0;
+  min-width: 0;
+}
+.conv-feed .mv-panel {
+  padding: 0.85rem;
+  box-shadow: none;
+}
+.conv-composer {
+  flex: 0 0 auto;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.conv-attachments {
+  margin-top: 0.4rem;
+  gap: 0.4rem;
+}
+.conv-data-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-width: 0;
+  min-height: 0;
+  padding: 0.85rem;
+}
+.conv-data {
+  overflow-wrap: anywhere;
+}
+.conv-data .mv-input,
+.conv-data .mv-select {
+  width: 100%;
+  min-width: 0;
+}
+.conv-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.6rem;
+}
+.conv-heading {
+  font-family: var(--mv-caption);
+  font-size: 1rem;
+  margin: 0;
+}
+.conv-inventory {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.conv-inventory li,
+.conv-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--mv-ink);
+}
+.conv-event {
+  font-family: var(--mv-caption);
+  font-size: 0.75rem;
+  margin: 0.1rem;
+  color: var(--mv-ink-soft);
+}
+.conv-operation {
+  padding: 0.75rem;
+  border: 2px dashed var(--mv-ink);
+  background: var(--mv-paper);
+}
+.conv-price {
+  font-weight: 700;
+  font-size: 1.5rem;
+  margin: 0;
+}
+.conv-proposal {
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+}
+.conv-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgb(18 18 26 / 45%);
+}
+.conv-drawer {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 51;
+  width: min(92vw, 27rem);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.85rem 0.65rem max(0.5rem, env(safe-area-inset-bottom));
+  background: var(--mv-kraft);
+  border-left: 3px solid var(--mv-ink);
+  box-shadow: -8px 0 0 rgb(18 18 26 / 15%);
+}
+@media (min-width: 860px) {
+  .conv-shell {
+    grid-template-columns: minmax(0, 1.45fr) minmax(17rem, 1fr);
+  }
+}
+@media (min-width: 1100px) {
+  .conv-details {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+@media (max-height: 550px) {
+  .conv-chat__head > .mv-caption {
+    display: none;
+  }
+  .conv-head h1 {
+    font-size: 1rem;
+  }
+  .conv-head,
+  .conv-chat {
+    gap: 0.25rem;
+  }
+}
