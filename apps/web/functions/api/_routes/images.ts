@@ -17,13 +17,20 @@ images.post('/upload', async (c) => {
     if (typeof sessionId !== 'string' || !UUID.test(sessionId)) {
       return c.json({ error: 'Invalid estimate session' }, 400)
     }
-    if (imageFiles.length === 0 || imageFiles.length > 10 || imageFiles.some((entry) =>
-      !(entry instanceof File) || !IMAGE_TYPES.has(entry.type) || entry.size === 0 || entry.size > MAX_IMAGE_BYTES
-    )) {
+    if (
+      imageFiles.length === 0 ||
+      imageFiles.length > 10 ||
+      imageFiles.some(
+        (entry) =>
+          !(entry instanceof File) || !IMAGE_TYPES.has(entry.type) || entry.size === 0 || entry.size > MAX_IMAGE_BYTES,
+      )
+    ) {
       return c.json({ error: 'Provide 1–10 JPEG, PNG or WebP images under 10 MB each' }, 400)
     }
 
-    await c.env.MOVERS_DB.prepare('DELETE FROM photo_receipts WHERE expires_at <= ?').bind(new Date().toISOString()).run()
+    await c.env.MOVERS_DB.prepare('DELETE FROM photo_receipts WHERE expires_at <= ?')
+      .bind(new Date().toISOString())
+      .run()
     const uploads: { url: string; receipt: string }[] = []
     for (const entry of imageFiles) {
       const file = entry as File

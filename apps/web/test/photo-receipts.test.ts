@@ -18,7 +18,12 @@ function fakeDb() {
               if (sql.includes('DELETE FROM photo_receipts')) {
                 for (const [hash, row] of rows) if (row.expires_at <= values[0]!) rows.delete(hash)
               } else if (sql.includes('INSERT INTO photo_receipts')) {
-                rows.set(values[0]!, { receipt_hash: values[0]!, session_id: values[1]!, object_key: values[2]!, expires_at: values[4]! })
+                rows.set(values[0]!, {
+                  receipt_hash: values[0]!,
+                  session_id: values[1]!,
+                  object_key: values[2]!,
+                  expires_at: values[4]!,
+                })
               } else throw new Error('Unexpected D1 write')
               return { success: true }
             },
@@ -59,8 +64,12 @@ describe('photo receipts', () => {
   it.each([1, 2])('leaves no R2 objects when receipt insert %i fails', async (failInsert) => {
     const objects = new Map<string, unknown>()
     const bucket = {
-      put: vi.fn(async (key: string, body: unknown) => { objects.set(key, body) }),
-      delete: vi.fn(async (key: string) => { objects.delete(key) }),
+      put: vi.fn(async (key: string, body: unknown) => {
+        objects.set(key, body)
+      }),
+      delete: vi.fn(async (key: string) => {
+        objects.delete(key)
+      }),
     }
     let inserts = 0
     const db = {
@@ -84,9 +93,14 @@ describe('photo receipts', () => {
     form.append('images', new File(['first'], 'room-a.jpg', { type: 'image/jpeg' }))
     if (failInsert === 2) form.append('images', new File(['second'], 'room-b.jpg', { type: 'image/jpeg' }))
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const res = await images.request('http://localhost/upload', { method: 'POST', body: form }, {
-      MOVERS_DB: db, MOVERS_BUCKET: bucket,
-    })
+    const res = await images.request(
+      'http://localhost/upload',
+      { method: 'POST', body: form },
+      {
+        MOVERS_DB: db,
+        MOVERS_BUCKET: bucket,
+      },
+    )
     expect(res.status).toBe(500)
     expect(await res.json()).toEqual({ error: 'Failed to upload images' })
     expect(objects.size).toBe(0)
@@ -109,13 +123,23 @@ describe('photo receipts', () => {
     const body = (await res.json()) as { uploads: { url: string; receipt: string }[] }
     expect(body.uploads).toHaveLength(1)
     expect(body.uploads[0]?.url).toMatch(/^http:\/\/localhost\/api\/images\//)
-    expect(await verifyPhotoReceipt(db, sessionA, decodeURIComponent(body.uploads[0]!.url.split('/').pop()!), body.uploads[0]!.receipt)).toBe(true)
+    expect(
+      await verifyPhotoReceipt(
+        db,
+        sessionA,
+        decodeURIComponent(body.uploads[0]!.url.split('/').pop()!),
+        body.uploads[0]!.receipt,
+      ),
+    ).toBe(true)
     expect(put).toHaveBeenCalledTimes(1)
     expect(rows.size).toBe(1)
 
     expect((await upload('bad-id', new File(['picture'], 'room.jpg', { type: 'image/jpeg' }))).status).toBe(400)
     expect((await upload(sessionA, new File(['text'], 'room.txt', { type: 'text/plain' }))).status).toBe(400)
-    expect((await upload(sessionA, new File(['picture'], 'room.jpg', { type: 'image/jpeg' }), { MOVERS_BUCKET: { put } })).status).toBe(503)
+    expect(
+      (await upload(sessionA, new File(['picture'], 'room.jpg', { type: 'image/jpeg' }), { MOVERS_BUCKET: { put } }))
+        .status,
+    ).toBe(503)
     expect(put).toHaveBeenCalledTimes(1)
   })
 })

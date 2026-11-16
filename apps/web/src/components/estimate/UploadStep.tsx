@@ -95,8 +95,10 @@ export function UploadStep({
     setCards(next)
     const refs = next.flatMap((card) => (card.ref ? [card.ref] : []))
     const legacyUrls = next.flatMap((card) => (card.status === 'done' && !card.ref ? [card.src] : []))
-    if (JSON.stringify(refs) !== JSON.stringify(photoRefs) ||
-      JSON.stringify([...legacyUrls, ...refs.map((ref) => ref.url)]) !== JSON.stringify(photoUrls)) {
+    if (
+      JSON.stringify(refs) !== JSON.stringify(photoRefs) ||
+      JSON.stringify([...legacyUrls, ...refs.map((ref) => ref.url)]) !== JSON.stringify(photoUrls)
+    ) {
       onPhotosChange(refs, legacyUrls)
     }
   }
@@ -111,7 +113,11 @@ export function UploadStep({
     const files = Array.from(event.target.files ?? [])
     event.target.value = ''
     if (files.length === 0) return
-    const room = MAX_PHOTOS - (needsPhotoReupload ? cardsRef.current.filter((card) => card.ref || card.objectUrl).length : cardsRef.current.length)
+    const room =
+      MAX_PHOTOS -
+      (needsPhotoReupload
+        ? cardsRef.current.filter((card) => card.ref || card.objectUrl).length
+        : cardsRef.current.length)
     if (room <= 0) {
       setError(`Up to ${MAX_PHOTOS} photos per estimate.`)
       return
@@ -185,7 +191,9 @@ export function UploadStep({
         <Caption accent="green">{sample ? 'Sample photos' : 'Photograph each room'}</Caption>
       </div>
       {needsPhotoReupload ? (
-        <p className="est-error" role="alert">Re-upload your photos to continue. Your previous photos are shown for reference only.</p>
+        <p className="est-error" role="alert">
+          Re-upload your photos to continue. Your previous photos are shown for reference only.
+        </p>
       ) : null}
       {sample ? (
         <p className="mv-lede">Three rooms of a two-bedroom flat. Run the analysis to see what the model spots.</p>

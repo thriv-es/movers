@@ -147,18 +147,21 @@ describe('estimate session', () => {
 
   it('migrates a v4 own-photo draft without treating its old URLs as linked uploads', () => {
     const store = new FakeStorage()
-    store.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION,
-      version: 4,
-      step: 'estimate',
-      moveDetails: { ...EMPTY_SESSION.moveDetails, originFloor: 4 },
-      photoUrls: ['https://example.test/room.jpg'],
-      analysis,
-      items: analysis.items,
-      price: savedPrice,
-      estimateId: 'old-id',
-      sample: false,
-    }))
+    store.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        version: 4,
+        step: 'estimate',
+        moveDetails: { ...EMPTY_SESSION.moveDetails, originFloor: 4 },
+        photoUrls: ['https://example.test/room.jpg'],
+        analysis,
+        items: analysis.items,
+        price: savedPrice,
+        estimateId: 'old-id',
+        sample: false,
+      }),
+    )
     const loaded = loadSession(store)
     expect(loaded).toMatchObject({
       version: 5,
@@ -178,61 +181,107 @@ describe('estimate session', () => {
 
   it('invalidates a legacy own-photo analysis even when its URLs were lost', () => {
     const store = new FakeStorage()
-    store.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION, version: 4, step: 'review', photoUrls: [], analysis, price: savedPrice,
-    }))
+    store.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        version: 4,
+        step: 'review',
+        photoUrls: [],
+        analysis,
+        price: savedPrice,
+      }),
+    )
     expect(loadSession(store)).toMatchObject({
-      step: 'upload', analysis: null, price: null, photoRefs: [], needsPhotoReupload: true,
+      step: 'upload',
+      analysis: null,
+      price: null,
+      photoRefs: [],
+      needsPhotoReupload: true,
     })
   })
 
   it('shows legacy thumbnails but cannot analyze them without a new receipt', () => {
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION, version: 4, step: 'estimate', photoUrls: ['https://example.test/room.jpg'], analysis,
-    }))
-    render(createElement(HelmetProvider, null,
-      createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
-    ))
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        version: 4,
+        step: 'estimate',
+        photoUrls: ['https://example.test/room.jpg'],
+        analysis,
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     expect(screen.getByAltText('room.jpg')).toHaveAttribute('src', 'https://example.test/room.jpg')
     expect(screen.getByText(/re-upload your photos to continue/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
   })
 
   it('does not treat a null-receipt own-photo ref as an upload', () => {
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION,
-      step: 'upload',
-      photoUrls: ['https://example.test/room.jpg'],
-      photoRefs: [{ url: 'https://example.test/room.jpg', receipt: null }],
-      sample: false,
-    }))
-    render(createElement(HelmetProvider, null,
-      createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
-    ))
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        step: 'upload',
+        photoUrls: ['https://example.test/room.jpg'],
+        photoRefs: [{ url: 'https://example.test/room.jpg', receipt: null }],
+        sample: false,
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
   })
 
   it('removing a legacy thumbnail removes its visible URL from the draft', async () => {
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION, version: 4, step: 'estimate', photoUrls: ['https://example.test/room.jpg'], analysis,
-    }))
-    render(createElement(HelmetProvider, null,
-      createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
-    ))
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        version: 4,
+        step: 'estimate',
+        photoUrls: ['https://example.test/room.jpg'],
+        analysis,
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).photoUrls).toEqual([]))
   })
 
   it('preserves other migrated thumbnails and their URLs after one new photo upload', async () => {
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      ...EMPTY_SESSION,
-      version: 4,
-      step: 'upload',
-      photoUrls: ['https://example.test/room-a.jpg', 'https://example.test/room-b.jpg'],
-    }))
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        version: 4,
+        step: 'upload',
+        photoUrls: ['https://example.test/room-a.jpg', 'https://example.test/room-b.jpg'],
+      }),
+    )
     const OriginalURL = URL
     class TestURL extends OriginalURL {
-      static createObjectURL() { return 'blob:replacement' }
+      static createObjectURL() {
+        return 'blob:replacement'
+      }
       static revokeObjectURL() {}
     }
     vi.stubGlobal('URL', TestURL)
@@ -240,16 +289,24 @@ describe('estimate session', () => {
     class FakeXHR {
       upload = { onprogress: null }
       status = 200
-      responseText = JSON.stringify({ uploads: [{ url: 'https://example.test/new-room.jpg', receipt: 'opaque-test-receipt' }] })
+      responseText = JSON.stringify({
+        uploads: [{ url: 'https://example.test/new-room.jpg', receipt: 'opaque-test-receipt' }],
+      })
       onload: (() => void) | null = null
       onerror: (() => void) | null = null
       open() {}
-      send() { queueMicrotask(() => this.onload?.()) }
+      send() {
+        queueMicrotask(() => this.onload?.())
+      }
     }
     vi.stubGlobal('XMLHttpRequest', FakeXHR)
-    render(createElement(HelmetProvider, null,
-      createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
-    ))
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     expect(screen.getByAltText('room-a.jpg')).toBeInTheDocument()
     expect(screen.getByAltText('room-b.jpg')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
@@ -257,21 +314,30 @@ describe('estimate session', () => {
     fireEvent.change(screen.getByLabelText('Choose from library'), {
       target: { files: [new File(['image'], 'replacement.jpg', { type: 'image/jpeg' })] },
     })
-    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({
-      photoRefs: [{ url: 'https://example.test/new-room.jpg', receipt: 'opaque-test-receipt' }],
-    }))
+    await waitFor(() =>
+      expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({
+        photoRefs: [{ url: 'https://example.test/new-room.jpg', receipt: 'opaque-test-receipt' }],
+      }),
+    )
     expect(screen.getByAltText('room-a.jpg')).toBeInTheDocument()
     expect(screen.getByAltText('room-b.jpg')).toBeInTheDocument()
     expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({
-      photoUrls: ['https://example.test/room-a.jpg', 'https://example.test/room-b.jpg', 'https://example.test/new-room.jpg'],
+      photoUrls: [
+        'https://example.test/room-a.jpg',
+        'https://example.test/room-b.jpg',
+        'https://example.test/new-room.jpg',
+      ],
       needsPhotoReupload: true,
     })
     expect(screen.getByRole('button', { name: 'Analyse 1 photo' })).toBeEnabled()
 
     fireEvent.click(within(screen.getByAltText('room-a.jpg').closest('li')!).getByRole('button', { name: 'Remove' }))
-    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).photoUrls).toEqual([
-      'https://example.test/room-b.jpg', 'https://example.test/new-room.jpg',
-    ]))
+    await waitFor(() =>
+      expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).photoUrls).toEqual([
+        'https://example.test/room-b.jpg',
+        'https://example.test/new-room.jpg',
+      ]),
+    )
     expect(screen.getByAltText('room-b.jpg')).toBeInTheDocument()
 
     const fetch = vi.fn(async (_path: string, _request: RequestInit) => Response.json(analysis))
@@ -279,22 +345,31 @@ describe('estimate session', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Analyse 1 photo' }))
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
     expect(JSON.parse((fetch.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
-      imageUrls: ['https://example.test/new-room.jpg'], sample: false,
+      imageUrls: ['https://example.test/new-room.jpg'],
+      sample: false,
     })
   })
 
   it('switching from sample to own photos removes sample cards and cannot analyze them', async () => {
     window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(sampleSession('http://localhost:4610')))
-    render(createElement(HelmetProvider, null,
-      createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
-    ))
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     expect(screen.getByAltText('Living room')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Use my own photos' }))
     expect(screen.queryByAltText('Living room')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
-    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({
-      sample: false, photoUrls: [], photoRefs: [],
-    }))
+    await waitFor(() =>
+      expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({
+        sample: false,
+        photoUrls: [],
+        photoRefs: [],
+      }),
+    )
   })
 
   it('discards unknown steps and malformed JSON', () => {
@@ -351,7 +426,9 @@ describe('estimate review and API', () => {
     class FakeXHR {
       upload = { onprogress: null }
       status = 200
-      responseText = JSON.stringify({ uploads: [{ url: 'https://example.test/room.jpg', receipt: 'opaque-test-receipt' }] })
+      responseText = JSON.stringify({
+        uploads: [{ url: 'https://example.test/room.jpg', receipt: 'opaque-test-receipt' }],
+      })
       onload: (() => void) | null = null
       onerror: (() => void) | null = null
       open() {}
@@ -363,7 +440,8 @@ describe('estimate review and API', () => {
     vi.stubGlobal('XMLHttpRequest', FakeXHR)
     const file = new File(['image'], 'room.jpg', { type: 'image/jpeg' })
     expect(await uploadImage(file, '11111111-1111-4111-8111-111111111111')).toEqual({
-      url: 'https://example.test/room.jpg', receipt: 'opaque-test-receipt',
+      url: 'https://example.test/room.jpg',
+      receipt: 'opaque-test-receipt',
     })
     expect((sent as FormData | null)?.get('sessionId')).toBe('11111111-1111-4111-8111-111111111111')
     expect((sent as FormData | null)?.get('images')).toBe(file)
