@@ -102,9 +102,7 @@ export function UploadStep({
   }
 
   const patch = (id: string, change: Partial<PhotoCard>) => {
-    const next = cardsRef.current
-      .filter((card) => !change.ref || card.ref || card.objectUrl)
-      .map((card) => (card.id === id ? { ...card, ...change } : card))
+    const next = cardsRef.current.map((card) => (card.id === id ? { ...card, ...change } : card))
     cardsRef.current = next
     publish(next)
   }

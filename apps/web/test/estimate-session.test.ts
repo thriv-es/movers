@@ -2,7 +2,7 @@
  * The sessionStorage mirror of the estimator (MOVERS-12): round trip, version mismatch, garbage, sample seed.
  */
 import { createElement } from 'react'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { HelmetProvider } from 'react-helmet-async'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -54,6 +54,7 @@ const savedPrice = {
 const review = { followUps: { garage: false, closets: false, appliances: false }, wholeMoveCovered: true }
 
 afterEach(() => {
+  cleanup() // release object URLs before undoing browser API stubs
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   window.sessionStorage.clear()
@@ -220,6 +221,66 @@ describe('estimate session', () => {
     ))
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).photoUrls).toEqual([]))
+  })
+
+  it('preserves other migrated thumbnails and their URLs after one new photo upload', async () => {
+    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      ...EMPTY_SESSION,
+      version: 4,
+      step: 'upload',
+      photoUrls: ['https://example.test/room-a.jpg', 'https://example.test/room-b.jpg'],
+    }))
+    const OriginalURL = URL
+    class TestURL extends OriginalURL {
+      static createObjectURL() { return 'blob:replacement' }
+      static revokeObjectURL() {}
+    }
+    vi.stubGlobal('URL', TestURL)
+    vi.stubGlobal('createImageBitmap', undefined)
+    class FakeXHR {
+      upload = { onprogress: null }
+      status = 200
+      responseText = JSON.stringify({ uploads: [{ url: 'https://example.test/new-room.jpg', receipt: 'opaque-test-receipt' }] })
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      open() {}
+      send() { queueMicrotask(() => this.onload?.()) }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXHR)
+    render(createElement(HelmetProvider, null,
+      createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+    ))
+    expect(screen.getByAltText('room-a.jpg')).toBeInTheDocument()
+    expect(screen.getByAltText('room-b.jpg')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('Choose from library'), {
+      target: { files: [new File(['image'], 'replacement.jpg', { type: 'image/jpeg' })] },
+    })
+    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({
+      photoRefs: [{ url: 'https://example.test/new-room.jpg', receipt: 'opaque-test-receipt' }],
+    }))
+    expect(screen.getByAltText('room-a.jpg')).toBeInTheDocument()
+    expect(screen.getByAltText('room-b.jpg')).toBeInTheDocument()
+    expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!)).toMatchObject({
+      photoUrls: ['https://example.test/room-a.jpg', 'https://example.test/room-b.jpg', 'https://example.test/new-room.jpg'],
+      needsPhotoReupload: true,
+    })
+    expect(screen.getByRole('button', { name: 'Analyse 1 photo' })).toBeEnabled()
+
+    fireEvent.click(within(screen.getByAltText('room-a.jpg').closest('li')!).getByRole('button', { name: 'Remove' }))
+    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY)!).photoUrls).toEqual([
+      'https://example.test/room-b.jpg', 'https://example.test/new-room.jpg',
+    ]))
+    expect(screen.getByAltText('room-b.jpg')).toBeInTheDocument()
+
+    const fetch = vi.fn(async (_path: string, _request: RequestInit) => Response.json(analysis))
+    vi.stubGlobal('fetch', fetch)
+    fireEvent.click(screen.getByRole('button', { name: 'Analyse 1 photo' }))
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    expect(JSON.parse((fetch.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
+      imageUrls: ['https://example.test/new-room.jpg'], sample: false,
+    })
   })
 
   it('switching from sample to own photos removes sample cards and cannot analyze them', async () => {

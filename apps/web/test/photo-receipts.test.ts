@@ -56,6 +56,44 @@ describe('photo receipts', () => {
     expect(await verifyPhotoReceipt(db, sessionA, 'image-a', receipt)).toBe(false)
   })
 
+  it.each([1, 2])('leaves no R2 objects when receipt insert %i fails', async (failInsert) => {
+    const objects = new Map<string, unknown>()
+    const bucket = {
+      put: vi.fn(async (key: string, body: unknown) => { objects.set(key, body) }),
+      delete: vi.fn(async (key: string) => { objects.delete(key) }),
+    }
+    let inserts = 0
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return {
+              async run() {
+                if (sql.includes('INSERT INTO photo_receipts') && ++inserts === failInsert) {
+                  throw new Error('D1 insert unavailable')
+                }
+                return { success: true }
+              },
+            }
+          },
+        }
+      },
+    }
+    const form = new FormData()
+    form.set('sessionId', sessionA)
+    form.append('images', new File(['first'], 'room-a.jpg', { type: 'image/jpeg' }))
+    if (failInsert === 2) form.append('images', new File(['second'], 'room-b.jpg', { type: 'image/jpeg' }))
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await images.request('http://localhost/upload', { method: 'POST', body: form }, {
+      MOVERS_DB: db, MOVERS_BUCKET: bucket,
+    })
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ error: 'Failed to upload images' })
+    expect(objects.size).toBe(0)
+    expect(errorLog).not.toHaveBeenCalled()
+    errorLog.mockRestore()
+  })
+
   it('issues one receipt for a bounded image upload and rejects invalid requests before an R2 write', async () => {
     const { db, rows } = fakeDb()
     const put = vi.fn(async () => ({}))

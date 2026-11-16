@@ -9,6 +9,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 images.post('/upload', async (c) => {
   if (!c.env.MOVERS_DB) return c.json({ error: 'Photo uploads are temporarily unavailable' }, 503)
+  const uploadedKeys: string[] = []
   try {
     const formData = await c.req.formData()
     const sessionId = formData.get('sessionId')
@@ -27,11 +28,12 @@ images.post('/upload', async (c) => {
     for (const entry of imageFiles) {
       const file = entry as File
       const key = `${crypto.randomUUID()}-${file.name.replace(/[^\w.-]/g, '_').slice(0, 120) || 'photo'}`
-      await c.env.MOVERS_BUCKET.put(key, file.stream(), { httpMetadata: { contentType: file.type } })
       const receipt = await issuePhotoReceipt(c.env.MOVERS_DB, sessionId, key)
+      uploadedKeys.push(key)
+      await c.env.MOVERS_BUCKET.put(key, file.stream(), { httpMetadata: { contentType: file.type } })
       const url = new URL(c.req.url)
       let host = c.req.header('host')
-      if (host && host.startsWith('0.0.0.0')) {
+      if (host?.startsWith('0.0.0.0')) {
         host = host.replace('0.0.0.0', 'localhost')
         if (!host.includes(':')) host = `${host}:${url.port || '8787'}`
       }
@@ -40,6 +42,7 @@ images.post('/upload', async (c) => {
     }
     return c.json({ uploads })
   } catch {
+    await Promise.allSettled(uploadedKeys.map((key) => c.env.MOVERS_BUCKET.delete(key)))
     return c.json({ error: 'Failed to upload images' }, 500)
   }
 })
