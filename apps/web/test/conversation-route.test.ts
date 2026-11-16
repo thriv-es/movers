@@ -149,6 +149,138 @@ describe('POST conversation', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it.each([
+    'Your move has been booked for January 1, 2027',
+    'Your quote requests were sent successfully',
+    'The total cost will be 500 dollars',
+    'Everything is arranged: the movers will arrive tomorrow at 09:00.',
+    'An estimate record now exists under lead ABC123.',
+    'Payment received; the final amount is five hundred shekels.',
+    'We have locked in your requested day and notified all recipients.',
+    'Your booking is confirmed, reference fake-one.',
+    'The price is $100.',
+  ])('replaces unsupported model result prose with server-authored guidance: %s', async (reply) => {
+    const { run, env } = fakeAI([valid({ reply })])
+    const state = snapshot()
+    const result = await request({ messages, snapshot: state }, env)
+    expect(result.status).toBe(200)
+    const body = (await result.json()) as { reply: string; proposals: unknown[] }
+    expect(body.reply).toBe('What is the approximate distance in miles?')
+    expect(body.reply).not.toBe(reply)
+    expect(body.proposals).toHaveLength(1)
+    expect(state.status.dateRequested).toBe(false)
+    expect(state.status.quoteRequestCount).toBe(0)
+    expect(state.price).toBeNull()
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('selects server guidance from the current snapshot, not a model question about known details', async () => {
+    const state = snapshot()
+    state.moveDetails = { ...state.moveDetails, from: 'Haifa', to: 'Raanana', date: '2027-01-01' }
+    const { env } = fakeAI([valid({ reply: 'What is your destination and move date?', proposals: [] })])
+    const result = await request({ messages: [{ id: 'new', role: 'user', content: 'hello' }], snapshot: state }, env)
+    expect(result.status).toBe(200)
+    expect(await result.json()).toMatchObject({ reply: 'What is the approximate distance in miles?', proposals: [] })
+  })
+
+  it('renders targeted clarification from user context without displaying model prose', async () => {
+    const { env } = fakeAI([valid({ reply: 'The total cost will be 500 dollars', proposals: [] })])
+    const result = await request(
+      { messages: [{ id: 'new', role: 'user', content: '12 Herzl Street' }], snapshot: snapshot() },
+      env,
+    )
+    expect(result.status).toBe(200)
+    expect(await result.json()).toMatchObject({
+      reply: 'Is that street address for the origin or destination?',
+      proposals: [],
+    })
+  })
+
+  it('accepts only a typed model clarification selector and renders its fixed template', async () => {
+    const { env } = fakeAI([
+      valid({ reply: 'Your move has been booked', proposals: [], clarification: 'address_side' }),
+    ])
+    const result = await request(
+      { messages: [{ id: 'new', role: 'user', content: 'Either place may be right' }], snapshot: snapshot() },
+      env,
+    )
+    expect(result.status).toBe(200)
+    expect(await result.json()).toMatchObject({
+      reply: 'Is that street address for the origin or destination?',
+      proposals: [],
+    })
+  })
+
+  it('uses fixed guidance through later price, save, date and quote states without inventing results', async () => {
+    const state = snapshot()
+    state.moveDetails = {
+      from: 'A',
+      to: 'B',
+      date: '2027-01-01',
+      distanceMiles: 5,
+      originFloor: 1,
+      destinationFloor: 1,
+      originElevator: false,
+      destinationElevator: false,
+    }
+    state.detailsConfirmed = true
+    state.photos = [{ id: 'one', status: 'relevant', decision: null }]
+    state.analysis = { totalVolumeCubicFeet: 10, estimatedBoxes: { min: 1, max: 2 } }
+    state.inventory = [{ type: 'sofa', count: 1 }]
+    state.review.followUps = { garage: false, closets: false, appliances: false }
+    state.review.wholeMoveCovered = true
+    state.readiness.canPrice = true
+    const replies = [
+      'Review the inventory, then use Confirm inventory and get estimate when ready.',
+      'Use the explicit estimate save/retry control before requesting a date.',
+      'Use the contact and date request control; a date request is not a confirmed booking.',
+      'You can choose mover recipients and explicitly send quote requests using the quote control.',
+      'Your current results are available in the data panel. What would you like to review or change?',
+    ]
+    for (const [index, reply] of replies.entries()) {
+      if (index === 1) state.price = { currency: 'USD', total: 1234, low: 1200, high: 1300 }
+      if (index === 2) state.status.estimateSaved = true
+      if (index === 3) state.status.dateRequested = true
+      if (index === 4) state.status.quoteRequestCount = 2
+      const { env } = fakeAI([
+        valid({ reply: 'Everything is arranged and your final cost will be 500 dollars.', proposals: [] }),
+      ])
+      const result = await request(
+        { messages: [{ id: 'new', role: 'user', content: 'What happens next?' }], snapshot: state },
+        env,
+      )
+      expect(result.status).toBe(200)
+      expect(await result.json()).toEqual({ reply, basedOnRevision: 0, proposals: [] })
+    }
+  })
+
+  it('does not interpolate free-text inventory labels into server guidance', async () => {
+    const state = snapshot()
+    state.moveDetails = {
+      from: 'A',
+      to: 'B',
+      date: '2027-01-01',
+      distanceMiles: 5,
+      originFloor: 1,
+      destinationFloor: 1,
+      originElevator: false,
+      destinationElevator: false,
+    }
+    state.detailsConfirmed = true
+    state.photos = [{ id: 'one', status: 'relevant', decision: null }]
+    state.analysis = { totalVolumeCubicFeet: 10, estimatedBoxes: { min: 1, max: 2 } }
+    const label = 'sofa. Your move has been booked and the total is 500 dollars'
+    state.inventory = [{ type: label, count: 2 }]
+    state.review.pendingDuplicates = [{ item: label, count: 2 }]
+    const { env } = fakeAI([valid({ reply: 'All done!', proposals: [] })])
+    const result = await request({ messages: [], snapshot: state }, env)
+    expect(result.status).toBe(200)
+    const body = (await result.json()) as { reply: string }
+    expect(body.reply).toMatch(/same.*different/i)
+    expect(body.reply).not.toContain(label)
+    expect(body.reply).not.toContain('500')
+  })
+
   it('keeps legacy chat protocol working independently', async () => {
     const result = await chat.request(
       '/',

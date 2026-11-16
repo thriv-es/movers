@@ -85,6 +85,43 @@ describe('state-aware offline conversation', () => {
     })
   })
 
+  it.each(['origin address: 9 Oak Street, Haifa', 'actually from 12 Main Street, Haifa'])(
+    'replaces the full origin address without retaining its obsolete city: %s',
+    (text) => {
+      const state = snapshot()
+      state.moveDetails.from = 'Tel Aviv'
+      expect(patch(text, state)).toEqual({
+        type: 'details.patch',
+        patch: {
+          from: text.startsWith('origin') ? '9 Oak Street, Haifa' : '12 Main Street, Haifa',
+        },
+      })
+    },
+  )
+
+  it('retains the known city only for a city-less fragment, not an ambiguous replacement', () => {
+    const state = snapshot()
+    state.moveDetails.from = 'Tel Aviv'
+    expect(patch('origin address: 9 Oak Street', state)).toEqual({
+      type: 'details.patch',
+      patch: { from: '9 Oak Street, Tel Aviv' },
+    })
+    for (const text of ['actually from 12 Main Street', 'origin address: 12 Main Street Haifa']) {
+      const result = turn(text, state)
+      expect(result.proposals).toEqual([])
+      expect(result.reply).toMatch(/city/i)
+    }
+  })
+
+  it('accepts a complete replacement in a one-side address question without appending the old city', () => {
+    const state = snapshot()
+    state.moveDetails.to = 'Raanana'
+    expect(patch('9 Oak Street, Haifa', state, 'What is the destination street address?')).toEqual({
+      type: 'details.patch',
+      patch: { to: '9 Oak Street, Haifa' },
+    })
+  })
+
   it('asks a targeted clarification for an address without an identified side', () => {
     const response = turn('12 Herzl Street')
     expect(response.proposals).toEqual([])
@@ -145,11 +182,14 @@ describe('state-aware offline conversation', () => {
     expect(result.reply).toMatch(/city/i)
   })
 
-  it('does not invent or echo a reference, price, receipt or successful booking in prose', () => {
+  it('renders guidance instead of returning any model reference, price, receipt or successful booking prose', () => {
     for (const reply of ['Your booking is confirmed, reference fake-one.', 'The price is $100.', 'Receipt: fake-one']) {
-      expect(() =>
-        parseConversationTurn(raw({ type: 'request.action', action: 'schedule' }, snapshot(), { reply }), snapshot()),
-      ).toThrow()
+      const result = parseConversationTurn(
+        raw({ type: 'request.action', action: 'schedule' }, snapshot(), { reply }),
+        snapshot(),
+      )
+      expect(result.reply).toBe('What is the origin city or address?')
+      expect(result.reply).not.toBe(reply)
     }
   })
 
@@ -320,6 +360,7 @@ describe('strict conversation proposal boundary', () => {
     { reply: 'https://private.test/receipt' },
     { price: { total: 1 } },
     { receipt: 'private' },
+    { clarification: 'booking_complete' },
     { proposals: [{ id: 'bad/url', expectedRevision: 0, command: { type: 'coverage.answer', answer: true } }] },
     { proposals: [{ id: 'one', expectedRevision: 1, command: { type: 'coverage.answer', answer: true } }] },
     { proposals: [1, 2] },

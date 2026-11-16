@@ -35,7 +35,7 @@ conversation.post('/', async (c) => {
       )
       c.header('x-movers-ai-mode', result.mode)
       try {
-        return c.json(parseConversationTurn(result.text, snapshot))
+        return c.json(parseConversationTurn(result.text, snapshot, messages))
       } catch {
         // Only malformed output retries, never provider failure. No invalid output is echoed to the model.
       }

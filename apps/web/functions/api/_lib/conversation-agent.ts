@@ -50,16 +50,24 @@ export const zConversationResponse = z
       .refine(
         (reply) =>
           [...reply].every((character) => character.charCodeAt(0) >= 32 || '\n\r\t'.includes(character)) &&
-          !/https?:\/\/|data:|```|<\/?[a-z]|\{\s*"/i.test(reply) &&
-          !/\b(?:receipt|estimateId|bookingId)\s*[:=]|\breference\s*[:=]?\s+[\w-]+|\b(?:booking|reservation)\s+(?:is\s+)?confirmed|\b(?:booked|dispatched|scheduled|saved|sent)\s+(?:your|the)\b|[$€£₪]\s*\d|\b(?:price is|USD|ILS|EUR)\s*\d/i.test(
-            reply,
-          ),
+          !/https?:\/\/|data:|```|<\/?[a-z]|\{\s*"/i.test(reply),
       ),
     basedOnRevision: zConversationRevision,
     proposals: z.array(zConversationProposal).max(12),
   })
   .strict()
 export type ConversationResponse = z.infer<typeof zConversationResponse>
+
+// Model-only selector: no free text, status, amount or success claim can become visible prose.
+const zClarification = z.enum(['date', 'address_side', 'address_city', 'item', 'photo'])
+const clarificationReplies: Record<z.infer<typeof zClarification>, string> = {
+  date: 'Please clarify the date using YYYY-MM-DD.',
+  address_side: 'Is that street address for the origin or destination?',
+  address_city: 'Please provide the complete street address and city for this replacement.',
+  item: 'Which named inventory item should be changed? Please use its review control to confirm.',
+  photo: 'Which uncertain photo do you mean? Please use its Keep or Exclude review controls.',
+}
+const zModelConversationTurn = zConversationResponse.extend({ clarification: zClarification.optional() })
 
 const sameType = (left: string, right: string) => canonicalItemType(left) === canonicalItemType(right)
 function currentReference(command: ConversationCommand, state: ConversationSnapshot): boolean {
@@ -92,9 +100,13 @@ function currentReference(command: ConversationCommand, state: ConversationSnaps
 }
 
 /** Reject the entire batch on error; never leak a parsed partial response or model text. */
-export function parseConversationTurn(text: string, snapshot: ConversationSnapshot): ConversationResponse {
+export function parseConversationTurn(
+  text: string,
+  snapshot: ConversationSnapshot,
+  messages: ChatMessage[] = [],
+): ConversationResponse {
   if (text.length > 24000) throw new Error('Invalid conversation output')
-  const turn = zConversationResponse.parse(JSON.parse(text))
+  const turn = zModelConversationTurn.parse(JSON.parse(text))
   const ids = new Set<string>()
   const targets = new Set<string>()
   if (turn.basedOnRevision !== snapshot.revision) throw new Error('Invalid conversation revision')
@@ -123,10 +135,17 @@ export function parseConversationTurn(text: string, snapshot: ConversationSnapsh
     targets.add(target)
   }
   // IDs are opaque, request-local server IDs; no model-created receipt/reference can become authority.
-  return {
-    ...turn,
+  return zConversationResponse.parse({
+    // Intentionally never return turn.reply: all visible prose is authored by the server.
+    reply: renderConversationReply(
+      messages,
+      snapshot,
+      turn.proposals.map((proposal) => proposal.command),
+      turn.clarification,
+    ),
+    basedOnRevision: turn.basedOnRevision,
     proposals: turn.proposals.map((proposal) => ({ ...proposal, id: `proposal-${crypto.randomUUID()}` })),
-  }
+  })
 }
 
 function numericDate(value: string): string | null {
@@ -159,9 +178,17 @@ function numericDate(value: string): string | null {
 }
 const addressFragment = (value: string) =>
   /^\d+\s+\p{L}/u.test(value) || /\b(street|st\.?|road|rd\.?|avenue|ave\.?|lane)\b/i.test(value)
-function addressWithCity(value: string, known: string | null): string | null {
+function addressWithCity(value: string, known: string | null, replacing = false): string | null {
+  const parts = value.split(',').map((part) => part.trim())
+  const tail = parts.at(-1) ?? ''
+  const unit = /^(?:apt\.?|apartment|suite|unit|floor)\b/i
+  // A comma-delimited explicit city is a complete replacement, never a fragment to append to.
+  if (parts.length > 1 && /^[\p{L}][\p{L} .'-]*$/u.test(tail) && !unit.test(tail)) return value
   if (!known || value.toLowerCase().includes(known.toLowerCase())) return value
-  // A city-only known value, or final comma-separated city, is safe to retain.
+  // A correction without a city, or an apparent unseparated city after the street suffix, is ambiguous.
+  const afterStreet = /\b(?:street|st\.?|road|rd\.?|avenue|ave\.?|lane)\s+(.+)$/i.exec(value)?.[1]
+  if (replacing || (afterStreet && !unit.test(afterStreet)) || (parts.length > 1 && !unit.test(tail))) return null
+  // Retain a known city only for a city-less street/unit fragment.
   const city = known.includes(',') ? known.split(',').at(-1)?.trim() : !/\d/.test(known) ? known : null
   if (!city) return null
   return !value.toLowerCase().includes(city.toLowerCase()) ? `${value}, ${city}` : value
@@ -206,7 +233,9 @@ function extractDetails(
     // Date before location can leave a trailing comma; do not put any combined numeric date in a location.
     value = value.replace(/\s+on\s*$/i, '').trim()
     if (value.length > 300 || /\b(?:floor|elevator|miles)\b|\d{4}-\d{2}-\d{2}/i.test(value)) continue
-    const place = addressFragment(value) ? addressWithCity(value, state.moveDetails[key]) : value
+    const place = addressFragment(value)
+      ? addressWithCity(value, state.moveDetails[key], /\b(?:actually|instead|replace|correction|change)\b/i.test(text))
+      : value
     if (place === null)
       clarification = 'Please include the city with that street address so the known city is retained.'
     else patch[key] = place
@@ -289,7 +318,7 @@ function nextQuestion(state: ConversationSnapshot): string {
   const duplicate = state.review.pendingDuplicates.find(
     (entry) => !state.review.duplicateResolutions[canonicalItemType(entry.item)],
   )
-  if (duplicate) return `Are the possible duplicate ${duplicate.item} items the same object or different objects?`
+  if (duplicate) return 'Are the possible duplicate items shown in review the same object or different objects?'
   for (const key of ['garage', 'closets', 'appliances'] as const) {
     if (state.review.followUps[key] === null) return `Are there additional ${key} items missing from this inventory?`
   }
@@ -376,15 +405,17 @@ function reviewCommands(text: string, state: ConversationSnapshot, question: str
   return commands
 }
 
-/** Deterministic and state-aware: only the latest user answer can propose changes. No operations execute here. */
-export function mockConversationTurn(messages: ChatMessage[], snapshot: ConversationSnapshot): ConversationResponse {
+/** Both real and offline turns use fixed server prose, never model-authored result/status text. */
+function renderConversationReply(
+  messages: ChatMessage[],
+  snapshot: ConversationSnapshot,
+  commands: ConversationCommand[],
+  selector?: z.infer<typeof zClarification>,
+): string {
   const latest = messages.at(-1)
   const text = latest?.role === 'user' ? latest.content.trim() : ''
   const question = messages.at(-2)?.role === 'assistant' ? (messages.at(-2)?.content ?? '') : ''
-  const { patch, clarification } = extractDetails(text, question, snapshot)
-  const commands: ConversationCommand[] = Object.keys(patch).length
-    ? [{ type: 'details.patch', patch }]
-    : reviewCommands(text, snapshot, question)
+  const { clarification } = extractDetails(text, question, snapshot)
   const projected = structuredClone(snapshot)
   for (const command of commands) {
     if (command.type !== 'details.patch' && command.type !== 'request.action') {
@@ -412,13 +443,26 @@ export function mockConversationTurn(messages: ChatMessage[], snapshot: Conversa
     } else if (command.type === 'duplicate.resolve')
       projected.review.duplicateResolutions[canonicalItemType(command.itemType)] = command.resolution
   }
-  const reply =
+  return (
     clarification ??
+    (selector ? clarificationReplies[selector] : undefined) ??
     (/^remove\b/i.test(text) && !commands.length
       ? 'Which named inventory item should be removed? Please use its review control to confirm.'
       : nextQuestion(projected))
+  )
+}
+
+/** Deterministic and state-aware: only the latest user answer can propose changes. No operations execute here. */
+export function mockConversationTurn(messages: ChatMessage[], snapshot: ConversationSnapshot): ConversationResponse {
+  const latest = messages.at(-1)
+  const text = latest?.role === 'user' ? latest.content.trim() : ''
+  const question = messages.at(-2)?.role === 'assistant' ? (messages.at(-2)?.content ?? '') : ''
+  const { patch } = extractDetails(text, question, snapshot)
+  const commands: ConversationCommand[] = Object.keys(patch).length
+    ? [{ type: 'details.patch', patch }]
+    : reviewCommands(text, snapshot, question)
   return {
-    reply,
+    reply: renderConversationReply(messages, snapshot, commands),
     basedOnRevision: snapshot.revision,
     proposals: commands.map((command, index) => ({
       id: `mock-${index}`,
