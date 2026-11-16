@@ -100,6 +100,93 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('vision freshness boundary', () => {
+  it('returns only safe status and pins analysis to its vision fingerprint', async () => {
+    const { default: status } = await import('../functions/api/_routes/ai-status')
+    const response = await status.request('/', {}, env())
+    const current = await response.json()
+    expect(current).toEqual({ visionRevision: 0, visionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) })
+    const analyzed = await post(analyze, analyzeBody(), env())
+    expect(await analyzed.json()).toMatchObject(current)
+  })
+
+  it('ignores Chat/Pricing-only revisions but rejects a saved vision backend change', async () => {
+    const { default: status } = await import('../functions/api/_routes/ai-status')
+    let revision = 1
+    let visionBackend = 'gateway'
+    const db = {
+      prepare: () => ({
+        first: async () => ({
+          revision,
+          roles_json: JSON.stringify({
+            chat: {
+              backend: revision === 1 ? 'gateway' : 'binding',
+              model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+            },
+            price: {
+              backend: 'gateway',
+              model:
+                revision === 1 ? '@cf/meta/llama-3.3-70b-instruct-fp8-fast' : '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
+            },
+            vision: { backend: visionBackend, model: '@cf/meta/llama-3.2-11b-vision-instruct' },
+          }),
+        }),
+      }),
+    }
+    const bindings = env({ MOVERS_DB: db, CF_AIG_TOKEN: 'synthetic-test-token' })
+    const initial = (await (await status.request('/', {}, bindings)).json()) as { visionFingerprint: string }
+    revision = 2
+    expect(await (await status.request('/', {}, bindings)).json()).toMatchObject({
+      visionRevision: 2,
+      visionFingerprint: initial.visionFingerprint,
+    })
+    visionBackend = 'binding'
+    const changed = (await (await status.request('/', {}, bindings)).json()) as { visionFingerprint: string }
+    expect(changed.visionFingerprint).not.toBe(initial.visionFingerprint)
+    const response = await post(
+      price,
+      {
+        analysis: {
+          ...initial,
+          items: [{ type: 'sofa', count: 1 }],
+          totalVolumeCubicFeet: 80,
+          estimatedBoxes: { min: 2, max: 4 },
+          boxesExplanation: '',
+        },
+        moveDetails: moveDetails(1, true),
+      },
+      bindings,
+    )
+    expect(response.status).toBe(409)
+  })
+
+  it.each([undefined, 'old-vision'])(
+    'rejects stale/missing fingerprint %s before AI or writes',
+    async (visionFingerprint) => {
+      const run = vi.fn()
+      const write = vi.fn()
+      const response = await post(
+        price,
+        {
+          analysis: {
+            items: [{ type: 'sofa', count: 1 }],
+            totalVolumeCubicFeet: 80,
+            estimatedBoxes: { min: 2, max: 4 },
+            boxesExplanation: '',
+            visionFingerprint,
+          },
+          moveDetails: moveDetails(1, true),
+        },
+        env({ AI: { run }, MOVERS_DB: { prepare: () => ({ first: async () => null, run: write }) } }),
+      )
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({ code: 'REANALYZE_REQUIRED' })
+      expect(run).not.toHaveBeenCalled()
+      expect(write).not.toHaveBeenCalled()
+    },
+  )
+})
+
 describe('photo upload availability', () => {
   it('returns 503 without D1 instead of creating an unverified object', async () => {
     const form = new FormData()
@@ -197,7 +284,13 @@ describe('local development with no AI credentials (offline mock)', () => {
   })
 
   it('treats omitted legacy review as unknown coverage and emits concrete confidence reasons', async () => {
+    const { default: status } = await import('../functions/api/_routes/ai-status')
+    const current = (await (await status.request('/', {}, env())).json()) as {
+      visionRevision: number
+      visionFingerprint: string
+    }
     const analysis = {
+      ...current,
       items: [{ type: 'sofa', count: 1 }],
       totalVolumeCubicFeet: 80,
       estimatedBoxes: { min: 2, max: 4 },

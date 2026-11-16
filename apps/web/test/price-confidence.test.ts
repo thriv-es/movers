@@ -27,6 +27,18 @@ const request = {
 }
 
 describe('price confidence', () => {
+  it.each([
+    [{ excludedCount: 1, unresolvedCount: 0 }, 'medium'],
+    [{ excludedCount: 0, unresolvedCount: 1 }, 'low'],
+  ] as const)('caps confidence for photo evidence %j', (photoEvidence, level) => {
+    const result = priceConfidence({ ...request, review: { ...request.review, photoEvidence } }, 'high')
+    expect(result.level).toBe(level)
+    expect(result.reasons.join(' ')).toMatch(/photo/i)
+  })
+
+  it('defaults legacy photo evidence to zero', () => {
+    expect(zPriceRequest.parse(request).review.photoEvidence).toEqual({ excludedCount: 0, unresolvedCount: 0 })
+  })
   it('allows high only for confirmed whole-move coverage, complete follow-ups and details', () => {
     expect(priceConfidence(request, 'high')).toEqual({ level: 'high', reasons: [] })
   })
@@ -95,6 +107,7 @@ describe('price confidence', () => {
   it('defaults legacy API callers to unanswered review rather than inferred coverage', () => {
     const parsed = zPriceRequest.parse({ analysis: request.analysis, moveDetails: request.moveDetails })
     expect(parsed.review).toEqual({
+      photoEvidence: { excludedCount: 0, unresolvedCount: 0 },
       followUps: { garage: null, closets: null, appliances: null },
       wholeMoveCovered: null,
     })

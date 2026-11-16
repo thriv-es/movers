@@ -7,9 +7,11 @@ import type {
   MoveDetails,
   PriceResult,
   ReviewCoverage,
+  VisionStatus,
   PublicMover,
   QuoteRequestRecord,
 } from '@/data'
+import { zPhotoAssessment, zVisionStatus } from '@/data'
 import { recordAiMode } from '@/lib/ai-mode-store'
 import type { PhotoRef } from '@/lib/estimate-session'
 
@@ -18,9 +20,46 @@ import type { PhotoRef } from '@/lib/estimate-session'
  * from the same origin in production.
  */
 
+export class EstimateApiError extends Error {
+  constructor(
+    message: string,
+    public readonly code?: string,
+    public readonly photoAssessments: NonNullable<AnalysisResult['photoAssessments']> = [],
+  ) {
+    super(message)
+  }
+}
+
 async function readError(response: Response): Promise<Error> {
-  const body = (await response.json().catch(() => null)) as { error?: string } | null
-  return new Error(body?.error || `HTTP ${response.status}: ${response.statusText}`)
+  const body = (await response.json().catch(() => null)) as {
+    error?: string
+    code?: string
+    photoAssessments?: unknown
+  } | null
+  const photos = zPhotoAssessment.array().safeParse(body?.photoAssessments)
+  return new EstimateApiError(
+    body?.error || `HTTP ${response.status}: ${response.statusText}`,
+    body?.code,
+    photos.success ? photos.data : [],
+  )
+}
+
+export class ReanalyzeRequiredError extends EstimateApiError {
+  constructor() {
+    super('Photo analysis settings changed. Analyze your photos again.', 'REANALYZE_REQUIRED')
+  }
+}
+
+export async function aiStatus(): Promise<VisionStatus> {
+  const response = await fetch('/api/ai-status', { cache: 'no-store' })
+  if (!response.ok) throw await readError(response)
+  return zVisionStatus.parse(await response.json())
+}
+
+export async function checkVision(analysis: AnalysisResult): Promise<void> {
+  const current = await aiStatus()
+  if (!analysis.visionFingerprint || analysis.visionFingerprint !== current.visionFingerprint)
+    throw new ReanalyzeRequiredError()
 }
 
 async function postJson<T>(path: string, body: unknown, options: { ai?: boolean } = {}): Promise<T> {

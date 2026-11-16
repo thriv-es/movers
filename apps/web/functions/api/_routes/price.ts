@@ -11,6 +11,7 @@ import { resolveRole } from '../_lib/ai-mode'
 import { mockPriceReply } from '../_lib/mock'
 import { PRICE_EVALUATION_PROMPT, substituteVars } from '../_lib/prompts'
 import { withSampleCache } from '../_lib/sample-cache'
+import { visionStatus } from '../_lib/vision-fingerprint'
 
 const price = new Hono<{ Bindings: Bindings }>()
 
@@ -25,6 +26,13 @@ price.post('/', async (c) => {
     }
     const validatedRequest = parsed.data
     const { analysis, moveDetails, sample } = validatedRequest
+    const currentVision = await visionStatus(await resolveRole(c.env, 'vision'))
+    if (analysis.visionFingerprint !== currentVision.visionFingerprint) {
+      return c.json(
+        { code: 'REANALYZE_REQUIRED', error: 'Photo analysis settings changed. Analyze your photos again.' },
+        409,
+      )
+    }
     const pricePerBox = Number.parseFloat(c.env.PRICE_PER_BOX) || 50
 
     const prompt = substituteVars(PRICE_EVALUATION_PROMPT, {

@@ -10,6 +10,7 @@ import { ReviewStep } from '../src/components/estimate/ReviewStep'
 import { EstimateStep } from '../src/components/estimate/EstimateStep'
 import EstimatePage from '../src/pages/estimate.page'
 import { analyzeApi, priceApi, uploadImage } from '../src/lib/api-client'
+import { photoEvidence, reviewedAnalysis } from '../src/lib/review-photos'
 import {
   EMPTY_SESSION,
   type EstimateSession,
@@ -35,6 +36,8 @@ class FakeStorage {
 }
 
 const analysis = {
+  visionRevision: 1,
+  visionFingerprint: 'current-vision',
   items: [{ type: 'sofa', count: 1 }],
   totalVolumeCubicFeet: 80,
   estimatedBoxes: { min: 2, max: 4 },
@@ -471,6 +474,332 @@ describe('estimate session', () => {
   })
 })
 
+describe('request-aware photo review', () => {
+  const mixed = {
+    ...analysis,
+    visionRevision: 1,
+    visionFingerprint: 'current-vision',
+    photoAssessments: [
+      { url: 'https://example.test/a.jpg', status: 'relevant' as const, reason: 'Usable furniture.' },
+      {
+        url: 'https://example.test/b.jpg',
+        status: 'uncertain' as const,
+        reason: 'Please check this photo.',
+        candidates: {
+          items: [{ type: 'couch', count: 2 }],
+          total_volume_cubic_feet: 160,
+          estimated_boxes_min: 3,
+          estimated_boxes_max: 5,
+        },
+      },
+      { url: 'https://example.test/c.jpg', status: 'unrelated' as const, reason: 'Not moving inventory.' },
+    ],
+  }
+  function mount(step = 'review', fingerprint = 'current-vision', responseAnalysis = mixed) {
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string) => {
+        calls.push(path)
+        if (path === '/api/ai-status') return Response.json({ visionRevision: 99, visionFingerprint: fingerprint })
+        if (path === '/api/movers') return Response.json({ movers: [] })
+        throw new Error(`Unexpected ${path}`)
+      }),
+    )
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        step,
+        analysis: responseAnalysis,
+        items: responseAnalysis.items,
+        moveDetails: sampleSession(window.location.origin).moveDetails,
+        ...review,
+        price: savedPrice,
+        estimateId: 'old-id',
+      }),
+    )
+    const view = render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
+    return { ...view, calls }
+  }
+  const draft = () => JSON.parse(window.sessionStorage.getItem(SESSION_KEY) ?? '{}')
+
+  it.each(['keep', 'exclude'] as const)(
+    'persists %s and gates edits, merges only kept aliases, then locks decisions',
+    async (decision) => {
+      const view = mount()
+      await screen.findByRole('button', { name: 'Keep photo 2' })
+      expect(screen.getByAltText('Selected upload 2 to review')).toHaveAttribute('src', 'https://example.test/b.jpg')
+      expect(screen.getByText(/Not moving inventory/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Confirm and price it' })).toBeDisabled()
+      expect(screen.getByLabelText('Add something we missed')).toBeDisabled()
+      expect(draft().items).toEqual([{ type: 'sofa', count: 1 }])
+      fireEvent.click(screen.getByRole('button', { name: `${decision === 'keep' ? 'Keep' : 'Exclude'} photo 2` }))
+      await waitFor(() => expect(draft().photoDecisions).toEqual({ 'https://example.test/b.jpg': decision }))
+      expect(draft()).toMatchObject({ price: null, estimateId: null })
+      expect(draft().items).toEqual([{ type: 'sofa', count: decision === 'keep' ? 3 : 1 }])
+      expect(screen.getByRole('button', { name: 'Confirm and price it' })).toBeEnabled()
+      fireEvent.click(screen.getByRole('button', { name: 'One more sofa' }))
+      expect(screen.getByRole('button', { name: 'Keep photo 2' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Exclude photo 2' })).toBeDisabled()
+      view.unmount()
+      render(
+        createElement(
+          HelmetProvider,
+          null,
+          createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+        ),
+      )
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Keep photo 2' })).toBeDisabled())
+      expect(draft().photoDecisions['https://example.test/b.jpg']).toBe(decision)
+    },
+  )
+
+  it.each(['review', 'estimate'])(
+    'invalidates stale vision on %s load without pricing or lead writes',
+    async (step) => {
+      const { calls } = mount(step, 'new-vision')
+      await waitFor(() => expect(draft().step).toBe('upload'))
+      expect(draft()).toMatchObject({ analysis: null, price: null, estimateId: null, photoDecisions: {} })
+      expect(calls).not.toContain('/api/price')
+      expect(calls).not.toContain('/api/estimates')
+    },
+  )
+
+  it('merges kept candidate volume, boxes and aliases without changing original evidence', () => {
+    const result = reviewedAnalysis(mixed, { 'https://example.test/b.jpg': 'keep' })
+    expect(result.items).toEqual([{ type: 'sofa', count: 3 }])
+    expect(result.totalVolumeCubicFeet).toBe(240)
+    expect(result.estimatedBoxes).toEqual({ min: 5, max: 9 })
+    expect(mixed.items).toEqual([{ type: 'sofa', count: 1 }])
+    expect(photoEvidence(mixed, {})).toEqual({ excludedCount: 1, unresolvedCount: 1 })
+    expect(photoEvidence(mixed, { 'https://example.test/b.jpg': 'exclude' })).toEqual({
+      excludedCount: 2,
+      unresolvedCount: 0,
+    })
+  })
+
+  it('uses the existing box fallback for kept candidates without model box counts', () => {
+    const candidate = {
+      ...mixed,
+      photoAssessments: [
+        {
+          url: 'b',
+          status: 'uncertain' as const,
+          reason: 'Check',
+          candidates: { items: [{ type: 'table', count: 1 }], total_volume_cubic_feet: 20 },
+        },
+      ],
+    }
+    expect(reviewedAnalysis(candidate, { b: 'keep' }).estimatedBoxes).toEqual({ min: 7, max: 14 })
+  })
+
+  it.each(['preprice-change', 'server-409'] as const)(
+    'requires reanalysis for %s and never saves a lead',
+    async (failure) => {
+      mount()
+      fireEvent.click(await screen.findByRole('button', { name: 'Keep photo 2' }))
+      let checks = 0
+      const calls: string[] = []
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (path: string) => {
+          calls.push(path)
+          if (path === '/api/ai-status')
+            return Response.json({
+              visionRevision: 2,
+              visionFingerprint: failure === 'preprice-change' && ++checks > 1 ? 'changed' : 'current-vision',
+            })
+          if (path === '/api/movers') return Response.json({ movers: [] })
+          if (path === '/api/price')
+            return Response.json({ code: 'REANALYZE_REQUIRED', error: 'Analyze again.' }, { status: 409 })
+          throw new Error(`Unexpected ${path}`)
+        }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm and price it' }))
+      await waitFor(() => expect(draft().step).toBe('upload'))
+      expect(draft()).toMatchObject({ analysis: null, price: null, estimateId: null })
+      expect(calls).not.toContain('/api/estimates')
+      expect(calls.includes('/api/price')).toBe(failure === 'server-409')
+    },
+  )
+
+  it('resets photo decisions on return to Photos and shows skipped reasons there', async () => {
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Exclude photo 2' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(draft()).toMatchObject({ step: 'upload', photoDecisions: {}, photoDecisionsLocked: false })
+    expect(screen.getByText(/Photo 3: Not moving inventory/)).toBeInTheDocument()
+  })
+
+  it('clears evidence and decisions when confirmed move details change', async () => {
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep photo 2' }))
+    fireEvent.click(screen.getByRole('button', { name: /2 Details/i }))
+    fireEvent.change(screen.getByLabelText('Moving from'), { target: { value: 'A' } })
+    fireEvent.change(screen.getByLabelText('Moving to'), { target: { value: 'B' } })
+    fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '10' } })
+    fireEvent.submit(screen.getByRole('form', { name: 'Move details' }))
+    await waitFor(() =>
+      expect(draft()).toMatchObject({
+        step: 'upload',
+        analysis: null,
+        photoDecisions: {},
+        photoDecisionsLocked: false,
+        items: [],
+        price: null,
+        estimateId: null,
+      }),
+    )
+  })
+
+  it('shows all-uncertain 400 reasons on Photos and cannot restore an old review', async () => {
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        step: 'upload',
+        analysis: mixed,
+        items: mixed.items,
+        photoUrls: ['https://example.test/b.jpg'],
+        photoRefs: [{ url: 'https://example.test/b.jpg', receipt: 'receipt' }],
+        photoDecisions: { 'https://example.test/b.jpg': 'keep' },
+        photoDecisionsLocked: true,
+        price: savedPrice,
+        estimateId: 'old-id',
+      }),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: 'NO_USABLE_PHOTOS',
+            error: 'Upload clearer usable photos.',
+            photoAssessments: [mixed.photoAssessments[1]],
+          },
+          { status: 400 },
+        ),
+      ),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
+    await screen.findByText(/Photo 1: Please check this photo/)
+    expect(screen.queryByRole('button', { name: 'Keep photo 1' })).not.toBeInTheDocument()
+    expect(draft()).toMatchObject({ step: 'upload', analysis: null, photoDecisions: {}, price: null, estimateId: null })
+  })
+
+  it('does not restore old analysis after leaving Photos and changing details during analysis', async () => {
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => pending),
+    )
+    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...sampleSession(window.location.origin) }))
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Analyse 3 photos' }))
+    fireEvent.click(screen.getByRole('button', { name: /2 Details/i }))
+    fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '99' } })
+    fireEvent.submit(screen.getByRole('form', { name: 'Move details' }))
+    await act(async () => {
+      finish(Response.json(mixed))
+    })
+    expect(draft()).toMatchObject({ step: 'upload', analysis: null, moveDetails: { distanceMiles: 99 } })
+  })
+
+  it('keeps the relevant starting inventory until every uncertain photo is decided', async () => {
+    mount('review', 'current-vision', {
+      ...mixed,
+      photoAssessments: [
+        ...mixed.photoAssessments,
+        {
+          url: 'https://example.test/d.jpg',
+          status: 'uncertain',
+          reason: 'Check another photo.',
+          candidates: { items: [{ type: 'table', count: 1 }], total_volume_cubic_feet: 20 },
+        },
+      ],
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep photo 2' }))
+    expect(draft().items).toEqual([{ type: 'sofa', count: 1 }])
+    expect(screen.getByRole('button', { name: 'Confirm and price it' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Exclude photo 4' }))
+    expect(draft().items).toEqual([{ type: 'sofa', count: 3 }])
+    expect(screen.getByRole('button', { name: 'Confirm and price it' })).toBeEnabled()
+  })
+
+  it('resets decisions when returning through unchanged move details to Photos', async () => {
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep photo 2' }))
+    fireEvent.click(screen.getByRole('button', { name: /2 Details/i }))
+    fireEvent.submit(screen.getByRole('form', { name: 'Move details' }))
+    expect(draft()).toMatchObject({
+      step: 'upload',
+      photoDecisions: {},
+      photoDecisionsLocked: false,
+      items: [{ type: 'sofa', count: 1 }],
+      price: null,
+      estimateId: null,
+    })
+  })
+
+  it.each(['keep', 'exclude'] as const)('sends %s evidence and only accepted totals to pricing', async (decision) => {
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: `${decision === 'keep' ? 'Keep' : 'Exclude'} photo 2` }))
+    let priced: Record<string, unknown> | null = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string, request?: RequestInit) => {
+        if (path === '/api/ai-status') return Response.json({ visionRevision: 99, visionFingerprint: 'current-vision' })
+        if (path === '/api/movers') return Response.json({ movers: [] })
+        if (path === '/api/price') {
+          priced = JSON.parse(request?.body as string)
+          return Response.json({ price: savedPrice })
+        }
+        if (path === '/api/estimates') return Response.json({ id: 'fresh-id', storage: 'memory' })
+        throw new Error(`Unexpected ${path}`)
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and price it' }))
+    await waitFor(() => expect(draft().estimateId).toBe('fresh-id'))
+    expect(priced).toMatchObject({
+      analysis: {
+        items: [{ type: 'sofa', count: decision === 'keep' ? 3 : 1 }],
+        totalVolumeCubicFeet: decision === 'keep' ? 240 : 80,
+      },
+      review: { photoEvidence: { excludedCount: decision === 'keep' ? 1 : 2, unresolvedCount: 0 } },
+    })
+  })
+
+  it('does not invalidate vision on global revision-only changes', async () => {
+    mount()
+    await screen.findByRole('button', { name: 'Keep photo 2' })
+    expect(draft().analysis.visionFingerprint).toBe('current-vision')
+    expect(draft().step).toBe('review')
+  })
+})
+
 describe('estimate review and API', () => {
   it('sends the analyze session, receipt refs and confirmed move details without chat', async () => {
     const fetch = vi.fn(async () => Response.json(analysis))
@@ -706,6 +1035,7 @@ describe('estimate review and API', () => {
 
   it('sends page review answers through EstimateStep before saving a fresh price', async () => {
     const fetch = vi.fn(async (path: string) => {
+      if (path === '/api/ai-status') return Response.json({ visionRevision: 1, visionFingerprint: 'current-vision' })
       if (path === '/api/price') return Response.json({ price: { ...savedPrice, confidenceReasons: [] } })
       if (path === '/api/estimates') return Response.json({ id: 'new-id', storage: 'memory' })
       if (path === '/api/movers') return Response.json({ movers: [] })
@@ -735,6 +1065,7 @@ describe('estimate review and API', () => {
       resolvePrice = resolve
     })
     const fetch = vi.fn(async (path: string) => {
+      if (path === '/api/ai-status') return Response.json({ visionRevision: 1, visionFingerprint: 'current-vision' })
       if (path === '/api/price') return pendingPrice
       if (path === '/api/movers') return Response.json({ movers: [] })
       if (path === '/api/estimates') return Response.json({ id: 'stale-id', storage: 'memory' })

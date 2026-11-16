@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { runText } from '../functions/api/_lib/ai-client'
 import { sampleCacheKey, writeSampleCache } from '../functions/api/_lib/sample-cache'
 import price from '../functions/api/_routes/price'
+import { resolveRole } from '../functions/api/_lib/ai-mode'
+import { visionStatus } from '../functions/api/_lib/vision-fingerprint'
+import type { Bindings } from '../functions/api/_lib/types'
 
 vi.mock('../functions/api/_lib/ai-client', () => ({
   runText: vi.fn(async () => ({ text: '{bad', mode: 'binding' })),
@@ -28,15 +31,17 @@ const moveDetails = {
   destinationElevator: true,
 }
 
-function request(sample = false, overrides: Record<string, unknown> = {}) {
+async function request(sample = false, overrides: Record<string, unknown> = {}) {
+  const env = { ENV: 'preview', PRICE_PER_BOX: '50', CF_AIG_TOKEN: 'synthetic-test-token', ...overrides } as Bindings
+  const current = await visionStatus(await resolveRole(env, 'vision'))
   return price.request(
     '/',
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ analysis, moveDetails, sample }),
+      body: JSON.stringify({ analysis: { ...analysis, ...current }, moveDetails, sample }),
     },
-    { ENV: 'preview', PRICE_PER_BOX: '50', CF_AIG_TOKEN: 'synthetic-test-token', ...overrides },
+    env,
   )
 }
 
@@ -130,7 +135,7 @@ describe('price route model reply', () => {
     const db = { prepare: () => ({ first: async () => null }) } as unknown as D1Database
     const env = { ENV: 'development', MOVERS_DB: db, CF_AIG_TOKEN: 'synthetic-token', PRICE_PER_BOX: '53' }
     const key = await sampleCacheKey('price', {
-      analysis,
+      analysis: { ...(await visionStatus(await resolveRole(env as Bindings, 'vision'))), ...analysis },
       moveDetails: {
         from: moveDetails.from,
         to: moveDetails.to,

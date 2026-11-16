@@ -1,7 +1,7 @@
 import { Badge, Button, Caption, Field, Panel, Textarea } from '@movers/ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AnalysisResult, DetectedItem, MoveDetails, Price, PublicMover, ReviewCoverage } from '@/data'
-import { createEstimate, listMovers, priceApi, requestQuotes } from '@/lib/api-client'
+import { checkVision, createEstimate, EstimateApiError, listMovers, priceApi, requestQuotes } from '@/lib/api-client'
 import { formatMoney, titleCase } from './format'
 
 interface EstimateStepProps {
@@ -15,6 +15,7 @@ interface EstimateStepProps {
   sample: boolean
   /** Bumps whenever the inventory or details change, so the step prices again. */
   onPriced: (price: Price, estimateId: string) => void
+  onReanalyze?: () => void
   onBack: () => void
   onSchedule: () => void
 }
@@ -36,6 +37,7 @@ export function EstimateStep({
   photoUrls,
   sample,
   onPriced,
+  onReanalyze,
   onBack,
   onSchedule,
 }: EstimateStepProps): JSX.Element {
@@ -64,6 +66,8 @@ export function EstimateStep({
     setLoading(true)
     setError(null)
     try {
+      await checkVision(analysis)
+      if (!active.current) return
       const analysisWithItems = { ...analysis, items }
       const { price: fresh } = await priceApi(analysisWithItems, moveDetails, review, sample)
       if (!active.current) return
@@ -77,12 +81,13 @@ export function EstimateStep({
       })
       if (active.current) onPriced(fresh, created.id)
     } catch (caught) {
+      if (active.current && caught instanceof EstimateApiError && caught.code === 'REANALYZE_REQUIRED') onReanalyze?.()
       if (active.current) setError(caught instanceof Error ? caught.message : 'Pricing failed. Try again.')
     } finally {
       inFlight.current = false
       if (active.current) setLoading(false)
     }
-  }, [analysis, items, moveDetails, review, sample, photoUrls, onPriced])
+  }, [analysis, items, moveDetails, review, sample, photoUrls, onPriced, onReanalyze])
 
   useEffect(() => {
     if (price === null) void runPricing()

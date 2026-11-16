@@ -1,6 +1,7 @@
 import type { AnalysisResult, ChatMessage, Contact, DetectedItem, MoveDetails, Price, ReviewCoverage } from '@/data'
 import { EMPTY_MOVE_DETAILS } from '@/data'
 import { SAMPLE_PHOTO_PATHS, samplePhotoPath } from '../data/sample-photos'
+import { canonicalItemType } from './item-aliases'
 export interface PhotoRef {
   url: string
   receipt: string | null
@@ -40,6 +41,8 @@ export interface EstimateSession {
   /** Legacy own-photo thumbnails need new uploads before analysis. */
   needsPhotoReupload: boolean
   analysis: AnalysisResult | null
+  photoDecisions: Record<string, 'keep' | 'exclude'>
+  photoDecisionsLocked: boolean
   /** The inventory as the customer confirmed it; starts as the detected items. */
   items: DetectedItem[]
   followUps: FollowUpAnswers
@@ -62,6 +65,8 @@ export const EMPTY_SESSION: EstimateSession = {
   photoRefs: [],
   needsPhotoReupload: false,
   analysis: null,
+  photoDecisions: {},
+  photoDecisionsLocked: false,
   items: [],
   followUps: EMPTY_FOLLOW_UPS,
   wholeMoveCovered: null,

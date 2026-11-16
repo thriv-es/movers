@@ -7,6 +7,7 @@ import { mockAnalysisReply } from './mock'
 import type { LinkedPhoto } from './photo-links'
 import { photoAssessmentPrompt } from './prompts'
 import { withSampleCache } from './sample-cache'
+import { visionStatus } from './vision-fingerprint'
 import type { Bindings } from './types'
 
 export type PhotoVerdict = 'relevant' | 'unrelated' | 'uncertain'
@@ -21,6 +22,8 @@ export interface VisionAssessment {
   photos: PhotoAssessment[]
   mode: AiMode
   configRevision: number
+  visionRevision: number
+  visionFingerprint: string
   cached?: boolean
 }
 
@@ -247,5 +250,12 @@ export async function assessPhotos(
     }
   })
   if (!parts.length) throw new NoUsableInventoryError(photos)
-  return { analysis: mergeAnalyses(parts), photos, mode: value.mode, configRevision: role.revision, cached }
+  return {
+    analysis: mergeAnalyses(parts),
+    photos,
+    mode: value.mode,
+    configRevision: role.revision,
+    cached,
+    ...(await visionStatus(role)),
+  }
 }

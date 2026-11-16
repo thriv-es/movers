@@ -1,5 +1,5 @@
 import { Button, Stepper, TapeLabel } from '@movers/ui'
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { ChatStep } from '@/components/estimate/ChatStep'
 import { DemoBadge } from '@/components/estimate/DemoBadge'
@@ -23,6 +23,8 @@ import {
 } from '@/lib/estimate-session'
 import { canonicalItemType } from '@/lib/item-aliases'
 import { useEstimateSession } from '@/lib/useEstimateSession'
+import { checkVision, EstimateApiError } from '@/lib/api-client'
+import { clearedAnalysis, photoEvidence, reviewedAnalysis } from '@/lib/review-photos'
 
 const STEP_LABELS: Record<StepKey, string> = {
   chat: 'Chat',
@@ -51,13 +53,66 @@ export default function EstimatePage(): JSX.Element {
     if (wantsSample) navigate('/estimate', { replace: true })
   }, [wantsSample, navigate])
 
+  const [verified, setVerified] = useState<{ analysis: AnalysisResult; step: StepKey } | null>(null)
+  const [freshnessError, setFreshnessError] = useState<string | null>(null)
   const activeIndex = ESTIMATE_STEPS.indexOf(session.step)
-  const review = useMemo(
-    () => ({ followUps: session.followUps, wholeMoveCovered: session.wholeMoveCovered }),
-    [session.followUps, session.wholeMoveCovered],
+  const evidence = useMemo(
+    () => photoEvidence(session.analysis, session.photoDecisions),
+    [session.analysis, session.photoDecisions],
   )
+  const inventoryAnalysis = useMemo(
+    () =>
+      session.analysis && evidence.unresolvedCount === 0
+        ? reviewedAnalysis(session.analysis, session.photoDecisions)
+        : session.analysis,
+    [session.analysis, session.photoDecisions, evidence.unresolvedCount],
+  )
+  const review = useMemo(
+    () => ({ followUps: session.followUps, wholeMoveCovered: session.wholeMoveCovered, photoEvidence: evidence }),
+    [session.followUps, session.wholeMoveCovered, evidence],
+  )
+  const onReanalyze = useCallback(() => {
+    update({ ...clearedAnalysis(), step: 'upload' })
+    setFreshnessError('Photo analysis settings changed. Analyze your photos again.')
+  }, [update])
 
-  const goTo = useCallback((step: StepKey) => update({ step }), [update])
+  useEffect(() => {
+    if (!session.analysis || !['review', 'estimate'].includes(session.step)) return
+    let cancelled = false
+    const analysis = session.analysis
+    const step = session.step
+    setFreshnessError(null)
+    checkVision(analysis)
+      .then(() => {
+        if (!cancelled) setVerified({ analysis, step })
+      })
+      .catch((error) => {
+        if (cancelled) return
+        if (error instanceof EstimateApiError && error.code === 'REANALYZE_REQUIRED') onReanalyze()
+        else setFreshnessError('Unable to check photo analysis settings. Return to Photos and try again.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [session.analysis, session.step, onReanalyze])
+  const visionVerified = verified?.analysis === session.analysis && verified?.step === session.step
+
+  const goTo = useCallback(
+    (step: StepKey) => {
+      if ((step === 'estimate' || step === 'schedule') && evidence.unresolvedCount > 0) return
+      update((current) => ({
+        step,
+        ...(step === 'upload'
+          ? {
+              ...clearedAnalysis(),
+              analysis: current.analysis,
+              items: current.analysis?.items ?? [],
+            }
+          : {}),
+      }))
+    },
+    [update, evidence.unresolvedCount],
+  )
 
   // a saved session can point at review or estimate without an analysis (for example after "Use my own photos")
   useEffect(() => {
@@ -66,14 +121,24 @@ export default function EstimatePage(): JSX.Element {
 
   const onTurn = useCallback(
     (messages: ChatMessage[], moveDetails: MoveDetails, chatFinished: boolean) =>
-      update({ messages, moveDetails, chatFinished }),
+      update((current) => ({
+        messages,
+        moveDetails,
+        chatFinished,
+        ...(JSON.stringify(moveDetails) !== JSON.stringify(current.moveDetails) ? clearedAnalysis() : {}),
+      })),
     [update],
   )
 
   const onDetails = useCallback(
     (moveDetails: MoveDetails) => {
       const changed = JSON.stringify(moveDetails) !== JSON.stringify(session.moveDetails)
-      update({ moveDetails, step: 'upload', ...(changed ? { price: null, estimateId: null, contact: null } : {}) })
+      update((current) => ({
+        moveDetails,
+        step: 'upload',
+        ...clearedAnalysis(),
+        ...(!changed ? { analysis: current.analysis, items: current.analysis?.items ?? [] } : {}),
+      }))
     },
     [session.moveDetails, update],
   )
@@ -89,13 +154,7 @@ export default function EstimatePage(): JSX.Element {
         photoRefs,
         photoUrls: [...legacyUrls, ...photoRefs.map((ref) => ref.url)],
         needsPhotoReupload: legacyUrls.length > 0,
-        analysis: null,
-        items: [],
-        followUps: { ...EMPTY_FOLLOW_UPS },
-        wholeMoveCovered: null,
-        price: null,
-        estimateId: null,
-        contact: null,
+        ...clearedAnalysis(),
       }),
     [update],
   )
@@ -104,6 +163,8 @@ export default function EstimatePage(): JSX.Element {
     (analysis: AnalysisResult) =>
       update({
         analysis,
+        photoDecisions: {},
+        photoDecisionsLocked: false,
         items: analysis.items,
         step: 'review',
         followUps: { ...EMPTY_FOLLOW_UPS },
@@ -115,8 +176,35 @@ export default function EstimatePage(): JSX.Element {
     [update],
   )
 
+  const onPhotoDecision = useCallback(
+    (url: string, decision: 'keep' | 'exclude') =>
+      update((current) => {
+        if (
+          !current.analysis ||
+          current.photoDecisionsLocked ||
+          !current.analysis.photoAssessments?.some((photo) => photo.url === url && photo.status === 'uncertain')
+        )
+          return {}
+        const photoDecisions = { ...current.photoDecisions, [url]: decision }
+        return {
+          photoDecisions,
+          items:
+            photoEvidence(current.analysis, photoDecisions).unresolvedCount === 0
+              ? reviewedAnalysis(current.analysis, photoDecisions).items
+              : current.analysis.items,
+          followUps: { ...EMPTY_FOLLOW_UPS },
+          wholeMoveCovered: null,
+          price: null,
+          estimateId: null,
+          contact: null,
+        }
+      }),
+    [update],
+  )
+
   const onItemsChange = useCallback(
-    (items: DetectedItem[]) => update({ items, price: null, estimateId: null, contact: null }),
+    (items: DetectedItem[]) =>
+      update({ items, photoDecisionsLocked: true, price: null, estimateId: null, contact: null }),
     [update],
   )
 
@@ -126,6 +214,7 @@ export default function EstimatePage(): JSX.Element {
         const extra = FOLLOW_UP_ITEMS[key]
         const without = current.items.filter((item) => !sameType(item.type, extra.type))
         return {
+          photoDecisionsLocked: true,
           followUps: { ...current.followUps, [key]: answer },
           items: answer ? [...without, extra] : without,
           price: null,
@@ -154,13 +243,7 @@ export default function EstimatePage(): JSX.Element {
         photoUrls: [],
         photoRefs: [],
         needsPhotoReupload: false,
-        analysis: null,
-        items: [],
-        followUps: { ...EMPTY_FOLLOW_UPS },
-        wholeMoveCovered: null,
-        price: null,
-        estimateId: null,
-        contact: null,
+        ...clearedAnalysis(),
       }),
     [update],
   )
@@ -192,9 +275,11 @@ export default function EstimatePage(): JSX.Element {
             needsPhotoReupload={session.needsPhotoReupload}
             sample={session.sample}
             hasAnalysis={session.analysis !== null}
+            photoAssessments={session.analysis?.photoAssessments}
             confirmChange={confirmPhotoChange}
             onPhotosChange={onPhotosChange}
             onAnalyzed={onAnalyzed}
+            onAnalyzeStart={() => update(clearedAnalysis())}
             onUseOwnPhotos={useOwnPhotos}
             onUseSample={startSample}
             onBack={() => goTo('details')}
@@ -204,8 +289,11 @@ export default function EstimatePage(): JSX.Element {
         if (!session.analysis) return null
         return (
           <ReviewStep
-            analysis={session.analysis}
+            analysis={inventoryAnalysis ?? session.analysis}
             items={session.items}
+            photoDecisions={session.photoDecisions}
+            photoDecisionsLocked={session.photoDecisionsLocked}
+            onPhotoDecision={onPhotoDecision}
             followUps={session.followUps}
             wholeMoveCovered={session.wholeMoveCovered}
             onWholeMoveCovered={onWholeMoveCovered}
@@ -217,9 +305,13 @@ export default function EstimatePage(): JSX.Element {
         )
       case 'estimate':
         if (!session.analysis) return null
+        if (evidence.unresolvedCount > 0)
+          return <p>Return to Review and decide every uncertain photo before pricing.</p>
+        if (!visionVerified) return <p role="status">{freshnessError ?? 'Checking photo analysis settings...'}</p>
         return (
           <EstimateStep
-            analysis={session.analysis}
+            analysis={inventoryAnalysis ?? session.analysis}
+            onReanalyze={onReanalyze}
             items={session.items}
             moveDetails={session.moveDetails}
             review={review}
@@ -248,6 +340,13 @@ export default function EstimatePage(): JSX.Element {
     }
   }, [
     session,
+    update,
+    inventoryAnalysis,
+    evidence.unresolvedCount,
+    visionVerified,
+    freshnessError,
+    onReanalyze,
+    onPhotoDecision,
     goTo,
     onTurn,
     onDetails,
@@ -285,7 +384,10 @@ export default function EstimatePage(): JSX.Element {
         </div>
         <Stepper steps={STEPS} activeIndex={activeIndex} onSelect={(index) => goTo(ESTIMATE_STEPS[index] ?? 'chat')} />
       </header>
-      <main className="est-body">{body}</main>
+      <main className="est-body">
+        {freshnessError ? <p role="alert">{freshnessError}</p> : null}
+        {body}
+      </main>
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import { Button, Caption, Panel, Progress } from '@movers/ui'
 import { type ChangeEvent, useEffect, useRef, useState } from 'react'
 import type { AnalysisResult, MoveDetails } from '@/data'
-import { analyzeApi, uploadImage } from '@/lib/api-client'
+import { analyzeApi, EstimateApiError, uploadImage } from '@/lib/api-client'
 import { downscaleImage } from '@/lib/image-downscale'
 import { type PhotoRef, isBundledSampleUrl } from '@/lib/estimate-session'
 
@@ -13,10 +13,12 @@ interface UploadStepProps {
   needsPhotoReupload: boolean
   sample: boolean
   hasAnalysis: boolean
+  photoAssessments?: AnalysisResult['photoAssessments']
   /** Asked before a change that would discard an existing analysis; false cancels the change. */
   confirmChange: () => boolean
   onPhotosChange: (refs: PhotoRef[], legacyUrls: string[]) => void
   onAnalyzed: (analysis: AnalysisResult) => void
+  onAnalyzeStart?: () => void
   onUseOwnPhotos: () => void
   onUseSample: () => void
   onBack: () => void
@@ -69,9 +71,11 @@ export function UploadStep({
   needsPhotoReupload,
   sample,
   hasAnalysis,
+  photoAssessments = [],
   confirmChange,
   onPhotosChange,
   onAnalyzed,
+  onAnalyzeStart,
   onUseOwnPhotos,
   onUseSample,
   onBack,
@@ -79,16 +83,20 @@ export function UploadStep({
   const [cards, setCards] = useState<PhotoCard[]>(() =>
     photoUrls.map((url) => fromUrl(url, photoRefs.find((ref) => ref.url === url) ?? null)),
   )
+  const [failedAssessments, setFailedAssessments] = useState<NonNullable<AnalysisResult['photoAssessments']>>([])
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const libraryRef = useRef<HTMLInputElement>(null)
   const cardsRef = useRef(cards)
+  const active = useRef(true)
   cardsRef.current = cards
 
   // revoke every object URL when the step unmounts
   useEffect(() => {
+    active.current = true
     return () => {
+      active.current = false
       for (const card of cardsRef.current) if (card.objectUrl) URL.revokeObjectURL(card.objectUrl)
     }
   }, [])
@@ -173,14 +181,19 @@ export function UploadStep({
   const analyze = async () => {
     const refs = cards.flatMap((card) => (usable(card.ref) ? [card.ref] : []))
     if (refs.length === 0) return
+    onAnalyzeStart?.()
     setAnalyzing(true)
+    setFailedAssessments([])
     setError(null)
     try {
-      onAnalyzed(await analyzeApi(sessionId, refs, moveDetails, sample))
+      const result = await analyzeApi(sessionId, refs, moveDetails, sample)
+      if (active.current) onAnalyzed(result)
     } catch (caught) {
+      if (!active.current) return
+      if (caught instanceof EstimateApiError) setFailedAssessments(caught.photoAssessments)
       setError(caught instanceof Error ? caught.message : 'We could not read the photos. Try again.')
     } finally {
-      setAnalyzing(false)
+      if (active.current) setAnalyzing(false)
     }
   }
 
@@ -255,7 +268,13 @@ export function UploadStep({
                 ) : null}
               </div>
               {!sample ? (
-                <Button size="sm" variant="ghost" className="est-photo__remove" onClick={() => remove(card.id)}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="est-photo__remove"
+                  disabled={analyzing}
+                  onClick={() => remove(card.id)}
+                >
                   Remove
                 </Button>
               ) : null}
@@ -272,6 +291,22 @@ export function UploadStep({
         </p>
       ) : null}
 
+      {(failedAssessments.length > 0 ? failedAssessments : photoAssessments).some(
+        (photo) => photo.status !== 'relevant',
+      ) ? (
+        <div>
+          <p>Some photos could not be included. Upload usable photos of the items being moved, then analyze again.</p>
+          <ul aria-label="Photo assessment reasons">
+            {(failedAssessments.length > 0 ? failedAssessments : photoAssessments).map((photo, index) =>
+              photo.status !== 'relevant' ? (
+                <li key={photo.url}>
+                  Photo {index + 1}: {photo.reason}
+                </li>
+              ) : null,
+            )}
+          </ul>
+        </div>
+      ) : null}
       {analyzing ? (
         <Panel tone="kraft" flat className="est-wait" aria-live="polite">
           <strong>Looking at your photos...</strong>

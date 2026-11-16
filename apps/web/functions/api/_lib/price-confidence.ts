@@ -1,4 +1,4 @@
-import type { Confidence, PriceRequest } from '../../../src/data'
+import type { Confidence, PriceRequest, ReviewCoverage } from '../../../src/data'
 
 const levels: Confidence[] = ['high', 'medium', 'low']
 const missingFields = {
@@ -10,7 +10,10 @@ const missingFields = {
 } as const
 
 /** The server owns the confidence ceiling; a lower model suggestion may only reduce it. */
-export function priceConfidence(request: PriceRequest, suggested: unknown): { level: Confidence; reasons: string[] } {
+export function priceConfidence(
+  request: Omit<PriceRequest, 'review'> & { review: ReviewCoverage },
+  suggested: unknown,
+): { level: Confidence; reasons: string[] } {
   const reasons: string[] = []
   const { analysis, moveDetails, review } = request
   const missing = (Object.keys(missingFields) as Array<keyof typeof missingFields>).filter(
@@ -31,11 +34,22 @@ export function priceConfidence(request: PriceRequest, suggested: unknown): { le
   }
   if (analysis.unseenAreas.length > 0) reasons.push('Some areas were not shown in the photos; confirm their inventory.')
 
+  const { excludedCount = 0, unresolvedCount = 0 } = review.photoEvidence ?? {}
+  // A legacy evidence payload must not hide exclusions already present in the analysis.
+  const assessedExcluded =
+    analysis.photoAssessments?.filter((photo) => ['unrelated', 'unlinked', 'unavailable'].includes(photo.status))
+      .length ??
+    analysis.photoLinkStatuses?.filter((photo) => photo.status !== 'eligible').length ??
+    0
+  const excluded = Math.max(excludedCount, assessedExcluded)
+  if (excluded > 0)
+    reasons.push('Some photos were excluded from the inventory; their contents are not covered by photo evidence.')
+  if (unresolvedCount > 0) reasons.push('Some photo relevance decisions remain unresolved.')
   const unanswered = Object.values(review.followUps).some((answer) => answer === null)
   const byRules: Confidence =
-    review.wholeMoveCovered !== true || unanswered || missing.length >= 3
+    unresolvedCount > 0 || review.wholeMoveCovered !== true || unanswered || missing.length >= 3
       ? 'low'
-      : missing.length > 0 || analysis.unseenAreas.length > 0
+      : excluded > 0 || missing.length > 0 || analysis.unseenAreas.length > 0
         ? 'medium'
         : 'high'
   const model = suggested === 'high' || suggested === 'medium' || suggested === 'low' ? suggested : byRules

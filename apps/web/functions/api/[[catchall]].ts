@@ -9,9 +9,11 @@ import estimates from './_routes/estimates'
 import movers from './_routes/movers'
 import quoteRequests from './_routes/quote-requests'
 import admin from './_routes/admin'
+import aiStatus from './_routes/ai-status'
 
 const app = new Hono<{ Bindings: Bindings }>().basePath('/api')
 
+app.route('/ai-status', aiStatus)
 app.route('/chat', chat)
 app.route('/analyze', analyze)
 app.route('/price', price)

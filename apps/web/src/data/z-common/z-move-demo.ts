@@ -75,7 +75,13 @@ export const zPriceBreakdown = z.record(z.string(), z.number().nonnegative())
 
 export const zConfidence = z.enum(['high', 'medium', 'low'])
 
+export const zPhotoEvidence = z.object({
+  excludedCount: z.number().int().nonnegative(),
+  unresolvedCount: z.number().int().nonnegative(),
+})
+
 export const zReviewCoverage = z.object({
+  photoEvidence: zPhotoEvidence.default(() => ({ excludedCount: 0, unresolvedCount: 0 })),
   followUps: z.object({
     garage: z.boolean().nullable(),
     closets: z.boolean().nullable(),
@@ -85,6 +91,7 @@ export const zReviewCoverage = z.object({
 })
 
 export const EMPTY_REVIEW_COVERAGE: z.infer<typeof zReviewCoverage> = {
+  photoEvidence: { excludedCount: 0, unresolvedCount: 0 },
   followUps: { garage: null, closets: null, appliances: null },
   wholeMoveCovered: null,
 }
@@ -125,7 +132,15 @@ export const zPhotoAssessment = z
     message: 'Only uncertain photos can have candidates',
   })
 
+export const zVisionStatus = z.object({
+  visionRevision: z.number().int().nonnegative(),
+  visionFingerprint: z.string().min(1),
+})
+
 export const zAnalysisResult = z.object({
+  // Legacy drafts can be read, but must be reanalyzed before pricing.
+  visionRevision: z.number().int().nonnegative().optional(),
+  visionFingerprint: z.string().min(1).optional(),
   photoAssessments: z.array(zPhotoAssessment).optional(),
   photoLinkStatuses: z
     .array(z.object({ url: z.string(), status: z.enum(['eligible', 'unlinked', 'unavailable']), reason: z.string() }))
@@ -164,6 +179,7 @@ export const zPriceRequest = z.object({
   analysis: zAnalysisResult,
   moveDetails: zMoveDetails,
   review: zReviewCoverage.default(() => ({
+    photoEvidence: { excludedCount: 0, unresolvedCount: 0 },
     followUps: { ...EMPTY_REVIEW_COVERAGE.followUps },
     wholeMoveCovered: null,
   })),

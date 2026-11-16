@@ -4,6 +4,7 @@ import type { AnalysisResult } from '../../../src/data'
 import { zAnalysisResult, zAnalyzeRequest, zPhotoAssessment } from '../../../src/data'
 import { AnalysisFormatError, NoUsableInventoryError, assessPhotos } from '../_lib/vision-assessment'
 import { resolvePhotoLinks } from '../_lib/photo-links'
+import { analysisBoxes } from '../../../src/lib/analysis-boxes'
 
 const analyze = new Hono<{ Bindings: Bindings }>()
 
@@ -85,8 +86,7 @@ analyze.post('/', async (c) => {
     }
 
     const totalVol = llmData.total_volume_cubic_feet
-    const estimatedBoxesMin = llmData.estimated_boxes_min ?? Math.max(5, Math.ceil((totalVol * 0.3) / 4))
-    const estimatedBoxesMax = llmData.estimated_boxes_max ?? Math.max(10, Math.ceil((totalVol * 0.3) / 3))
+    const estimatedBoxes = analysisBoxes(totalVol, llmData.estimated_boxes_min, llmData.estimated_boxes_max)
     const boxesExplanation =
       llmData.boxes_explanation ?? 'Box estimate based on visible items and standard packing assumptions.'
 
@@ -99,11 +99,13 @@ analyze.post('/', async (c) => {
     const unseenAreas = (Array.isArray(llmData.unseen_areas) ? llmData.unseen_areas : []).map(str).filter(Boolean)
 
     const result: AnalysisResult = {
+      visionRevision: value.visionRevision,
+      visionFingerprint: value.visionFingerprint,
       photoAssessments: zPhotoAssessment.array().parse(value.photos),
       photoLinkStatuses,
       items,
       totalVolumeCubicFeet: totalVol,
-      estimatedBoxes: { min: estimatedBoxesMin, max: estimatedBoxesMax },
+      estimatedBoxes,
       boxesExplanation,
       specialHandling,
       possibleDuplicates,
