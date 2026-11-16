@@ -384,7 +384,7 @@ test('reload during committed save preserves unknown outcome and never offers a 
     body: JSON.stringify({ operations, serverEstimates: (await state(request)).estimates }),
     contentType: 'application/json',
   })
-  // Known RED on reviewed 2eca813: unload abort is currently persisted as failed, allowing blind retry.
+  // A committed write with an unread response remains unknown across reload, never a blind retry.
   await expect(page.getByRole('status').filter({ hasText: 'Save interrupted' })).toContainText('unknown outcome')
   await expect(page.getByRole('button', { name: 'Retry save', exact: true })).toHaveCount(0)
   await gate(request, 'after:POST /api/estimates', true)

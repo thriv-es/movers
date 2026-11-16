@@ -65,6 +65,8 @@ let requests = []
 let scenario = 'normal'
 let chatDelay = 0
 let conversationFailure = false
+let conversationMode = 'normal'
+let conversationCalls = 0
 let conversationCommands = null
 let saveFailures = 0
 let emailLogsSuppressed = 0
@@ -182,10 +184,14 @@ const env = {
           content.split('CURRENT_STATE_AND_MESSAGES_JSON\n')[1].split('\nEND_CURRENT_STATE_AND_MESSAGES_JSON')[0],
         )
         // Provider-level script, not API fulfillment: the real parser/authorship/revision checks still run.
+        conversationCalls++
         await hold('conversation')
         if (chatDelay) await new Promise((done) => setTimeout(done, chatDelay))
         if (conversationFailure) throw new Error('Scripted conversation outage')
-        const answer = messages.at(-1)?.content ?? ''
+        if (conversationMode === 'malformed' || (conversationMode === 'retry-once' && conversationCalls === 1))
+          return { response: 'synthetic-private-envelope-invalid-json' }
+        // Refresh keeps the transcript, including the prior assistant's proposal guidance.
+        const answer = messages.findLast((message) => message.role === 'user')?.content ?? ''
         let commands = conversationCommands ?? []
         if (conversationCommands === null) {
           let patch
@@ -280,6 +286,8 @@ app.post('/__e2e/reset', async (c) => {
   scenario = 'normal'
   chatDelay = 0
   conversationFailure = false
+  conversationMode = 'normal'
+  conversationCalls = 0
   conversationCommands = null
   saveFailures = 0
   emailLogsSuppressed = 0
@@ -292,6 +300,7 @@ app.post('/__e2e/scenario', async (c) => {
   scenario = body.name
   chatDelay = body.chatDelay === 750 ? 750 : 0
   conversationFailure = body.conversationFailure === true
+  conversationMode = ['malformed', 'retry-once'].includes(body.conversationMode) ? body.conversationMode : 'normal'
   conversationCommands = body.commands ?? null
   saveFailures = body.saveFailures === 1 ? 1 : 0
   return c.json({ scenario })
@@ -313,6 +322,7 @@ app.get('/__e2e/state', async (c) =>
     uploads,
     calls,
     requests,
+    conversationCalls,
     entered,
     emailLogsSuppressed,
     movers: await db.prepare('SELECT COUNT(*) AS count FROM movers').first('count'),
