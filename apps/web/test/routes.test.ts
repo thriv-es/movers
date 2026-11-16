@@ -495,10 +495,19 @@ describe('semantic photo route responses', () => {
     expect(JSON.stringify(AI.run.mock.calls)).not.toContain('CHAT MUST NOT REACH VISION')
   })
 
-  it.each([false, true])(
-    'does not expose or cache confirmed-detail echoes in inventory (all uncertain: %s)',
-    async (allUncertain) => {
-      const sentinel = allUncertain ? 'PrivateOnlyCandidateAddress' : 'PrivateMixedInventoryAddress'
+  it.each([
+    { allUncertain: false, shortStreet: false },
+    { allUncertain: true, shortStreet: false },
+    { allUncertain: false, shortStreet: true },
+    { allUncertain: true, shortStreet: true },
+  ])(
+    'does not expose or cache confirmed-detail echoes (all uncertain: $allUncertain, short street: $shortStreet)',
+    async ({ allUncertain, shortStreet }) => {
+      const sentinel = shortStreet
+        ? '12 Elm St'
+        : allUncertain
+          ? 'PrivateOnlyCandidateAddress'
+          : 'PrivateMixedInventoryAddress'
       const entries: string[] = []
       vi.stubGlobal(
         'fetch',
@@ -518,10 +527,7 @@ describe('semantic photo route responses', () => {
           verdict,
           reason: `Photo at ${sentinel}`,
           inventory: {
-            items: [
-              { type: 'sofa', count: 1 },
-              { type: sentinel, count: 1 },
-            ],
+            items: [{ type: 'sofa', count: 1 }],
             total_volume_cubic_feet: 80,
             boxes_explanation: `Packing at ${sentinel}`,
             special_handling: [
@@ -539,7 +545,7 @@ describe('semantic photo route responses', () => {
           verdicts.map((_, index) => `http://localhost/sample/${index === 0 ? 'bedroom' : 'kitchen'}.jpg`),
           true,
         ),
-        moveDetails: { ...EMPTY_MOVE_DETAILS, from: sentinel },
+        moveDetails: { ...EMPTY_MOVE_DETAILS, from: shortStreet ? '12 Elm St, Rye, NY' : sentinel },
       }
       const bindings = env({ ENV: 'preview', AI })
       const res = await post(analyze, body, bindings)
@@ -563,6 +569,50 @@ describe('semantic photo route responses', () => {
       }
       expect(console.warn).not.toHaveBeenCalled()
       expect(console.error).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each([false, true])(
+    'keeps numeric furniture labels and paired counts/volume in HTTP inventory (mixed: %s)',
+    async (mixed) => {
+      const items = [
+        { type: '2-seater sofa', count: 2 },
+        ...(mixed
+          ? [
+              { type: '200 cm table', count: 1 },
+              { type: '12-drawer dresser', count: 1 },
+            ]
+          : []),
+      ]
+      const volume = mixed ? 240 : 160
+      const answers = ['relevant', 'uncertain'].map((verdict) =>
+        JSON.stringify({ verdict, reason: 'visible furniture', inventory: { items, total_volume_cubic_feet: volume } }),
+      )
+      const AI = { run: vi.fn(async () => ({ response: answers.shift() })) }
+      const body = {
+        ...analyzeBody(['http://localhost/api/images/a.png', 'http://localhost/api/images/b.png']),
+        moveDetails: {
+          from: '12 Elm St, Rye, NY',
+          to: '9 Oak Ave, New York, NY',
+          date: '2027-06-17',
+          distanceMiles: 200,
+          originFloor: 2,
+          destinationFloor: 3,
+          originElevator: false,
+          destinationElevator: true,
+        },
+      }
+      const res = await post(analyze, body, env({ ENV: 'preview', AI }))
+      expect(res.status).toBe(200)
+      const result = (await res.json()) as {
+        items: unknown
+        totalVolumeCubicFeet: number
+        photoAssessments: { candidates?: { items: unknown; total_volume_cubic_feet: number } }[]
+      }
+      expect(result.items).toEqual(items)
+      expect(result.totalVolumeCubicFeet).toBe(volume)
+      expect(result.photoAssessments[1]?.candidates?.items).toEqual(items)
+      expect(result.photoAssessments[1]?.candidates?.total_volume_cubic_feet).toBe(volume)
     },
   )
 

@@ -55,13 +55,31 @@ function privateDetailMatcher(details: MoveDetails): (text: string) => boolean {
       .replace(/[^\p{L}\p{N}]+/gu, ' ')
       .trim()
   const fragments = new Set<string>()
-  for (const value of Object.values(details)) {
-    if (value === null) continue
-    const normalized = normalize(String(value))
-    if (!normalized) continue
-    fragments.add(normalized)
-    // Also protect distinctive address/date fragments, without treating short fragments of longer addresses as secrets.
-    for (const word of normalized.split(' ')) if (word.length >= 4) fragments.add(word)
+  for (const location of [details.from, details.to]) {
+    if (!location) continue
+    // Keep meaningful location phrases, including short street lines/cities/states. Do not blacklist
+    // individual address words or house numbers: they can also be ordinary furniture attributes.
+    for (const component of [location, ...location.split(/[,;\n]/)]) {
+      const normalized = normalize(component)
+      if (!/\p{L}/u.test(normalized)) continue
+      fragments.add(normalized)
+      fragments.add(normalized.replace(/^\d+\s+/, ''))
+    }
+  }
+  if (details.date) {
+    const date = normalize(details.date)
+    if (date.includes(' ') || /\p{L}/u.test(date)) fragments.add(date)
+  }
+  // Explicit move-access phrases are context, unlike bare 2/200/true in a furniture label.
+  for (const floor of [details.originFloor, details.destinationFloor]) {
+    if (floor !== null) fragments.add(`floor ${floor}`)
+  }
+  if (details.distanceMiles !== null) {
+    fragments.add(normalize(`distance ${details.distanceMiles}`))
+    fragments.add(normalize(`${details.distanceMiles} miles`))
+  }
+  for (const elevator of [details.originElevator, details.destinationElevator]) {
+    if (elevator !== null) fragments.add(`elevator ${elevator}`)
   }
   return (text) => {
     const normalized = ` ${normalize(text)} `
@@ -73,15 +91,15 @@ function sanitizeInventory(
   inventory: z.infer<typeof zPhotoInventory>,
   isPrivate: (text: string) => boolean,
 ): z.infer<typeof zPhotoInventory> {
+  // Item-level volumes are unavailable. Reject/retry the entire photo rather than dropping an item
+  // while retaining its contribution to the model's total. Notes do not contribute to that total.
+  if (inventory.items.some((item) => isPrivate(item.type))) throw new Error('Private context in inventory labels')
   return {
     ...inventory,
-    // Drop unsafe labels rather than inventing an item or area from redacted private context.
-    items: inventory.items.filter((item) => !isPrivate(item.type)),
     ...(inventory.boxes_explanation !== undefined
       ? {
-          boxes_explanation: isPrivate(inventory.boxes_explanation)
-            ? 'Box estimate based on visible movable items only.'
-            : inventory.boxes_explanation,
+          // Explanations do not need request context; never forward free-form model prose.
+          boxes_explanation: 'Box estimate based on visible movable items only.',
         }
       : {}),
     ...(inventory.special_handling
@@ -90,9 +108,7 @@ function sanitizeInventory(
             .filter((entry) => !isPrivate(entry.item))
             .map((entry) => ({
               ...entry,
-              reason: isPrivate(entry.reason)
-                ? 'Needs special handling based on visible item characteristics.'
-                : entry.reason,
+              reason: 'Needs special handling based on visible item characteristics.',
             })),
         }
       : {}),
@@ -108,11 +124,9 @@ function parseAssessment(text: string, isPrivate: (text: string) => boolean): As
     const data = envelope.parse(JSON.parse(text))
     if (data.verdict === 'unrelated') return { verdict: data.verdict }
     if (!data.inventory || typeof data.inventory !== 'object' || Array.isArray(data.inventory)) return null
-    const inventory = sanitizeInventory(
-      zPhotoInventory.parse(parseModelAnalysis(JSON.stringify(data.inventory))),
-      isPrivate,
-    )
-    return { verdict: data.verdict, inventory: { ...inventory, items: mergeAnalyses([inventory]).items } }
+    const parsed = zPhotoInventory.parse(parseModelAnalysis(JSON.stringify(data.inventory)))
+    const inventory = sanitizeInventory({ ...parsed, items: mergeAnalyses([parsed]).items }, isPrivate)
+    return { verdict: data.verdict, inventory }
   } catch {
     // Neither raw replies nor free-form model reasons are logged or returned: they may echo private details.
     return null
@@ -154,7 +168,7 @@ export async function assessPhotos(
     {
       role: 'vision',
       // Bypass earlier v5 values that could contain unsanitized inventory text.
-      inventoryPrivacyVersion: 1,
+      inventoryPrivacyVersion: 2,
       backend: role.mode,
       model: role.selection.model,
       configRevision: role.revision,

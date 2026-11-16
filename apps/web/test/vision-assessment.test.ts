@@ -152,10 +152,7 @@ describe('request-aware photo assessment with fake Workers AI', () => {
     const sentinel = '7421 PrivacySentinel Avenue, ConfidentialCity, ZZ 90321'
     const echoed = {
       ...inventory(),
-      items: [
-        { type: 'sofa', count: 1 },
-        { type: `cabinet at ${sentinel}`, count: 1 },
-      ],
+      items: [{ type: 'sofa', count: 1 }],
       boxes_explanation: `Packing at ${sentinel}`,
       special_handling: [
         { item: 'piano', reason: `Access at ${sentinel}` },
@@ -200,30 +197,34 @@ describe('request-aware photo assessment with fake Workers AI', () => {
     expect([log.mock.calls, warn.mock.calls, error.mock.calls]).toEqual([[], [], []])
   })
 
-  it('does not reuse vulnerable v5 cache entries created before inventory sanitization', async () => {
-    const details = { ...EMPTY_MOVE_DETAILS, from: 'LegacyPrivateAddress' }
-    const model = '@cf/meta/llama-3.2-11b-vision-instruct'
-    const oldKey = await sampleCacheKey('analyze', {
-      role: 'vision',
-      backend: 'binding',
-      model,
-      configRevision: 0,
-      moveDetails: details,
-      photos: ['/sample/0.jpg'],
-    })
-    await writeSampleCache(
-      oldKey,
-      JSON.stringify({
-        mode: 'binding',
-        assessments: [{ verdict: 'relevant', inventory: { ...inventory(), boxes_explanation: details.from } }],
-      }),
-    )
-    const run = vi.fn(async () => ({ response: reply() }))
-    const result = await assessPhotos(bindings(run), photos(1), details, true)
-    expect(JSON.stringify(result).includes('LegacyPrivateAddress')).toBe(false)
-    expect(result.cached).toBe(false)
-    expect(run).toHaveBeenCalledTimes(1)
-  })
+  it.each([undefined, 1])(
+    'does not reuse vulnerable v5 cache entries with privacy revision %s',
+    async (privacyVersion) => {
+      const details = { ...EMPTY_MOVE_DETAILS, from: `LegacyPrivateAddress ${privacyVersion ?? 'original'}` }
+      const model = '@cf/meta/llama-3.2-11b-vision-instruct'
+      const oldKey = await sampleCacheKey('analyze', {
+        role: 'vision',
+        ...(privacyVersion === undefined ? {} : { inventoryPrivacyVersion: privacyVersion }),
+        backend: 'binding',
+        model,
+        configRevision: 0,
+        moveDetails: details,
+        photos: ['/sample/0.jpg'],
+      })
+      await writeSampleCache(
+        oldKey,
+        JSON.stringify({
+          mode: 'binding',
+          assessments: [{ verdict: 'relevant', inventory: { ...inventory(), boxes_explanation: details.from } }],
+        }),
+      )
+      const run = vi.fn(async () => ({ response: reply() }))
+      const result = await assessPhotos(bindings(run), photos(1), details, true)
+      expect(JSON.stringify(result).includes('LegacyPrivateAddress')).toBe(false)
+      expect(result.cached).toBe(false)
+      expect(run).toHaveBeenCalledTimes(1)
+    },
+  )
 
   it('removes case, punctuation and address-fragment echoes as well as destination and move-date echoes', async () => {
     const run = vi.fn(async () => ({
@@ -252,6 +253,166 @@ describe('request-aware photo assessment with fake Workers AI', () => {
     expect(/privacysentinel|destinationsecret|confidentialcity|2027/i.test(JSON.stringify(result))).toBe(false)
     expect(result.analysis.items).toEqual([{ type: 'sofa', count: 1 }])
   })
+
+  it.each([
+    { component: 'short street line', echo: '12 Elm St' },
+    { component: 'street name phrase', echo: 'Elm St' },
+    { component: 'short city', echo: 'Rye' },
+    { component: 'state component', echo: 'NY' },
+  ])('protects the $component in relevant inventory and uncertain candidates', async ({ echo }) => {
+    const answers = ['relevant', 'uncertain'].map((verdict) =>
+      JSON.stringify({
+        verdict,
+        reason: 'visible furniture',
+        inventory: {
+          ...inventory(),
+          boxes_explanation: `Packing at ${echo}`,
+          special_handling: [{ item: 'piano', reason: `Access at ${echo}` }],
+          possible_duplicates: [{ item: `cabinet at ${echo}`, count: 2 }],
+          unseen_areas: [`Storage at ${echo}`],
+        },
+      }),
+    )
+    const run = vi.fn(async () => ({ response: answers.shift() }))
+    const result = await assessPhotos(
+      bindings(run),
+      photos(2),
+      { ...EMPTY_MOVE_DETAILS, from: '12 Elm St, Rye, NY' },
+      false,
+    )
+    expect(JSON.stringify(result).includes(echo)).toBe(false)
+    expect(result.analysis.items).toEqual([{ type: 'sofa', count: 1 }])
+    expect(result.analysis.total_volume_cubic_feet).toBe(80)
+    expect(result.photos[1]?.candidates?.items).toEqual([{ type: 'sofa', count: 1 }])
+    expect(result.photos[1]?.candidates?.total_volume_cubic_feet).toBe(80)
+    expect(run).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([false, true])(
+    'preserves numeric furniture attributes, counts and volume with confirmed details (mixed: %s)',
+    async (mixed) => {
+      const items = [
+        { type: '2-seater sofa', count: 2 },
+        ...(mixed
+          ? [
+              { type: '200 cm table', count: 1 },
+              { type: '12-drawer dresser', count: 1 },
+            ]
+          : []),
+      ]
+      const volume = mixed ? 240 : 160
+      const answers = ['relevant', 'uncertain'].map((verdict) =>
+        JSON.stringify({
+          verdict,
+          reason: 'visible furniture',
+          inventory: {
+            items,
+            total_volume_cubic_feet: volume,
+            special_handling: [{ item: '2-seater sofa', reason: 'Requires wrapping' }],
+            possible_duplicates: [{ item: '2-seater sofa', count: 2 }],
+            unseen_areas: ['2-car garage'],
+          },
+        }),
+      )
+      const run = vi.fn(async () => ({ response: answers.shift() }))
+      const result = await assessPhotos(
+        bindings(run),
+        photos(2),
+        {
+          from: '12 Elm St, Rye, NY',
+          to: '9 Oak Ave, New York, NY',
+          date: '2027-06-17',
+          distanceMiles: 200,
+          originFloor: 2,
+          destinationFloor: 3,
+          originElevator: false,
+          destinationElevator: true,
+        },
+        false,
+      )
+      expect(result.analysis.items).toEqual(items)
+      expect(result.analysis.total_volume_cubic_feet).toBe(volume)
+      expect(result.photos[1]?.candidates?.items).toEqual(items)
+      expect(result.photos[1]?.candidates?.total_volume_cubic_feet).toBe(volume)
+      expect(result.analysis.special_handling).toEqual([{ item: '2-seater sofa', reason: expect.any(String) }])
+      expect(result.analysis.possible_duplicates).toEqual([{ item: '2-seater sofa', count: 2 }])
+      expect(result.analysis.unseen_areas).toEqual(['2-car garage'])
+      expect(run).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it.each(['relevant', 'uncertain'])(
+    'retries complete %s inventory instead of dropping a private item label but retaining its volume',
+    async (verdict) => {
+      const answers = [
+        JSON.stringify({
+          verdict,
+          reason: 'visible furniture',
+          inventory: {
+            items: [
+              { type: 'sofa', count: 1 },
+              { type: 'chair at 12 Elm St', count: 1 },
+            ],
+            total_volume_cubic_feet: 120,
+          },
+        }),
+        reply(verdict),
+      ]
+      if (verdict === 'uncertain') answers.unshift(reply())
+      const run = vi.fn(async () => ({ response: answers.shift() }))
+      const result = await assessPhotos(
+        bindings(run),
+        photos(verdict === 'uncertain' ? 2 : 1),
+        { ...EMPTY_MOVE_DETAILS, from: '12 Elm St, Rye, NY' },
+        false,
+      )
+      expect(result.analysis.items).toEqual([{ type: 'sofa', count: 1 }])
+      expect(result.analysis.total_volume_cubic_feet).toBe(80)
+      if (verdict === 'uncertain') {
+        expect(result.photos[1]?.candidates?.items).toEqual([{ type: 'sofa', count: 1 }])
+        expect(result.photos[1]?.candidates?.total_volume_cubic_feet).toBe(80)
+      }
+      expect(run).toHaveBeenCalledTimes(verdict === 'uncertain' ? 3 : 2)
+    },
+  )
+
+  it.each(['relevant', 'uncertain'])(
+    'fails closed after two private item labels in %s inventory without caching partial totals',
+    async (verdict) => {
+      const entries: string[] = []
+      vi.stubGlobal('caches', {
+        default: {
+          match: async () => undefined,
+          put: async (_key: string, response: Response) => {
+            entries.push(await response.text())
+          },
+        },
+      })
+      const run = vi.fn(async () => ({
+        response: JSON.stringify({
+          verdict,
+          reason: 'visible furniture',
+          inventory: {
+            items: [
+              { type: 'sofa', count: 1 },
+              { type: 'chair at 12 Elm St', count: 1 },
+            ],
+            total_volume_cubic_feet: 120,
+          },
+        }),
+      }))
+      await expect(
+        assessPhotos(
+          bindings(run),
+          photos(1),
+          { ...EMPTY_MOVE_DETAILS, from: '12 Elm St, Rye, NY', to: `private-label-${verdict}` },
+          true,
+        ),
+      ).rejects.toBeInstanceOf(AnalysisFormatError)
+      expect(run).toHaveBeenCalledTimes(2)
+      expect(entries).toEqual([])
+    },
+  )
 
   it('sanitizes numeric and boolean confirmed context echoed into arbitrary text, not structured inventory numbers', async () => {
     const run = vi.fn(async () => ({
