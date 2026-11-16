@@ -213,6 +213,104 @@ describe('review accepted-fact coherence', () => {
     expect(window.facts.map((fact) => fact.field)).toEqual(['dateWindow'])
   })
 })
+describe('repeated typed clarification recovery', () => {
+  it.each([
+    [
+      'date',
+      'Please clarify the date using YYYY-MM-DD.',
+      'I do not know the date yet; let us upload photos',
+      'request_photos',
+    ],
+    ['date', 'Please clarify the date using YYYY-MM-DD.', 'The date is still unknown', 'review'],
+    [
+      'address_city',
+      'Please provide the complete street address and city for this replacement.',
+      'I only know the cities and cannot provide a street yet; let us upload photos',
+      'clarify_origin',
+    ],
+    [
+      'address_city',
+      'Please provide the complete street address and city for this replacement.',
+      'I cannot provide the destination street yet',
+      'clarify_destination',
+    ],
+  ])(
+    'recovers from repeated optional %s with aligned photo guidance',
+    async (clarification, previous, content, nextAction) => {
+      const value = state()
+      value.moveDetails.from = 'Tel Aviv'
+      value.moveDetails.to = 'Raanana'
+      const model = vi.fn(async () => answer(packet({ clarification, nextAction })))
+      const result = await runConversationAgent({
+        snapshot: conversationSnapshot(value),
+        messages: [
+          { id: 'a', role: 'assistant', content: previous },
+          { id: 'u', role: 'user', content },
+        ],
+        model,
+      })
+      expect(result.reply).not.toBe(previous)
+      expect(result.reply).toMatch(/photo/i)
+      expect(result.reply).not.toMatch(/date|street/i)
+      expect(result.agent?.nextAction).toBe('request_photos')
+      expect(model).toHaveBeenCalledTimes(1)
+    },
+  )
+  it('also recovers when the repeated typed clarification comes from tool continuation', async () => {
+    const model = vi.fn(async (request: ConversationModelRequest) =>
+      answer(
+        packet(
+          request.phase === 'interpret'
+            ? { tools: [{ type: 'resolve_route' }] }
+            : { nextAction: 'review', clarification: 'date' },
+        ),
+      ),
+    )
+    const result = await runConversationAgent({
+      snapshot: conversationSnapshot(state()),
+      messages: [
+        { id: 'a', role: 'assistant', content: 'Please clarify the date using YYYY-MM-DD.' },
+        { id: 'u', role: 'user', content: 'I do not know the date yet; let us upload photos' },
+      ],
+      model,
+    })
+    expect(result.reply).toMatch(/photo/i)
+    expect(result.agent).toMatchObject({ nextAction: 'request_photos', route: { status: 'unconfigured' } })
+    expect(model).toHaveBeenCalledTimes(2)
+  })
+  it('asks for genuinely missing endpoint context instead of bypassing it for photos', async () => {
+    const value = state()
+    value.moveDetails.to = null
+    const previous = 'Please provide the complete street address and city for this replacement.'
+    const result = await runConversationAgent({
+      snapshot: conversationSnapshot(value),
+      messages: [
+        { id: 'a', role: 'assistant', content: previous },
+        { id: 'u', role: 'user', content: 'I cannot provide a street yet' },
+      ],
+      model: async () => answer(packet({ nextAction: 'clarify_origin', clarification: 'address_city' })),
+    })
+    expect(result.reply).not.toBe(previous)
+    expect(result.reply).not.toMatch(/photo/i)
+    expect(result.reply).toMatch(/delivery|destination/i)
+    expect(result.agent?.nextAction).toBe('clarify_destination')
+  })
+  it.each([
+    ['date', 'review', /date.*YYYY-MM-DD/i],
+    ['address_city', 'clarify_origin', /complete street address and city/i],
+  ] as const)('preserves the first useful typed %s clarification', async (clarification, nextAction, wording) => {
+    const result = await runConversationAgent({
+      snapshot: conversationSnapshot(state()),
+      messages: [
+        { id: 'a', role: 'assistant', content: 'What would you like to clarify?' },
+        { id: 'u', role: 'user', content: 'Please check the details' },
+      ],
+      model: async () => answer(packet({ clarification, nextAction })),
+    })
+    expect(result.reply).toMatch(wording)
+    expect(result.agent?.nextAction).toBe(nextAction)
+  })
+})
 describe('review model-selected action and tool continuation', () => {
   it.each(['Could you share photos of the rooms and large items?', 'Your booking is confirmed.'])(
     'preserves targeted clarification with both endpoints known: %s',

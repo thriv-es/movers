@@ -110,16 +110,32 @@ export async function runConversationAgent(input: AgentInput): Promise<Conversat
     }
   }
   let reply = final.response.reply
-  const nextAction = final.response.agent?.nextAction
+  let nextAction = final.response.agent?.nextAction
   if (!nextAction) throw new Error('Invalid conversation output')
   const priorQuestion = input.messages.filter((message) => message.role === 'assistant').at(-1)?.content
-  if (!final.clarification && reply === priorQuestion && nextAction !== 'review') {
-    reply =
-      nextAction === 'request_photos'
-        ? 'Please attach photos of the rooms and large items in this chat.'
-        : nextAction === 'clarify_origin'
-          ? 'Which city is the pickup in? A street address is useful if known.'
-          : 'Which city is the delivery in? A street address is useful if known.'
+  if (reply === priorQuestion) {
+    // First useful clarifications remain model-selected. Repeated optional date/street
+    // questions must not trap intake or contradict the returned next-action guidance.
+    if (final.clarification === 'date' || final.clarification === 'address_city') {
+      const command = proposals.find((proposal) => proposal.command.type === 'details.patch')?.command
+      const details = { ...input.snapshot.moveDetails, ...(command?.type === 'details.patch' ? command.patch : {}) }
+      nextAction = !useful(details.from)
+        ? 'clarify_origin'
+        : !useful(details.to)
+          ? 'clarify_destination'
+          : !input.snapshot.photos.length
+            ? 'request_photos'
+            : 'review'
+    }
+    if (nextAction !== 'review') {
+      reply =
+        nextAction === 'request_photos'
+          ? 'Please attach photos of the rooms and large items in this chat.'
+          : nextAction === 'clarify_origin'
+            ? 'Which city is the pickup in? A street address is useful if known.'
+            : 'Which city is the delivery in? A street address is useful if known.'
+    } else if (final.clarification)
+      reply = 'Please use the move details and photo review controls to check what is already known.'
   }
   return zConversationResponse.parse({
     reply,
