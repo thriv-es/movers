@@ -22,6 +22,10 @@ type Backend = Exclude<AiMode, 'mock'>
 
 /** The binding defaults to 256 output tokens, which truncates the JSON the prompts ask for. */
 const BINDING_MAX_TOKENS = 2048
+// This optional Chat model otherwise spends the bounded completion on reasoning rather than visible JSON.
+const DEEPSEEK_CHAT_MODEL = '@cf/deepseek-ai/deepseek-v4.1-flash-1017'
+const usesCompletionProfile = (model: string, purpose: TextPurpose) =>
+  purpose === 'chat' && model === DEEPSEEK_CHAT_MODEL
 
 function requireBinding(env: Bindings): Ai {
   if (!env.AI) {
@@ -85,13 +89,26 @@ export async function runText(
     {
       gateway: async (model) => {
         const ai = createWorkersAI(env.CF_AIG_TOKEN)
-        const { text } = await generateText({ model: ai(model), prompt })
+        const { text } = await generateText({
+          model: ai(model),
+          prompt,
+          ...(usesCompletionProfile(model, purpose)
+            ? {
+                // Installed openai-compatible adapter supports reasoningEffort and additional provider-scoped body fields.
+                providerOptions: {
+                  'workers-ai': { reasoningEffort: 'none', max_completion_tokens: BINDING_MAX_TOKENS },
+                },
+              }
+            : {}),
+        })
         return text
       },
       binding: async (model) => {
         const output = await requireBinding(env).run(model, {
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: BINDING_MAX_TOKENS,
+          ...(usesCompletionProfile(model, purpose)
+            ? { max_completion_tokens: BINDING_MAX_TOKENS, reasoning_effort: 'none' }
+            : { max_tokens: BINDING_MAX_TOKENS }),
         })
         return readBindingText(output)
       },
