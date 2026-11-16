@@ -3,6 +3,8 @@ import {
   type ConversationCommand,
   type ConversationSnapshot,
   zConversationMoveDetails,
+  zConversationFact,
+  zConversationAgentMetadata,
   zConversationProposal,
   zConversationRevision,
   zConversationSnapshot,
@@ -10,6 +12,8 @@ import {
 import { zChatMessage } from '../../../src/data/z-common/z-move-demo'
 import type { ChatMessage, MoveDetails } from '../../../src/data/types/move-demo.types'
 import { canonicalItemType } from '../../../src/lib/item-aliases'
+import { validateDetailFacts, volunteeredDistance } from './conversation-facts'
+import { safePhotoRequest } from './conversation-guidance'
 
 // Task 1's schema is the protocol. Tighten nested stripping objects at this ingress:
 // reject unknown private fields instead of ever forwarding an unvalidated request object.
@@ -54,6 +58,7 @@ export const zConversationResponse = z
       ),
     basedOnRevision: zConversationRevision,
     proposals: z.array(zConversationProposal).max(12),
+    agent: zConversationAgentMetadata.optional(),
   })
   .strict()
 export type ConversationResponse = z.infer<typeof zConversationResponse>
@@ -67,7 +72,11 @@ const clarificationReplies: Record<z.infer<typeof zClarification>, string> = {
   item: 'Which named inventory item should be changed? Please use its review control to confirm.',
   photo: 'Which uncertain photo do you mean? Please use its Keep or Exclude review controls.',
 }
-const zModelConversationTurn = zConversationResponse.extend({ clarification: zClarification.optional() })
+const zModelConversationTurn = zConversationResponse.omit({ agent: true }).extend({
+  clarification: zClarification.optional(),
+  facts: z.array(zConversationFact).max(12).optional(),
+  nextAction: zConversationAgentMetadata.shape.nextAction.optional(),
+})
 
 const sameType = (left: string, right: string) => canonicalItemType(left) === canonicalItemType(right)
 function currentReference(command: ConversationCommand, state: ConversationSnapshot): boolean {
@@ -104,6 +113,7 @@ export function parseConversationTurn(
   text: string,
   snapshot: ConversationSnapshot,
   messages: ChatMessage[] = [],
+  interpret = false,
 ): ConversationResponse {
   if (text.length > 24000) throw new Error('Invalid conversation output')
   const turn = zModelConversationTurn.parse(JSON.parse(text))
@@ -134,15 +144,30 @@ export function parseConversationTurn(
     ids.add(proposal.id)
     targets.add(target)
   }
+  if (turn.proposals.some((proposal) => proposal.command.type === 'details.patch' && proposal.command.route))
+    throw new Error('Invalid conversation output')
+  if (interpret) {
+    turn.proposals = turn.proposals.flatMap((proposal) => {
+      if (proposal.command.type !== 'details.patch') return [proposal]
+      const command = validateDetailFacts(proposal.command, turn.facts ?? [], snapshot, messages)
+      return command ? [{ ...proposal, command }] : []
+    })
+  }
   // IDs are opaque, request-local server IDs; no model-created receipt/reference can become authority.
+  const fallback = renderConversationReply(
+    messages,
+    snapshot,
+    turn.proposals.map((proposal) => proposal.command),
+    turn.clarification,
+    !interpret,
+  )
+  const detailCommand = turn.proposals.find((proposal) => proposal.command.type === 'details.patch')?.command
+  const projected = { ...snapshot.moveDetails, ...(detailCommand?.type === 'details.patch' ? detailCommand.patch : {}) }
+  const photoContext = [projected.from, projected.to].every((value) => !!value?.trim() && /\p{L}/u.test(value))
+  const safePhotoQuestion = interpret && photoContext && !snapshot.photos.length && safePhotoRequest(turn.reply)
   return zConversationResponse.parse({
-    // Intentionally never return turn.reply: all visible prose is authored by the server.
-    reply: renderConversationReply(
-      messages,
-      snapshot,
-      turn.proposals.map((proposal) => proposal.command),
-      turn.clarification,
-    ),
+    // Only a constrained pre-photo request can use live wording; commercial guidance remains server-authored.
+    reply: safePhotoQuestion ? turn.reply : fallback,
     basedOnRevision: turn.basedOnRevision,
     proposals: turn.proposals.map((proposal) => ({ ...proposal, id: `proposal-${crypto.randomUUID()}` })),
   })
@@ -241,14 +266,15 @@ function extractDetails(
     else patch[key] = place
     foundPlace = true
   }
-  const distance = /\b(?:distance(?:\s+is)?\s*:?\s*)?(?<![-\d.])(\d+(?:\.\d+)?)\s*miles\b/i.exec(text)
-  if (distance) patch.distanceMiles = Number(distance[1])
+  const distance = volunteeredDistance(text)
+  if (distance !== null) patch.distanceMiles = distance
   for (const [side, prefix] of [
     ['origin', 'origin'],
     ['destination', 'destination'],
   ] as const) {
     const floor = new RegExp(`\\b${side} floor\\s*(?:is|:)?\\s*(\\d+)\\b(?!\\.\\d)`, 'i').exec(text)
-    if (floor && Number(floor[1]) > 0) patch[`${prefix}Floor`] = Number(floor[1])
+    if (floor) patch[`${prefix}Floor`] = Number(floor[1])
+    if (new RegExp(`\\b${side} ground floor\\b`, 'i').test(text)) patch[`${prefix}Floor`] = 0
     const elevator = new RegExp(`\\b${side} elevator\\s*(?:is|:)?\\s*(yes|no|true|false)\\b`, 'i').exec(text)
     if (elevator) patch[`${prefix}Elevator`] = /^(yes|true)$/i.test(elevator[1] ?? '')
   }
@@ -294,18 +320,12 @@ function extractDetails(
 
 function nextQuestion(state: ConversationSnapshot): string {
   const details = state.moveDetails
-  const questions: [keyof MoveDetails, string][] = [
+  const questions: ['from' | 'to', string][] = [
     ['from', 'What is the origin city or address?'],
     ['to', 'What is the destination city or address?'],
-    ['date', 'What is the move date (YYYY-MM-DD)?'],
-    ['distanceMiles', 'What is the approximate distance in miles?'],
-    ['originFloor', 'What is the origin floor (positive floor number)?'],
-    ['originElevator', 'Is there an origin elevator?'],
-    ['destinationFloor', 'What is the destination floor (positive floor number)?'],
-    ['destinationElevator', 'Is there a destination elevator?'],
   ]
-  for (const [field, question] of questions) if (details[field] === null || details[field] === '') return question
-  if (!state.detailsConfirmed) return 'Please review and confirm the move details using the details control.'
+  for (const [field, question] of questions)
+    if (!details[field]?.trim() || !/\p{L}/u.test(details[field] ?? '')) return question
   if (!state.photos.length) return 'Please attach photos in this chat to start the inventory.'
   if (state.photos.some((photo) => ['reupload', 'unlinked', 'unavailable'].includes(photo.status))) {
     return 'Please re-upload or remove photos that are not linked before analysis.'
@@ -324,6 +344,7 @@ function nextQuestion(state: ConversationSnapshot): string {
   }
   if (state.review.wholeMoveCovered === null)
     return 'Does this inventory cover the whole move? Please explicitly answer yes or no.'
+  if (!state.detailsConfirmed) return 'Please review and confirm the move details using the details control.'
   if (!state.price)
     return state.readiness.canPrice
       ? 'Review the inventory, then use Confirm inventory and get estimate when ready.'
@@ -411,11 +432,12 @@ function renderConversationReply(
   snapshot: ConversationSnapshot,
   commands: ConversationCommand[],
   selector?: z.infer<typeof zClarification>,
+  synthetic = true,
 ): string {
   const latest = messages.at(-1)
   const text = latest?.role === 'user' ? latest.content.trim() : ''
   const question = messages.at(-2)?.role === 'assistant' ? (messages.at(-2)?.content ?? '') : ''
-  const { clarification } = extractDetails(text, question, snapshot)
+  const { clarification } = synthetic ? extractDetails(text, question, snapshot) : { clarification: undefined }
   const projected = structuredClone(snapshot)
   for (const command of commands) {
     if (command.type !== 'details.patch' && command.type !== 'request.action') {

@@ -96,7 +96,7 @@ describe('revisioned conversation controller', () => {
     expect(reduceConversation(next, { ...action, id: 'stale' })).toBe(next)
     expect(reduceConversation(next, { ...action, expectedRevision: 1 })).toBe(next)
     for (const invalid of [
-      { ...action, patch: { originFloor: 0 } },
+      { ...action, patch: { originFloor: -1 } },
       { ...action, patch: { distanceMiles: Number.POSITIVE_INFINITY } },
       { ...action, patch: { unknown: true } },
       { ...action, patch: { from: undefined } },

@@ -9,6 +9,8 @@ export type Bindings = {
   AI_MODE?: string
   /** Workers AI model for chat turns; empty or unset means `TEXT_MODEL` in `_lib/ai.ts`. */
   CHAT_MODEL?: string
+  /** Optional server-only read-only geocode/routing provider key. Never sent to clients. */
+  GEOAPIFY_API_KEY?: string
   /** Workers AI model for the pricing call; empty or unset means `TEXT_MODEL` in `_lib/ai.ts`. */
   PRICE_MODEL?: string
   /** D1 database for saved estimates, movers and quote requests. Without it the API keeps records in memory. */

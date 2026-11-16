@@ -11,7 +11,50 @@ const zExistingItemType = zDetectedItem.shape.type
 const zItem = zDetectedItem.extend({ type: zItemType, count: z.number().int().positive().max(10000) }).strict()
 export const zConversationMoveDetails = zMoveDetails.extend({
   distanceMiles: z.number().finite().nonnegative().nullable(),
+  originFloor: z.number().int().nonnegative().nullable(),
+  destinationFloor: z.number().int().nonnegative().nullable(),
 })
+export const zConversationFact = z
+  .object({
+    field: z.enum([
+      'from',
+      'to',
+      'date',
+      'dateWindow',
+      'distanceMiles',
+      'originFloor',
+      'destinationFloor',
+      'originElevator',
+      'destinationElevator',
+    ]),
+    sourceMessageId: z.string().min(1).max(128),
+    wording: z.string().trim().min(1).max(1000),
+    uncertainty: z.enum(['certain', 'uncertain']),
+    precision: z.enum(['city', 'address', 'exact', 'window', 'unknown']),
+    correction: z.boolean(),
+  })
+  .strict()
+export type ConversationFact = z.infer<typeof zConversationFact>
+export const zConversationRoute = z
+  .object({
+    status: z.enum(['ready', 'unconfigured', 'ambiguous', 'unavailable']),
+    from: z.string().trim().min(1).max(300),
+    to: z.string().trim().min(1).max(300),
+    endpointRevision: zConversationRevision,
+    distanceMiles: z.number().finite().nonnegative().max(100000).optional(),
+    precision: z.enum(['city', 'address']),
+    attribution: z.literal('Powered by Geoapify'),
+  })
+  .strict()
+  .refine((route) => (route.status === 'ready') === (route.distanceMiles !== undefined))
+export type ConversationRoute = z.infer<typeof zConversationRoute>
+export const zConversationAgentMetadata = z
+  .object({
+    nextAction: z.enum(['clarify_origin', 'clarify_destination', 'request_photos', 'review']),
+    route: zConversationRoute.optional(),
+  })
+  .strict()
+export type ConversationAgentMetadata = z.infer<typeof zConversationAgentMetadata>
 const zDetailsPatch = zConversationMoveDetails
   .partial()
   .strict()
@@ -21,7 +64,14 @@ const zDetailsPatch = zConversationMoveDetails
 
 /** Only proposals, never assertions that an external operation succeeded. */
 export const zConversationCommand = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('details.patch'), patch: zDetailsPatch }).strict(),
+  z
+    .object({
+      type: z.literal('details.patch'),
+      patch: zDetailsPatch,
+      facts: z.array(zConversationFact).max(12).optional(),
+      route: zConversationRoute.optional(),
+    })
+    .strict(),
   z.object({ type: z.literal('item.add'), item: zItem }).strict(),
   z
     .object({
@@ -65,6 +115,7 @@ export type ConversationProposal = z.infer<typeof zConversationProposal>
 export const zConversationReadiness = z
   .object({
     detailsComplete: z.boolean(),
+    canRequestPhotos: z.boolean().default(false),
     canAnalyze: z.boolean(),
     canPrice: z.boolean(),
     canSave: z.boolean(),

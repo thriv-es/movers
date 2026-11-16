@@ -41,7 +41,8 @@ describe('state-aware offline conversation', () => {
       type: 'details.patch',
       patch: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' },
     })
-    expect(response.reply).toMatch(/distance/i)
+    expect(response.reply).toMatch(/photo/i)
+    expect(response.reply).not.toMatch(/distance/i)
     expect(response.reply).not.toMatch(/where|destination|what date/i)
   })
 
@@ -67,7 +68,8 @@ describe('state-aware offline conversation', () => {
       state,
     )
     expect(response.proposals).toEqual([])
-    expect(response.reply).toMatch(/distance/i)
+    expect(response.reply).toMatch(/photo/i)
+    expect(response.reply).not.toMatch(/distance/i)
     expect(patch('distance is 12 miles', state)).toEqual({ type: 'details.patch', patch: { distanceMiles: 12 } })
   })
 
@@ -156,7 +158,13 @@ describe('state-aware offline conversation', () => {
     expect(turn('yes', state).proposals).toEqual([])
   })
 
-  it('extracts only explicit floors/elevators and refuses to interpret ground as a protocol floor', () => {
+  it('normalizes volunteered metric/singular units in offline mechanics and accepts explicit ground-floor sides', () => {
+    expect(patch('50 km')).toEqual({ type: 'details.patch', patch: { distanceMiles: 31.068559611866696 } })
+    expect(patch('50 mile')).toEqual({ type: 'details.patch', patch: { distanceMiles: 50 } })
+    expect(patch('origin ground floor')).toEqual({ type: 'details.patch', patch: { originFloor: 0 } })
+    expect(patch('destination floor 0')).toEqual({ type: 'details.patch', patch: { destinationFloor: 0 } })
+  })
+  it('extracts only explicit floors/elevators and refuses to assign an unsided ground floor', () => {
     expect(patch('origin floor 2, destination floor 3, origin elevator yes, destination elevator no')).toEqual({
       type: 'details.patch',
       patch: { originFloor: 2, destinationFloor: 3, originElevator: true, destinationElevator: false },
@@ -226,7 +234,7 @@ describe('state-aware offline conversation', () => {
       originElevator: false,
       destinationElevator: false,
     }
-    expect(turn('hello', state).reply).toMatch(/confirm.*details/i)
+    expect(turn('hello', state).reply).toMatch(/photo/i)
     expect(turn('yes', state).proposals).toEqual([])
     state.detailsConfirmed = true
     expect(turn('hello', state).reply).toMatch(/attach|upload/i)

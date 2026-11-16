@@ -30,10 +30,11 @@ function requireBinding(env: Bindings): Ai {
   return env.AI
 }
 
-/** Workers AI returns `{ response }`; some models hand back already-parsed JSON instead of a string. */
+/** Only visible string content is accepted; reasoning and arbitrary objects are never surfaced. */
 function readBindingText(output: unknown, allowEmpty = false): string {
-  const response = (output as { response?: unknown } | null)?.response
-  const text = typeof response === 'string' ? response : response == null ? '' : JSON.stringify(response)
+  const value = output as { response?: unknown; choices?: { message?: { content?: unknown } }[] } | null
+  const response = value?.response ?? value?.choices?.[0]?.message?.content
+  const text = typeof response === 'string' ? response : ''
   if (!allowEmpty && !text.trim()) throw new Error('Workers AI returned an empty response')
   return text
 }

@@ -18,6 +18,7 @@ import { z } from 'zod'
 import { conversationContext } from './conversation-context'
 import {
   zConversationProposal,
+  zConversationAgentMetadata,
   zConversationRevision,
   type ConversationSnapshot,
 } from '../data/z-common/z-conversation'
@@ -28,6 +29,7 @@ export const zConversationResponse = z
     reply: z.string().trim().min(1).max(3000),
     basedOnRevision: zConversationRevision,
     proposals: z.array(zConversationProposal).max(12),
+    agent: zConversationAgentMetadata.optional(),
   })
   .strict()
   .superRefine((response, context) => {

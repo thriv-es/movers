@@ -56,7 +56,17 @@ function fakeDb() {
 describe('AI role catalog', () => {
   it('restricts vision to the existing vision model and documents the text alternative caveat', () => {
     expect(MODEL_CATALOG.vision.map((entry) => entry.model)).toEqual([visionDefault])
-    expect(MODEL_CATALOG.chat.map((entry) => entry.model)).toEqual([textDefault, textAlternative])
+    expect(MODEL_CATALOG.chat.map((entry) => entry.model)).toEqual([
+      textDefault,
+      textAlternative,
+      '@cf/deepseek-ai/deepseek-v4.1-flash-1017',
+    ])
+    expect(
+      validateRoles({
+        ...initialRoles,
+        chat: { backend: 'binding', model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017' },
+      }).chat.model,
+    ).toBe('@cf/deepseek-ai/deepseek-v4.1-flash-1017')
     expect(MODEL_CATALOG.price.map((entry) => entry.model)).toEqual([textDefault, textAlternative])
     expect(MODEL_CATALOG.chat[1]?.caveat).toMatch(/session-block prompt.*hallucinated/i)
   })

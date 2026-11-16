@@ -68,7 +68,7 @@ describe('POST conversation', () => {
     expect(result.headers.get('x-movers-ai-mode')).toBe('mock')
     expect(await result.json()).toMatchObject({
       proposals: [{ command: { type: 'details.patch', patch: expected } }],
-      reply: 'What is the approximate distance in miles?',
+      reply: expect.stringMatching(/photo/i),
     })
     expect(state.moveDetails.from).toBe('Tel Aviv')
     expect(state.moveDetails.to).toBe('Raanana')
@@ -183,7 +183,8 @@ describe('POST conversation', () => {
     const result = await request({ messages, snapshot: state }, env)
     expect(result.status).toBe(200)
     const body = (await result.json()) as { reply: string; proposals: unknown[] }
-    expect(body.reply).toBe('What is the approximate distance in miles?')
+    expect(body.reply).toMatch(/photo/i)
+    expect(body.reply).not.toMatch(/distance/i)
     expect(body.reply).not.toBe(reply)
     expect(body.proposals).toHaveLength(1)
     expect(state.status.dateRequested).toBe(false)
@@ -198,11 +199,13 @@ describe('POST conversation', () => {
     const { env } = fakeAI([valid({ reply: 'What is your destination and move date?', proposals: [] })])
     const result = await request({ messages: [{ id: 'new', role: 'user', content: 'hello' }], snapshot: state }, env)
     expect(result.status).toBe(200)
-    expect(await result.json()).toMatchObject({ reply: 'What is the approximate distance in miles?', proposals: [] })
+    expect(await result.json()).toMatchObject({ reply: expect.stringMatching(/photo/i), proposals: [] })
   })
 
-  it('renders targeted clarification from user context without displaying model prose', async () => {
-    const { env } = fakeAI([valid({ reply: 'The total cost will be 500 dollars', proposals: [] })])
+  it('renders the interpreted targeted clarification without displaying unsupported model prose', async () => {
+    const { env } = fakeAI([
+      valid({ reply: 'The total cost will be 500 dollars', proposals: [], clarification: 'address_side' }),
+    ])
     const result = await request(
       { messages: [{ id: 'new', role: 'user', content: '12 Herzl Street' }], snapshot: snapshot() },
       env,
@@ -268,7 +271,12 @@ describe('POST conversation', () => {
         env,
       )
       expect(result.status).toBe(200)
-      expect(await result.json()).toEqual({ reply, basedOnRevision: 0, proposals: [] })
+      expect(await result.json()).toMatchObject({
+        reply,
+        basedOnRevision: 0,
+        proposals: [],
+        agent: { nextAction: 'review' },
+      })
     }
   })
 

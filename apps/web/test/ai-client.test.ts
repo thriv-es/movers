@@ -97,11 +97,26 @@ describe('binding mode', () => {
     expect(decoded).toEqual(big)
   })
 
-  it('serialises a .response that Workers AI already parsed into an object', async () => {
-    const AI = binding(async () => ({ response: { total: 100, breakdown: { a: 100 } } }))
-    const result = await runText(env({ AI }), 'PROMPT', mock)
-    expect(JSON.parse(result.text)).toEqual({ total: 100, breakdown: { a: 100 } })
+  it('reads only nonempty OpenAI message content, never reasoning', async () => {
+    const AI = binding(async () => ({
+      choices: [{ message: { content: 'visible answer', reasoning_content: 'private reasoning' } }],
+    }))
+    expect(await runText(env({ AI, AI_MODE: 'binding' }), 'PROMPT', mock)).toEqual({
+      text: 'visible answer',
+      mode: 'binding',
+    })
   })
+
+  it.each([{ response: { total: 100 } }, { choices: [{ message: { content: '', reasoning_content: 'private' } }] }])(
+    'rejects non-string or empty binding content without forced fallback',
+    async (output) => {
+      const AI = binding(async () => output)
+      await expect(runText(env({ AI, AI_MODE: 'binding' }), 'PROMPT', mock)).rejects.toThrow(
+        'Workers AI binding request failed',
+      )
+      expect(mock).not.toHaveBeenCalled()
+    },
+  )
 
   it('falls back to the labelled mock when the call fails outside production', async () => {
     const AI = binding(async () => {

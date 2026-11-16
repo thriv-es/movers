@@ -27,7 +27,14 @@ const TEXT_OPTIONS: readonly ModelOption[] = [
 ]
 
 export const MODEL_CATALOG: Record<AiRole, readonly ModelOption[]> = {
-  chat: TEXT_OPTIONS,
+  chat: [
+    ...TEXT_OPTIONS,
+    {
+      model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017',
+      label: 'DeepSeek V4.1 Flash',
+      caveat: 'Paid Workers AI access required; optional Chat model.',
+    },
+  ],
   price: TEXT_OPTIONS,
   vision: [{ model: VISION_MODEL, label: 'Llama 3.2 11B Vision (default)' }],
 }

@@ -4,6 +4,9 @@ import {
   type ConversationReadiness,
   type ConversationSnapshot,
   zConversationCommand,
+  zConversationFact,
+  zConversationRoute,
+  zConversationAgentMetadata,
   zConversationId,
   zConversationMoveDetails,
   zConversationProposal,
@@ -20,7 +23,6 @@ import {
   zReviewCoverage,
 } from '../data/z-common/z-move-demo'
 import { FOLLOW_UP_ITEMS } from '../components/estimate/ReviewStep'
-import { validateDetails } from '../components/estimate/MoveDetailsStep'
 import { ESTIMATE_STEPS, isBundledSampleUrl, newSession } from './estimate-session'
 import { canonicalItemType } from './item-aliases'
 import { clearedAnalysis, photoEvidence, reviewedAnalysis } from './review-photos'
@@ -141,6 +143,9 @@ export const zConversationSession = zConversationDomain
     revision: zConversationRevision,
     photos: z.array(zConversationPhoto).max(10),
     detailsConfirmed: z.boolean(),
+    facts: z.array(zConversationFact).max(12).default([]),
+    nextAction: zConversationAgentMetadata.shape.nextAction.nullable().default(null),
+    route: zConversationRoute.nullable().default(null),
     timeline: z.array(zConversationTimelineEntry),
     pendingProposals: z.array(zConversationProposal),
     operations: z.record(zConversationId, zConversationOperation),
@@ -170,6 +175,13 @@ export const zConversationSession = zConversationDomain
   .strict()
   .superRefine((state, context) => {
     const invalid = (message: string) => context.addIssue({ code: z.ZodIssueCode.custom, message })
+    if (
+      state.route &&
+      (state.route.from !== state.moveDetails.from ||
+        state.route.to !== state.moveDetails.to ||
+        state.route.endpointRevision > state.revision)
+    )
+      invalid('Stale route endpoints')
     if (
       new Set(state.photos.map((photo) => photo.id)).size !== state.photos.length ||
       new Set(state.photos.map((photo) => photo.url)).size !== state.photos.length
@@ -216,6 +228,9 @@ export const zConversationAction = z.union([
   ...commandActions,
   z.object({ ...envelope, type: z.literal('photo.remove'), photoId: zConversationId }).strict(),
   z.object({ ...envelope, type: z.literal('message.append'), message: zChatMessage }).strict(),
+  z
+    .object({ ...envelope, type: z.literal('agent.guidance'), nextAction: zConversationAgentMetadata.shape.nextAction })
+    .strict(),
   z.object({ ...envelope, type: z.literal('proposal.add'), proposal: zConversationProposal }).strict(),
   z.object({ ...envelope, type: z.literal('proposal.apply'), proposalId: zConversationId }).strict(),
   z.object({ ...envelope, type: z.literal('proposal.dismiss'), proposalId: zConversationId }).strict(),
@@ -253,7 +268,10 @@ type Event = Extract<ConversationTimelineEntry, { kind: 'event' }>['event']
 type Area = z.infer<typeof zArea>
 const followUpKeys = ['garage', 'closets', 'appliances'] as const
 const sameType = (a: string, b: string) => canonicalItemType(a) === canonicalItemType(b)
-const hasDetails = (state: ConversationSession) => Object.keys(validateDetails(state.moveDetails)).length === 0
+const hasDetails = (state: ConversationSession) =>
+  zConversationMoveDetails.safeParse(state.moveDetails).success &&
+  [state.moveDetails.from, state.moveDetails.to].every((value) => !!value?.trim() && /\p{L}/u.test(value)) &&
+  state.moveDetails.distanceMiles !== null
 const linked = (state: Pick<ConversationSession, 'sample'>, photo: ConversationPhoto) =>
   state.sample
     ? isBundledSampleUrl(photo.url, typeof window === 'undefined' ? 'http://localhost' : window.location.origin)
@@ -305,6 +323,9 @@ function unresolvedDuplicates(state: ConversationSession) {
 }
 export function conversationReadiness(state: ConversationSession): ConversationReadiness {
   const detailsComplete = hasDetails(state)
+  const canRequestPhotos = [state.moveDetails.from, state.moveDetails.to].every(
+    (value) => !!value?.trim() && /\p{L}/u.test(value),
+  )
   const photosReady =
     state.photos.length > 0 && !state.needsPhotoReupload && state.photos.every((photo) => linked(state, photo))
   const unresolvedPhotos = photoEvidence(state.analysis, state.photoDecisions).unresolvedCount
@@ -325,7 +346,8 @@ export function conversationReadiness(state: ConversationSession): ConversationR
     visionCurrent
   return {
     detailsComplete,
-    canAnalyze: detailsComplete && state.detailsConfirmed && photosReady && !pending(state),
+    canRequestPhotos,
+    canAnalyze: canRequestPhotos && photosReady && !pending(state),
     canPrice: evidenceReady && !pending(state),
     canSave: evidenceReady && !!state.price && !state.estimateId && !pending(state),
     canSchedule: !!state.price && !!state.estimateId && !pending(state),
@@ -366,10 +388,46 @@ function reviewEditable(state: ConversationSession) {
 function commandPatch(state: ConversationSession, command: ConversationCommand): DomainPatch | null {
   switch (command.type) {
     case 'details.patch': {
+      const facts = command.facts ?? []
+      if (
+        facts.some(
+          (fact) =>
+            !state.messages.some(
+              (message) =>
+                message.role === 'user' &&
+                message.id === fact.sourceMessageId &&
+                message.content.includes(fact.wording),
+            ),
+        )
+      )
+        return null
       const moveDetails = { ...state.moveDetails, ...command.patch }
-      return JSON.stringify(moveDetails) === JSON.stringify(state.moveDetails)
-        ? {}
-        : { ...clearEvidence(), moveDetails, detailsConfirmed: false }
+      const endpointChanged = moveDetails.from !== state.moveDetails.from || moveDetails.to !== state.moveDetails.to
+      if (
+        command.route &&
+        (command.route.from !== moveDetails.from ||
+          command.route.to !== moveDetails.to ||
+          command.route.endpointRevision !== state.revision)
+      )
+        return null
+      if (endpointChanged)
+        moveDetails.distanceMiles =
+          command.route?.status === 'ready' && command.route.precision === 'address'
+            ? (command.route.distanceMiles ?? null)
+            : (command.patch.distanceMiles ?? null)
+      const changed = JSON.stringify(moveDetails) !== JSON.stringify(state.moveDetails)
+      const replaced = new Set([
+        ...Object.keys(command.patch),
+        ...facts.map((fact) => fact.field),
+        ...(endpointChanged ? ['distanceMiles'] : []),
+      ])
+      return {
+        ...(changed ? { ...clearEvidence(), moveDetails, detailsConfirmed: false } : {}),
+        ...(facts.length || changed
+          ? { facts: [...state.facts.filter((fact) => !replaced.has(fact.field)), ...facts] }
+          : {}),
+        ...(command.route ? { route: command.route } : endpointChanged ? { route: null } : {}),
+      }
     }
     case 'request.action':
       return { requestedAction: command.action }
@@ -535,7 +593,8 @@ export function reduceConversation(state: ConversationSession, input: Conversati
   if (!parsed.success || !zConversationSession.safeParse(state).success) return state
   const action = parsed.data
   if (action.expectedRevision !== state.revision || state.appliedActionIds.includes(action.id)) return state
-  if (action.source === 'agent' && action.type !== 'proposal.add' && action.type !== 'message.append') return state
+  if (action.source === 'agent' && !['proposal.add', 'message.append', 'agent.guidance'].includes(action.type))
+    return state
   if ((action.type.startsWith('operation.') || action.type === 'vision.verified') && action.source !== 'system')
     return state
   let patch: DomainPatch = {}
@@ -588,6 +647,12 @@ export function reduceConversation(state: ConversationSession, input: Conversati
         dataChanged = true
         event = 'photos.updated'
         area = 'photos'
+        break
+      case 'agent.guidance':
+        if (action.source !== 'agent') return state
+        patch = { nextAction: action.nextAction }
+        event = 'action.requested'
+        area = 'details'
         break
       case 'message.append':
         if (state.messages.some((entry) => entry.id === action.message.id)) return state

@@ -22,8 +22,8 @@ export const zMoveDetails = z.object({
   to: z.string().nullable(),
   date: z.string().nullable(),
   distanceMiles: z.number().nonnegative().nullable(),
-  originFloor: z.number().int().positive().nullable(),
-  destinationFloor: z.number().int().positive().nullable(),
+  originFloor: z.number().int().nonnegative().nullable(),
+  destinationFloor: z.number().int().nonnegative().nullable(),
   originElevator: z.boolean().nullable(),
   destinationElevator: z.boolean().nullable(),
 })

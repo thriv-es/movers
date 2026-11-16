@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 import { runText } from '../_lib/ai-client'
 import { resolveRole } from '../_lib/ai-mode'
-import { mockConversationTurn, parseConversationTurn, zConversationRequest } from '../_lib/conversation-agent'
+import { mockConversationTurn, zConversationRequest } from '../_lib/conversation-agent'
+import { runConversationAgent } from '../_lib/conversation-runner'
 import { conversationPrompt } from '../_lib/conversation-prompts'
 import type { Bindings } from '../_lib/types'
 
@@ -25,21 +26,24 @@ conversation.post('/', async (c) => {
     // Freeze the Chat role for this request, including its one malformed-output retry.
     const role = await resolveRole(c.env, 'chat')
     c.header('x-movers-ai-mode', role.mode)
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const result = await runText(
-        c.env,
-        conversationPrompt(messages, snapshot, attempt > 0),
-        () => JSON.stringify(mockConversationTurn(messages, snapshot)),
-        'chat',
-        role,
-      )
-      c.header('x-movers-ai-mode', result.mode)
-      try {
-        return c.json(parseConversationTurn(result.text, snapshot, messages))
-      } catch {
-        // Only malformed output retries, never provider failure. No invalid output is echoed to the model.
-      }
-    }
+    const response = await runConversationAgent({
+      messages,
+      snapshot,
+      // Offline mechanics must never call live geocoding, even if a key exists.
+      key: role.mode === 'mock' ? undefined : c.env.GEOAPIFY_API_KEY,
+      model: async (retry) => {
+        const result = await runText(
+          c.env,
+          conversationPrompt(messages, snapshot, retry),
+          () => JSON.stringify(mockConversationTurn(messages, snapshot)),
+          'chat',
+          role,
+        )
+        c.header('x-movers-ai-mode', result.mode)
+        return result.text
+      },
+    })
+    return c.json(response)
   } catch {
     // Sanitized, retryable failure: no proposals or partial state changes escape.
   }

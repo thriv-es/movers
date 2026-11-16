@@ -382,6 +382,17 @@ export function useConversationController(initial: () => ConversationSession = l
       // Validate every reference against the captured state before exposing any part of the batch.
       // Proposal additions and prose do not advance the domain revision.
       const actions: ConversationAction[] = [
+        ...(reply.agent
+          ? [
+              {
+                type: 'agent.guidance' as const,
+                nextAction: reply.agent.nextAction,
+                id: id(),
+                source: 'agent' as const,
+                expectedRevision: snapshot.revision,
+              },
+            ]
+          : []),
         {
           type: 'message.append',
           message: { id: id(), role: 'assistant', content: reply.reply },
@@ -411,6 +422,8 @@ export function useConversationController(initial: () => ConversationSession = l
       const detail = reply.proposals.length === 1 ? reply.proposals[0] : undefined
       if (
         detail?.command.type === 'details.patch' &&
+        !snapshot.detailsConfirmed &&
+        !snapshot.price &&
         authorization?.sessionId === snapshot.sessionId &&
         authorization.revision === snapshot.revision &&
         authorization.messageId === snapshot.messages.at(-1)?.id
