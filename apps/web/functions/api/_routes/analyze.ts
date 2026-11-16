@@ -7,45 +7,11 @@ import { type ModelAnalysis, mergeAnalyses, parseModelAnalysis } from '../_lib/a
 import { mockAnalysisReply } from '../_lib/mock'
 import { IMAGE_ANALYSIS_PROMPT } from '../_lib/prompts'
 import { withSampleCache } from '../_lib/sample-cache'
+import { resolvePhotoLinks } from '../_lib/photo-links'
 
 const analyze = new Hono<{ Bindings: Bindings }>()
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
-
-async function fetchImages(c: { env: Bindings }, imageUrls: string[]): Promise<AiImage[]> {
-  const images: AiImage[] = []
-  for (const url of imageUrls) {
-    try {
-      const urlObj = new URL(url)
-      let arrayBuffer: ArrayBuffer
-      let mimeType: string
-
-      if (urlObj.pathname.startsWith('/api/images/')) {
-        const key = decodeURIComponent(urlObj.pathname.replace('/api/images/', ''))
-        const object = await c.env.MOVERS_BUCKET.get(key)
-        if (!object) {
-          console.warn(`Image not found in R2: ${key}`)
-          continue
-        }
-        arrayBuffer = await object.arrayBuffer()
-        mimeType = object.httpMetadata?.contentType || 'image/jpeg'
-      } else {
-        const response = await fetch(url)
-        if (!response.ok) {
-          console.warn(`Failed to fetch image: ${url}`)
-          continue
-        }
-        arrayBuffer = await response.arrayBuffer()
-        mimeType = response.headers.get('content-type') || 'image/jpeg'
-      }
-
-      images.push({ data: new Uint8Array(arrayBuffer), mimeType })
-    } catch (fetchError) {
-      console.error(`Error fetching image ${url}:`, fetchError)
-    }
-  }
-  return images
-}
 
 interface PhotoAnalysis {
   analysis: ModelAnalysis
@@ -81,7 +47,7 @@ function tryParse(text: string): ModelAnalysis | null {
   try {
     return parseModelAnalysis(text)
   } catch {
-    console.warn('AI response not in expected format:', text.substring(0, 300))
+    // Model output may contain customer information. Never log raw responses.
     return null
   }
 }
@@ -90,21 +56,43 @@ analyze.post('/', async (c) => {
   try {
     const parsed = zAnalyzeRequest.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) {
-      return c.json({ error: 'imageUrls must be an array of 1 to 10 image URLs' }, 400)
+      return c.json(
+        {
+          error: 'Re-upload your photos and analyze again with the confirmed move details.',
+          code: 'PHOTO_REUPLOAD_REQUIRED',
+        },
+        400,
+      )
     }
-    const { imageUrls, sample } = parsed.data
-
-    const images = await fetchImages(c, imageUrls)
+    const { sessionId, photoRefs, moveDetails, sample } = parsed.data
+    const linked = await resolvePhotoLinks(c.env, c.req.url, sessionId, photoRefs, sample === true)
+    const photoLinkStatuses = linked.map(({ url, status, reason }) => ({ url, status, reason }))
+    const images = linked.flatMap((photo) => (photo.status === 'eligible' && photo.image ? [photo.image] : []))
     if (images.length === 0) {
-      return c.json({ error: 'No valid images could be fetched' }, 400)
+      return c.json(
+        {
+          error: 'No usable photos. Re-upload your photos and analyze again.',
+          code: 'NO_USABLE_PHOTOS',
+          photoLinkStatuses,
+        },
+        400,
+      )
     }
 
-    // the sample photos never change, so their analysis is keyed on the sample version and image count only
+    // Validation always runs before cache lookup. Never place receipts or customer URLs in the cache.
     let value: PhotoAnalysis
     let cached: boolean
     try {
-      ;({ value, cached } = await withSampleCache(sample, 'analyze', { count: images.length }, () =>
-        analyzePhotos(c.env, images),
+      ;({ value, cached } = await withSampleCache(
+        sample,
+        'analyze',
+        {
+          linkageVersion: 1,
+          sessionId,
+          photos: linked.filter((photo) => photo.status === 'eligible').map((photo) => new URL(photo.url).pathname),
+          moveDetails,
+        },
+        () => analyzePhotos(c.env, images),
       ))
     } catch (error) {
       if (!(error instanceof AnalysisFormatError)) throw error
@@ -112,6 +100,7 @@ analyze.post('/', async (c) => {
         {
           error: "We couldn't analyze these images. Please try uploading clearer photos of your items.",
           code: 'ANALYSIS_FAILED',
+          photoLinkStatuses,
         },
         400,
       )
@@ -126,7 +115,10 @@ analyze.post('/', async (c) => {
       .filter((item) => item.type && item.type.trim() !== '' && item.count > 0)
 
     if (items.length === 0) {
-      return c.json({ error: 'No items detected in images. Please upload photos with visible items.' }, 400)
+      return c.json(
+        { error: 'No items detected in images. Please upload photos with visible items.', photoLinkStatuses },
+        400,
+      )
     }
 
     const totalVol = llmData.total_volume_cubic_feet
@@ -144,6 +136,7 @@ analyze.post('/', async (c) => {
     const unseenAreas = (Array.isArray(llmData.unseen_areas) ? llmData.unseen_areas : []).map(str).filter(Boolean)
 
     const result: AnalysisResult = {
+      photoLinkStatuses,
       items,
       totalVolumeCubicFeet: totalVol,
       estimatedBoxes: { min: estimatedBoxesMin, max: estimatedBoxesMax },
@@ -154,9 +147,8 @@ analyze.post('/', async (c) => {
     }
 
     return c.json(zAnalysisResult.parse(result))
-  } catch (error) {
-    console.error('Analyze API error:', error)
-    return c.json({ error: error instanceof Error ? error.message : 'Internal server error' }, 500)
+  } catch {
+    return c.json({ error: 'Photo analysis is temporarily unavailable. Please try again.' }, 500)
   }
 })
 

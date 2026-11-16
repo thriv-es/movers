@@ -1,5 +1,34 @@
 import { describe, expect, it } from 'vitest'
-import { zAnalysisResult, zChatApiResponse, zMoveDetails, zPrice, zQuoteRequestInput } from '../src/data'
+import {
+  EMPTY_MOVE_DETAILS,
+  zAnalyzeRequest,
+  zAnalysisResult,
+  zChatApiResponse,
+  zMoveDetails,
+  zPrice,
+  zQuoteRequestInput,
+} from '../src/data'
+
+describe('linked analyze contract', () => {
+  const base = {
+    sessionId: '11111111-1111-4111-8111-111111111111',
+    photoRefs: [{ url: 'http://localhost/api/images/a.jpg', receipt: null }],
+    moveDetails: EMPTY_MOVE_DETAILS,
+    sample: false,
+  }
+  it('accepts receipt refs and confirmed details but strips chat', () => {
+    expect(zAnalyzeRequest.parse({ ...base, messages: [{ content: 'private chat' }] })).toEqual(base)
+  })
+  it.each([
+    { imageUrls: ['http://localhost/a.jpg'] },
+    { ...base, sessionId: 'bad' },
+    { ...base, photoRefs: [] },
+    { ...base, photoRefs: Array(11).fill(base.photoRefs[0]) },
+    { ...base, moveDetails: undefined },
+  ])('rejects invalid or legacy analyze input', (body) => {
+    expect(zAnalyzeRequest.safeParse(body).success).toBe(false)
+  })
+})
 
 describe('zMoveDetails', () => {
   it('accepts all-null details and rejects a zero floor', () => {

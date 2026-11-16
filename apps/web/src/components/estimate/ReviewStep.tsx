@@ -116,6 +116,20 @@ export function ReviewStep({
           roughly {analysis.estimatedBoxes.min} to {analysis.estimatedBoxes.max} boxes. Fix anything we got wrong.
         </p>
 
+        {analysis.photoLinkStatuses?.some((photo) => photo.status !== 'eligible') ? (
+          <div className="mv-muted">
+            <p>Some photos were excluded. This inventory only covers the usable photos.</p>
+            <ul aria-label="Photos excluded from inventory">
+              {analysis.photoLinkStatuses.map((photo, index) =>
+                photo.status !== 'eligible' ? (
+                  <li key={`${index}-${photo.status}`}>
+                    Photo {index + 1}: {photo.reason}
+                  </li>
+                ) : null,
+              )}
+            </ul>
+          </div>
+        ) : null}
         <ul className="est-items" aria-label="Detected items">
           {reviewItems.map((item) => {
             const reason = special.get(canonicalItemType(item.type))

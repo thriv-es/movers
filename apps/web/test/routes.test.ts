@@ -7,6 +7,37 @@
 import type { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Bindings } from '../functions/api/_lib/types'
+import { EMPTY_MOVE_DETAILS } from '../src/data'
+
+const sessionId = '11111111-1111-4111-8111-111111111111'
+const receiptA = 'a'.repeat(43)
+const receiptB = 'b'.repeat(43)
+const jpeg = new Uint8Array([255, 216, 255, 224, 0, 2, 255, 217])
+const hashes = new Map<string, string>()
+for (const [receipt, key] of [
+  [receiptA, 'a.png'],
+  [receiptB, 'b.png'],
+]) {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(receipt))
+  hashes.set([...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, '0')).join(''), key)
+}
+const DB = {
+  prepare: (sql: string) => ({
+    first: async () => null,
+    bind: (hash: string) => ({
+      first: async () =>
+        sql.includes('photo_receipts')
+          ? { session_id: sessionId, object_key: hashes.get(hash), expires_at: '2099-01-01T00:00:00.000Z' }
+          : null,
+    }),
+  }),
+}
+const analyzeBody = (urls = ['http://localhost/api/images/a.png'], sample = false) => ({
+  sessionId,
+  moveDetails: EMPTY_MOVE_DETAILS,
+  photoRefs: urls.map((url) => ({ url, receipt: sample ? null : url.endsWith('b.png') ? receiptB : receiptA })),
+  sample,
+})
 import { sampleCacheKey } from '../functions/api/_lib/sample-cache'
 import analyze from '../functions/api/_routes/analyze'
 import chat from '../functions/api/_routes/chat'
@@ -17,13 +48,20 @@ const MODE_HEADER = 'x-movers-ai-mode'
 
 const bucket = {
   get: async () => ({
-    arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
-    httpMetadata: { contentType: 'image/png' },
+    arrayBuffer: async () => jpeg.buffer,
+    httpMetadata: { contentType: 'image/jpeg' },
   }),
 }
 
 function env(overrides: Record<string, unknown> = {}) {
-  return { ENV: 'development', PRICE_PER_BOX: '50', CF_AIG_TOKEN: '', MOVERS_BUCKET: bucket, ...overrides }
+  return {
+    ENV: 'development',
+    PRICE_PER_BOX: '50',
+    CF_AIG_TOKEN: '',
+    MOVERS_BUCKET: bucket,
+    MOVERS_DB: DB,
+    ...overrides,
+  }
 }
 
 function post(app: Hono<{ Bindings: Bindings }>, body: unknown, bindings: unknown) {
@@ -57,7 +95,10 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 describe('photo upload availability', () => {
   it('returns 503 without D1 instead of creating an unverified object', async () => {
@@ -65,7 +106,11 @@ describe('photo upload availability', () => {
     form.set('sessionId', '11111111-1111-4111-8111-111111111111')
     form.set('images', new File(['photo'], 'room.jpg', { type: 'image/jpeg' }))
     const put = vi.fn()
-    const res = await images.request('/upload', { method: 'POST', body: form }, env({ MOVERS_BUCKET: { put } }))
+    const res = await images.request(
+      '/upload',
+      { method: 'POST', body: form },
+      env({ MOVERS_BUCKET: { put }, MOVERS_DB: undefined }),
+    )
     expect(res.status).toBe(503)
     expect(put).not.toHaveBeenCalled()
   })
@@ -107,7 +152,7 @@ describe('local development with no AI credentials (offline mock)', () => {
     })
     expect(details.distanceMiles).toBeGreaterThan(0)
 
-    res = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env())
+    res = await post(analyze, analyzeBody(), env())
     expect(res.status).toBe(200)
     expect(res.headers.get(MODE_HEADER)).toBe('mock')
     const analysis = (await res.json()) as {
@@ -187,7 +232,7 @@ describe('local development with no AI credentials (offline mock)', () => {
   })
 
   it('confidence follows the unknown move details and widens the range', async () => {
-    const analysisRes = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env())
+    const analysisRes = await post(analyze, analyzeBody(), env())
     const analysis = await analysisRes.json()
     const known = (await (await post(price, { analysis, moveDetails: moveDetails(1, true) }, env())).json()) as {
       price: { total: number; low: number; high: number; confidence: string }
@@ -221,7 +266,11 @@ describe('local development with no AI credentials (offline mock)', () => {
   })
 
   it('serves the sample move from cache on the second call (MOVERS-16)', async () => {
-    const body = { imageUrls: ['http://localhost/api/images/sample-1.png'], sample: true }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(jpeg, { headers: { 'content-type': 'image/jpeg' } })),
+    )
+    const body = analyzeBody(['http://localhost/sample/living-room.jpg'], true)
     const first = await post(analyze, body, env())
     expect(first.status).toBe(200)
     const second = await post(analyze, body, env())
@@ -229,7 +278,7 @@ describe('local development with no AI credentials (offline mock)', () => {
     expect(second.headers.get('x-movers-sample-cache')).toBe('hit')
     expect(await second.json()).toEqual(await first.json())
 
-    const own = await post(analyze, { imageUrls: body.imageUrls }, env())
+    const own = await post(analyze, analyzeBody(), env())
     expect(own.headers.get('x-movers-sample-cache')).toBeNull()
   })
 })
@@ -252,7 +301,7 @@ describe('anywhere but local development: the mock is never served', () => {
       const bindings = env(overrides)
       const calls = [
         post(chat, { messages: [] }, bindings),
-        post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, bindings),
+        post(analyze, analyzeBody(), bindings),
         post(
           price,
           {
@@ -283,6 +332,88 @@ describe('anywhere but local development: the mock is never served', () => {
   })
 })
 
+describe('photo linkage route boundary', () => {
+  it('rejects legacy requests safely without reading bytes or calling AI', async () => {
+    const get = vi.fn()
+    const run = vi.fn()
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const res = await post(
+      analyze,
+      { imageUrls: ['https://other.example/private.jpg'] },
+      env({ MOVERS_BUCKET: { get }, AI: { run } }),
+    )
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ code: 'PHOTO_REUPLOAD_REQUIRED' })
+    expect(get).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+  it('preserves mixed exclusions in input order and sends only eligible bytes to AI without logging sensitive data', async () => {
+    const run = vi.fn(async () => ({
+      response: JSON.stringify({ items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 100 }),
+    }))
+    const get = vi.fn(async (key: string) => (key === 'b.png' ? null : bucket.get()))
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const body = analyzeBody([
+      'https://other.example/private.jpg',
+      'http://localhost/api/images/a.png',
+      'http://localhost/api/images/b.png',
+    ])
+    const res = await post(analyze, body, env({ AI: { run }, MOVERS_BUCKET: { get } }))
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { photoLinkStatuses: unknown }).photoLinkStatuses).toEqual([
+      expect.objectContaining({ url: body.photoRefs[0]?.url, status: 'unlinked' }),
+      expect.objectContaining({
+        url: body.photoRefs[1]?.url,
+        status: 'eligible',
+        reason: expect.stringContaining('relevance has not been assessed'),
+      }),
+      expect.objectContaining({ url: body.photoRefs[2]?.url, status: 'unavailable' }),
+    ])
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(get.mock.calls).toEqual([['a.png'], ['b.png']])
+    expect(fetch).not.toHaveBeenCalled()
+    expect(console.warn).not.toHaveBeenCalled()
+    expect(console.error).not.toHaveBeenCalled()
+  })
+  it('returns NO_USABLE_PHOTOS for all excluded and never calls AI or external fetch', async () => {
+    const run = vi.fn()
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const res = await post(
+      analyze,
+      analyzeBody(['http://127.0.0.1:5611/api/images/a.png', 'https://other.example/a.jpg']),
+      env({ AI: { run } }),
+    )
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({
+      code: 'NO_USABLE_PHOTOS',
+      photoLinkStatuses: [
+        expect.objectContaining({ status: 'unlinked' }),
+        expect.objectContaining({ status: 'unlinked' }),
+      ],
+    })
+    expect(run).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+  it('revalidates sample links before cached results and separates canonical sample identity', async () => {
+    const fetch = vi.fn(async () => new Response(jpeg, { headers: { 'content-type': 'image/jpeg' } }))
+    vi.stubGlobal('fetch', fetch)
+    const living = analyzeBody(['http://localhost/sample/living-room.jpg'], true)
+    const kitchen = analyzeBody(['http://localhost/sample/kitchen.jpg'], true)
+    const first = await post(analyze, living, env())
+    expect(first.status).toBe(200)
+    const different = await post(analyze, kitchen, env())
+    expect(different.headers.get('x-movers-sample-cache')).toBeNull()
+    fetch.mockResolvedValueOnce(new Response(null, { status: 404 }))
+    const missing = await post(analyze, living, env())
+    expect(missing.status).toBe(400)
+    expect(await missing.json()).toMatchObject({ code: 'NO_USABLE_PHOTOS' })
+  })
+})
+
 describe('photo analysis through the Workers AI binding (one image per call)', () => {
   const inventory = (type: string, volume: number) =>
     JSON.stringify({ items: [{ type, count: 1 }], total_volume_cubic_feet: volume, unseen_areas: ['garage'] })
@@ -294,7 +425,7 @@ describe('photo analysis through the Workers AI binding (one image per call)', (
 
     const res = await post(
       analyze,
-      { imageUrls: ['http://localhost/api/images/a.png', 'http://localhost/api/images/b.png'] },
+      analyzeBody(['http://localhost/api/images/a.png', 'http://localhost/api/images/b.png']),
       bindings,
     )
     expect(res.status).toBe(200)
@@ -311,21 +442,21 @@ describe('photo analysis through the Workers AI binding (one image per call)', (
 
   it('validates a normalized one-photo alias in the response', async () => {
     const AI = { run: vi.fn(async () => ({ response: inventory('couch', 100) })) }
-    const res = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env({ ENV: 'preview', AI }))
+    const res = await post(analyze, analyzeBody(), env({ ENV: 'preview', AI }))
     expect(res.status).toBe(200)
     expect((await res.json()) as { items: unknown }).toMatchObject({ items: [{ type: 'sofa', count: 1 }] })
   })
 
   it.each(['constructor', '__proto__'])('returns a valid inventory for the %s label', async (type) => {
     const AI = { run: vi.fn(async () => ({ response: inventory(type, 100) })) }
-    const res = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env({ ENV: 'preview', AI }))
+    const res = await post(analyze, analyzeBody(), env({ ENV: 'preview', AI }))
     expect(res.status).toBe(200)
     expect((await res.json()) as { items: unknown }).toMatchObject({ items: [{ type, count: 1 }] })
   })
 
   it('reports ANALYSIS_FAILED when a photo is still not analyzed after the retry', async () => {
     const AI = { run: vi.fn(async () => ({ response: 'no JSON here' })) }
-    const res = await post(analyze, { imageUrls: ['http://localhost/api/images/a.png'] }, env({ ENV: 'preview', AI }))
+    const res = await post(analyze, analyzeBody(), env({ ENV: 'preview', AI }))
     expect(res.status).toBe(400)
     expect(((await res.json()) as { code: string }).code).toBe('ANALYSIS_FAILED')
     expect(AI.run).toHaveBeenCalledTimes(2)

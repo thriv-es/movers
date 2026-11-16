@@ -1,6 +1,10 @@
 import type { AnalysisResult, ChatMessage, Contact, DetectedItem, MoveDetails, Price, ReviewCoverage } from '@/data'
 import { EMPTY_MOVE_DETAILS } from '@/data'
-export interface PhotoRef { url: string; receipt: string | null }
+import { SAMPLE_PHOTO_PATHS, samplePhotoPath } from '../data/sample-photos'
+export interface PhotoRef {
+  url: string
+  receipt: string | null
+}
 
 /**
  * The customer's progress through the estimator, kept in sessionStorage so a refresh or a phone
@@ -79,7 +83,11 @@ export const SAMPLE_MOVE_DETAILS: MoveDetails = {
   destinationElevator: true,
 }
 
-export const SAMPLE_PHOTO_PATHS = ['/sample/living-room.jpg', '/sample/bedroom.jpg', '/sample/kitchen.jpg']
+export { SAMPLE_PHOTO_PATHS } from '../data/sample-photos'
+
+export function isBundledSampleUrl(value: string, origin: string = window.location.origin): boolean {
+  return samplePhotoPath(value, origin) !== null
+}
 
 interface StorageLike {
   getItem(key: string): string | null
@@ -115,32 +123,46 @@ export function loadSession(store: StorageLike | null = storage()): EstimateSess
       return newSession()
     }
     if (parsed.version === 3 || parsed.version === 4) {
-      const photoUrls = Array.isArray(parsed.photoUrls) ? parsed.photoUrls.filter((url): url is string => typeof url === 'string') : []
-      const sample = parsed.sample === true
-      const needsPhotoReupload = !sample && (photoUrls.length > 0 || !!parsed.analysis || !!parsed.price || parsed.step === 'review' || parsed.step === 'estimate' || parsed.step === 'schedule')
+      const photoUrls = Array.isArray(parsed.photoUrls)
+        ? parsed.photoUrls.filter((url): url is string => typeof url === 'string')
+        : []
+      const sample = parsed.sample === true && photoUrls.length > 0 && photoUrls.every((url) => isBundledSampleUrl(url))
+      const needsPhotoReupload =
+        !sample &&
+        (photoUrls.length > 0 ||
+          !!parsed.analysis ||
+          !!parsed.price ||
+          parsed.step === 'review' ||
+          parsed.step === 'estimate' ||
+          parsed.step === 'schedule')
       return {
         ...EMPTY_SESSION,
         ...parsed,
         version: SESSION_VERSION,
         sessionId: crypto.randomUUID(),
         photoUrls,
+        sample,
         photoRefs: sample ? photoUrls.map((url) => ({ url, receipt: null })) : [],
         needsPhotoReupload,
-        ...(needsPhotoReupload ? {
-          step: 'upload' as const,
-          analysis: null,
-          items: [],
-          followUps: { ...EMPTY_FOLLOW_UPS },
-          wholeMoveCovered: null,
-          price: null,
-          estimateId: null,
-          contact: null,
-        } : parsed.version === 3 ? {
-          step: parsed.analysis ? 'review' as const : 'upload' as const,
-          price: null,
-          estimateId: null,
-          wholeMoveCovered: null,
-        } : {}),
+        ...(needsPhotoReupload
+          ? {
+              step: 'upload' as const,
+              analysis: null,
+              items: [],
+              followUps: { ...EMPTY_FOLLOW_UPS },
+              wholeMoveCovered: null,
+              price: null,
+              estimateId: null,
+              contact: null,
+            }
+          : parsed.version === 3
+            ? {
+                step: parsed.analysis ? ('review' as const) : ('upload' as const),
+                price: null,
+                estimateId: null,
+                wholeMoveCovered: null,
+              }
+            : {}),
       }
     }
     if (parsed.version !== SESSION_VERSION) {

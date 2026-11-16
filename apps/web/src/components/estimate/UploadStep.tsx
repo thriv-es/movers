@@ -1,14 +1,15 @@
 import { Button, Caption, Panel, Progress } from '@movers/ui'
 import { type ChangeEvent, useEffect, useRef, useState } from 'react'
-import type { AnalysisResult } from '@/data'
+import type { AnalysisResult, MoveDetails } from '@/data'
 import { analyzeApi, uploadImage } from '@/lib/api-client'
 import { downscaleImage } from '@/lib/image-downscale'
-import type { PhotoRef } from '@/lib/estimate-session'
+import { type PhotoRef, isBundledSampleUrl } from '@/lib/estimate-session'
 
 interface UploadStepProps {
   photoUrls: string[]
   photoRefs: PhotoRef[]
   sessionId: string
+  moveDetails: MoveDetails
   needsPhotoReupload: boolean
   sample: boolean
   hasAnalysis: boolean
@@ -64,6 +65,7 @@ export function UploadStep({
   photoUrls,
   photoRefs,
   sessionId,
+  moveDetails,
   needsPhotoReupload,
   sample,
   hasAnalysis,
@@ -166,15 +168,15 @@ export function UploadStep({
   }
 
   const usable = (ref: PhotoRef | null): ref is PhotoRef =>
-    !!ref && (sample || (typeof ref.receipt === 'string' && ref.receipt.length > 0))
+    !!ref && (sample ? isBundledSampleUrl(ref.url) : typeof ref.receipt === 'string' && ref.receipt.length > 0)
 
   const analyze = async () => {
-    const urls = cards.flatMap((card) => (usable(card.ref) ? [card.ref.url] : []))
-    if (urls.length === 0) return
+    const refs = cards.flatMap((card) => (usable(card.ref) ? [card.ref] : []))
+    if (refs.length === 0) return
     setAnalyzing(true)
     setError(null)
     try {
-      onAnalyzed(await analyzeApi(urls, sample))
+      onAnalyzed(await analyzeApi(sessionId, refs, moveDetails, sample))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'We could not read the photos. Try again.')
     } finally {

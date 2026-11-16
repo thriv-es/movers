@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ReviewStep } from '../src/components/estimate/ReviewStep'
 import { EstimateStep } from '../src/components/estimate/EstimateStep'
 import EstimatePage from '../src/pages/estimate.page'
-import { priceApi, uploadImage } from '../src/lib/api-client'
+import { analyzeApi, priceApi, uploadImage } from '../src/lib/api-client'
 import {
   EMPTY_SESSION,
   type EstimateSession,
@@ -96,7 +96,7 @@ describe('estimate session', () => {
         ...EMPTY_SESSION,
         version: 3,
         step: 'estimate',
-        photoUrls: ['https://dev.movers-ee0.pages.dev/sample/living-room.jpg'],
+        photoUrls: ['http://localhost:3000/sample/living-room.jpg'],
         analysis,
         items: [{ type: 'sofa', count: 2 }],
         price: savedPrice,
@@ -107,8 +107,8 @@ describe('estimate session', () => {
     expect(loadSession(store)).toMatchObject({
       version: 5,
       step: 'review',
-      photoUrls: ['https://dev.movers-ee0.pages.dev/sample/living-room.jpg'],
-      photoRefs: [{ url: 'https://dev.movers-ee0.pages.dev/sample/living-room.jpg', receipt: null }],
+      photoUrls: ['http://localhost:3000/sample/living-room.jpg'],
+      photoRefs: [{ url: 'http://localhost:3000/sample/living-room.jpg', receipt: null }],
       needsPhotoReupload: false,
       analysis,
       items: [{ type: 'sofa', count: 2 }],
@@ -118,6 +118,30 @@ describe('estimate session', () => {
       sample: true,
     })
     expect(store.getItem(SESSION_KEY)).not.toBeNull()
+  })
+
+  it.each([3, 4])('rejects non-bundled legacy sample refs in v%s and clears stale analysis', (version) => {
+    const store = new FakeStorage()
+    store.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        version,
+        sample: true,
+        step: 'estimate',
+        analysis,
+        price: savedPrice,
+        photoUrls: ['http://localhost:3000/sample/living-room.jpg', 'http://localhost:3000/sample/lookalike.jpg'],
+      }),
+    )
+    expect(loadSession(store)).toMatchObject({
+      step: 'upload',
+      sample: false,
+      needsPhotoReupload: true,
+      photoRefs: [],
+      analysis: null,
+      price: null,
+    })
   })
 
   it('keeps a v3 draft without analysis at upload rather than a broken estimate', () => {
@@ -221,6 +245,31 @@ describe('estimate session', () => {
     )
     expect(screen.getByAltText('room.jpg')).toHaveAttribute('src', 'https://example.test/room.jpg')
     expect(screen.getByText(/re-upload your photos to continue/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
+  })
+
+  it.each([
+    'http://localhost:3000/sample/lookalike.jpg',
+    'https://other.example/sample/living-room.jpg',
+    'http://localhost:3000/sample/living-room.jpg?x=1',
+  ])('does not trust sample mode for a non-bundled ref: %s', (url) => {
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        sample: true,
+        step: 'upload',
+        photoUrls: [url],
+        photoRefs: [{ url, receipt: null }],
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
     expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
   })
 
@@ -345,7 +394,9 @@ describe('estimate session', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Analyse 1 photo' }))
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
     expect(JSON.parse((fetch.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
-      imageUrls: ['https://example.test/new-room.jpg'],
+      sessionId: JSON.parse(window.sessionStorage.getItem(SESSION_KEY) ?? '{}').sessionId,
+      photoRefs: [{ url: 'https://example.test/new-room.jpg', receipt: 'opaque-test-receipt' }],
+      moveDetails: EMPTY_SESSION.moveDetails,
       sample: false,
     })
   })
@@ -421,6 +472,21 @@ describe('estimate session', () => {
 })
 
 describe('estimate review and API', () => {
+  it('sends the analyze session, receipt refs and confirmed move details without chat', async () => {
+    const fetch = vi.fn(async () => Response.json(analysis))
+    vi.stubGlobal('fetch', fetch)
+    const refs = [{ url: 'http://localhost:3000/api/images/room.jpg', receipt: 'opaque-test-receipt' }]
+    const details = { ...EMPTY_SESSION.moveDetails, from: 'Boston, MA', originFloor: 3 }
+    await analyzeApi(EMPTY_SESSION.sessionId, refs, details, false)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0]?.[0]).toBe('/api/analyze')
+    expect(JSON.parse((fetch.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
+      sessionId: EMPTY_SESSION.sessionId,
+      photoRefs: refs,
+      moveDetails: details,
+      sample: false,
+    })
+  })
   it('sends the session ID in an upload and returns the receipt with its URL', async () => {
     let sent: FormData | null = null
     class FakeXHR {
@@ -459,6 +525,33 @@ describe('estimate review and API', () => {
       review,
       sample: true,
     })
+  })
+
+  it('shows excluded photos in request order without exposing URLs or claiming relevance', () => {
+    render(
+      createElement(ReviewStep, {
+        analysis: {
+          ...analysis,
+          photoLinkStatuses: [
+            { url: 'https://private.example/a', status: 'unlinked', reason: 'Re-upload this photo.' },
+            { url: 'https://private.example/b', status: 'eligible', reason: 'Not relevance tested.' },
+            { url: 'https://private.example/c', status: 'unavailable', reason: 'Unsupported bytes.' },
+          ],
+        },
+        items: analysis.items,
+        followUps: review.followUps,
+        wholeMoveCovered: null,
+        onItemsChange: vi.fn(),
+        onFollowUp: vi.fn(),
+        onWholeMoveCovered: vi.fn(),
+        onBack: vi.fn(),
+        onConfirm: vi.fn(),
+      }),
+    )
+    expect(screen.getByRole('list', { name: 'Photos excluded from inventory' }).textContent).toBe(
+      'Photo 1: Re-upload this photo.Photo 3: Unsupported bytes.',
+    )
+    expect(screen.queryByText(/private\.example/)).not.toBeInTheDocument()
   })
 
   it('offers an explicit whole-move yes/no answer with pressed state', () => {

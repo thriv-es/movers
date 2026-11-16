@@ -188,6 +188,7 @@ export default function EstimatePage(): JSX.Element {
             photoUrls={session.photoUrls}
             photoRefs={session.photoRefs}
             sessionId={session.sessionId}
+            moveDetails={session.moveDetails}
             needsPhotoReupload={session.needsPhotoReupload}
             sample={session.sample}
             hasAnalysis={session.analysis !== null}

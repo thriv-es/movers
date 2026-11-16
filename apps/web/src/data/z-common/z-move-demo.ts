@@ -103,6 +103,9 @@ export const zPrice = z
   .refine((p) => p.low <= p.total && p.total <= p.high, { message: 'low <= total <= high' })
 
 export const zAnalysisResult = z.object({
+  photoLinkStatuses: z
+    .array(z.object({ url: z.string(), status: z.enum(['eligible', 'unlinked', 'unavailable']), reason: z.string() }))
+    .optional(),
   items: z.array(zDetectedItem),
   totalVolumeCubicFeet: z.number().nonnegative(),
   estimatedBoxes: zEstimatedBoxes,
@@ -123,7 +126,12 @@ export const zEstimateResult = z.object({
 })
 
 export const zAnalyzeRequest = z.object({
-  imageUrls: z.array(z.string()).min(1).max(10),
+  sessionId: z.string().uuid(),
+  photoRefs: z
+    .array(z.object({ url: z.string().min(1).max(2048), receipt: z.string().max(128).nullable() }))
+    .min(1)
+    .max(10),
+  moveDetails: zMoveDetails,
   /** The bundled sample move: results are cached so repeated runs do not spend model calls. */
   sample: z.boolean().optional(),
 })

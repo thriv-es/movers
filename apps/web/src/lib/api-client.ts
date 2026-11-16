@@ -98,8 +98,13 @@ export function uploadImage(file: File, sessionId: string, onProgress?: (percent
 }
 
 /** Detects items in the uploaded photos. `sample` marks the bundled sample move so the server can cache it. */
-export function analyzeApi(imageUrls: string[], sample = false): Promise<AnalysisResult> {
-  return postJson<AnalysisResult>('/api/analyze', { imageUrls, sample }, { ai: true })
+export function analyzeApi(
+  sessionId: string,
+  photoRefs: PhotoRef[],
+  moveDetails: MoveDetails,
+  sample = false,
+): Promise<AnalysisResult> {
+  return postJson<AnalysisResult>('/api/analyze', { sessionId, photoRefs, moveDetails, sample }, { ai: true })
 }
 
 /** Prices the confirmed inventory for the given move details. */
