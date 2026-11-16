@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
 import type { Bindings } from './_lib/types'
 import chat from './_routes/chat'
+import conversation from './_routes/conversation'
 import analyze from './_routes/analyze'
 import price from './_routes/price'
 import images from './_routes/images'
@@ -15,6 +16,7 @@ const app = new Hono<{ Bindings: Bindings }>().basePath('/api')
 
 app.route('/ai-status', aiStatus)
 app.route('/chat', chat)
+app.route('/conversation', conversation)
 app.route('/analyze', analyze)
 app.route('/price', price)
 app.route('/images', images)
