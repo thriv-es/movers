@@ -3,6 +3,7 @@ import { type FormEvent, useEffect, useRef, useState } from 'react'
 import type { ChatMessage, MoveDetails } from '@/data'
 import { chatApi } from '@/lib/api-client'
 import { formatDetail } from './format'
+import { useChatLayout } from './useChatLayout'
 
 interface ChatStepProps {
   messages: ChatMessage[]
@@ -43,7 +44,7 @@ export function ChatStep({
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const endRef = useRef<HTMLDivElement>(null)
+  const { stepRef, logRef, contentRef, resumeFollow } = useChatLayout()
   const greeted = useRef(false)
 
   useEffect(() => {
@@ -60,14 +61,11 @@ export function ChatStep({
       .finally(() => setBusy(false))
   }, [messages.length, moveDetails, onTurn])
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [])
-
   const send = async (event: FormEvent) => {
     event.preventDefault()
     const text = input.trim()
     if (!text || busy) return
+    resumeFollow()
     const next = [...messages, { id: newId('user'), role: 'user' as const, content: text }]
     setInput('')
     setError(null)
@@ -90,22 +88,31 @@ export function ChatStep({
   const known = DETAIL_ROWS.filter((row) => moveDetails[row.key] !== null)
 
   return (
-    <div className="est-split">
+    <div ref={stepRef} className="est-split est-chat-step">
       <Panel as="section" className="est-chat" aria-label="Chat about your move">
         <Caption accent="tape">Tell us about the move</Caption>
-        <div className="est-chat__log" aria-live="polite">
-          {messages.map((message) => (
-            <Bubble key={message.id} role={message.role} meta={message.role === 'user' ? 'You' : 'Movers'}>
-              {message.content}
-            </Bubble>
-          ))}
-          {busy ? (
-            // biome-ignore lint/a11y/useValidAriaRole: Bubble's `role` is the speaker, not an ARIA role
-            <Bubble role="assistant" meta="Movers" className="est-chat__typing">
-              Thinking...
-            </Bubble>
-          ) : null}
-          <div ref={endRef} />
+        <div
+          ref={logRef}
+          className="est-chat__log"
+          role="log"
+          aria-label="Move conversation"
+          aria-live="polite"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: The scrollable transcript needs keyboard access.
+          tabIndex={0}
+        >
+          <div ref={contentRef} className="est-chat__content">
+            {messages.map((message) => (
+              <Bubble key={message.id} role={message.role} meta={message.role === 'user' ? 'You' : 'Movers'}>
+                {message.content}
+              </Bubble>
+            ))}
+            {busy ? (
+              // biome-ignore lint/a11y/useValidAriaRole: Bubble's `role` is the speaker, not an ARIA role
+              <Bubble role="assistant" meta="Movers" className="est-chat__typing">
+                Thinking...
+              </Bubble>
+            ) : null}
+          </div>
         </div>
         {error ? (
           <p className="est-error" role="alert">
