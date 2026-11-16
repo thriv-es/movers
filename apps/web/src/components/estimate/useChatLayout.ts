@@ -81,5 +81,10 @@ export function useChatLayout({ follow = 'bottom' }: { follow?: 'bottom' | 'conv
     following.current = true
   }
 
-  return { stepRef, logRef, contentRef, followRef, resumeFollow }
+  // An explicit card interaction is a reader position, even when a short widget is within the follow threshold.
+  const pauseFollow = () => {
+    following.current = false
+  }
+
+  return { stepRef, logRef, contentRef, followRef, resumeFollow, pauseFollow }
 }

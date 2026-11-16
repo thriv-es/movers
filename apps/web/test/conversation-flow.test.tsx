@@ -79,7 +79,15 @@ function mount(state?: ConversationSession) {
   )
 }
 const draft = (): ConversationSession => JSON.parse(window.sessionStorage.getItem(SESSION_KEY) ?? '{}')
-const confirmPrice = () => screen.getByRole('button', { name: 'Confirm inventory and get estimate' })
+function reopenStage(name: RegExp) {
+  const button = screen.queryByRole('button', { name })
+  if (button) fireEvent.click(button)
+}
+const confirmPrice = () => {
+  if (!screen.queryByRole('button', { name: 'Confirm inventory and get estimate' }))
+    reopenStage(/Review estimate requirements/)
+  return screen.getByRole('button', { name: 'Confirm inventory and get estimate' })
+}
 const contact = {
   name: 'Synthetic Customer',
   email: 'synthetic@example.test',
@@ -190,6 +198,7 @@ function controlledUploads() {
   return { pending, select }
 }
 async function rebuildEstimate() {
+  reopenStage(/Review move details/)
   fireEvent.click(screen.getByRole('button', { name: 'Confirm move details' }))
   fireEvent.click(screen.getByRole('button', { name: 'Analyse 1 photo' }))
   await waitFor(() => expect(draft().analysis).not.toBeNull())
@@ -227,6 +236,121 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('contextual conversation stages', () => {
+  it('starts with a direct greeting and no bottom-of-feed card stack', () => {
+    api()
+    mount()
+    expect(screen.queryByText(/roughly how far/i)).not.toBeInTheDocument()
+    for (const name of ['Confirm move details', 'Conversation photos', 'Estimate confirmation', 'Date request'])
+      expect(screen.queryByRole('region', { name })).not.toBeInTheDocument()
+  })
+  it('requests photos with accepted endpoints alone and does not enable pricing', () => {
+    api()
+    const state = createConversationSession()
+    mount({
+      ...state,
+      moveDetails: { ...state.moveDetails, from: 'Tel Aviv', to: 'Raanana' },
+      nextAction: 'request_photos',
+    })
+    expect(screen.getByRole('region', { name: 'Conversation photos' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Confirm move details' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Estimate confirmation' })).not.toBeInTheDocument()
+  })
+  it('collapses completed photos and review into reachable summaries', () => {
+    api()
+    mount(ready())
+    expect(screen.queryByRole('region', { name: 'Conversation photos' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Inventory questions' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Reopen photos/i }))
+    expect(screen.getByRole('region', { name: 'Conversation photos' })).toBeInTheDocument()
+  })
+  it('keeps incomplete review visible despite a model photo action', () => {
+    api()
+    mount(ready({ nextAction: 'request_photos', wholeMoveCovered: null }))
+    expect(screen.getByRole('region', { name: 'Inventory questions' })).toBeInTheDocument()
+  })
+  it('honors a genuine endpoint clarification without gating upload-first photo decisions', () => {
+    api()
+    const state = createConversationSession()
+    mount({
+      ...state,
+      moveDetails: { ...state.moveDetails, from: 'Springfield', to: 'Boston' },
+      nextAction: 'clarify_origin',
+    })
+    expect(screen.queryByRole('region', { name: 'Conversation photos' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Choose from library')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Move manifest' })).toBeInTheDocument()
+  })
+  it('distinguishes accepted date-window evidence from a pending exact-date proposal and replaces the single slot on Accept', () => {
+    api()
+    mount(
+      ready({
+        moveDetails: { ...ready().moveDetails, date: null },
+        messages: [{ id: 'date-source', role: 'user', content: 'I meant 2027-01-11 instead of early January.' }],
+        facts: [
+          {
+            field: 'dateWindow',
+            sourceMessageId: 'date-source',
+            wording: 'early January',
+            uncertainty: 'uncertain',
+            precision: 'window',
+            correction: false,
+          },
+        ],
+        pendingProposals: [
+          {
+            id: 'exact-date',
+            expectedRevision: 0,
+            command: {
+              type: 'details.patch',
+              patch: { date: '2027-01-11' },
+              facts: [
+                {
+                  field: 'date',
+                  sourceMessageId: 'date-source',
+                  wording: '2027-01-11',
+                  uncertainty: 'certain',
+                  precision: 'exact',
+                  correction: true,
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    )
+    expect(screen.getByText(/Accepted date window.*early January/)).toBeInTheDocument()
+    expect(screen.getByText('Suggested update — not yet accepted')).toBeInTheDocument()
+    expect(screen.getByText('Move date: 2027-01-11')).toBeInTheDocument()
+    expect(screen.getByLabelText('Move date')).toHaveValue('')
+    fireEvent.click(screen.getByRole('button', { name: 'Accept suggestion' }))
+    expect(screen.queryByText(/Accepted date window/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Accepted date evidence: 2027-01-11/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Move date')).toHaveValue('2027-01-11')
+  })
+  it('supports ground floor zero in the shared panel', () => {
+    api()
+    mount()
+    for (const label of ['Floor at origin', 'Floor at destination']) {
+      expect(screen.getByLabelText(label)).toHaveAttribute('min', '0')
+      fireEvent.change(screen.getByLabelText(label), { target: { value: '0' } })
+    }
+    expect(draft().moveDetails).toMatchObject({ originFloor: 0, destinationFloor: 0 })
+  })
+  it('shows readable pending proposals instead of command JSON', () => {
+    api()
+    const state = createConversationSession()
+    mount({
+      ...state,
+      pendingProposals: [
+        { id: 'pending', expectedRevision: 0, command: { type: 'details.patch', patch: { from: 'Tel Aviv' } } },
+      ],
+    })
+    expect(screen.getByText('Moving from: Tel Aviv')).toBeInTheDocument()
+    expect(document.querySelector('.conv-proposal')).toBeNull()
+  })
+})
+
 describe('persistent estimator conversation', () => {
   it('keeps one feed/composer and shared manifest; mount, rerender and reload never POST', () => {
     const fetch = api()
@@ -254,6 +378,7 @@ describe('persistent estimator conversation', () => {
     const fetch = api((path) => (path === '/api/analyze' ? pending.promise : undefined))
     mount(ready())
     fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'still writing' } })
+    reopenStage(/Reopen photos/)
     fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
     expect(draft().analysis).toBeNull()
     expect(draft().revision).toBe(1)
@@ -276,6 +401,7 @@ describe('persistent estimator conversation', () => {
     const chat = deferred<Response>()
     api((path) => (path === '/api/analyze' ? pending.promise : path === '/api/conversation' ? chat.promise : undefined))
     mount(ready())
+    reopenStage(/Reopen photos/)
     fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'hello' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
@@ -447,10 +573,12 @@ describe('persistent estimator conversation', () => {
     const path = `/api/${kind}`
     const fetch = api((endpoint) => (endpoint === path && ++attempts === 1 ? pending.promise : undefined))
     mount(ready())
-    const control = () =>
-      screen.getByRole('button', {
+    const control = () => {
+      if (kind === 'analyze') reopenStage(/Reopen photos/)
+      return screen.getByRole('button', {
         name: kind === 'analyze' ? /^Analyse / : draft().price ? 'Retry save' : 'Confirm inventory and get estimate',
       })
+    }
     fireEvent.click(control())
     await waitFor(() => expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1))
     fireEvent(window, new Event('pagehide'))
@@ -547,10 +675,12 @@ describe('persistent estimator conversation', () => {
   it.each(['analysis', 'pricing', 'movers', 'chat'])('does not start %s while the page is leaving', async (kind) => {
     const fetch = api()
     mount(ready(kind === 'movers' ? { price, estimateId: 'saved-id', contact } : {}))
+    if (kind === 'analysis') reopenStage(/Reopen photos/)
     fireEvent(window, new Event('pagehide'))
     await act(async () => {
-      if (kind === 'analysis') fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
-      else if (kind === 'pricing') fireEvent.click(confirmPrice())
+      if (kind === 'analysis') {
+        fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
+      } else if (kind === 'pricing') fireEvent.click(confirmPrice())
       else if (kind === 'movers') fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
       else send('Synthetic hidden-page message')
     })
@@ -606,6 +736,7 @@ describe('persistent estimator conversation', () => {
     mount(ready())
     fireEvent.click(confirmPrice())
     await waitFor(() => expect(fetch.mock.calls.some(([path]) => path === '/api/price')).toBe(true))
+    reopenStage(/Reopen review/)
     fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'No' }))
     await act(async () => pending.resolve(Response.json({ price })))
     expect(draft()).toMatchObject({ wholeMoveCovered: false, price: null, estimateId: null })
@@ -669,6 +800,7 @@ describe('persistent estimator conversation', () => {
     expect(confirmPrice()).toBeEnabled()
     view.unmount()
     mount()
+    reopenStage(/Reopen photos/)
     expect(screen.getByRole('button', { name: 'Keep photo 1' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'Keep photo 1' })).toBeDisabled()
     expect(draft().duplicateResolutions).toEqual({ sofa: 'same' })
@@ -731,7 +863,7 @@ describe('persistent estimator conversation', () => {
               packet(
                 [{ type: 'details.patch', patch: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' } }],
                 0,
-                'Roughly how many miles is the move?',
+                'Please add photos of the rooms you are moving.',
               ),
               { headers: { 'x-movers-ai-mode': 'mock' } },
             ),
@@ -740,7 +872,7 @@ describe('persistent estimator conversation', () => {
     )
     mount(createConversationSession())
     send('from Tel Aviv to Raanana on 1.1.2027')
-    await screen.findByText('Roughly how many miles is the move?')
+    await screen.findByText('Please add photos of the rooms you are moving.')
     expect(screen.getByLabelText('Moving from')).toHaveValue('Tel Aviv')
     expect(screen.getByLabelText('Moving to')).toHaveValue('Raanana')
     expect(screen.getByLabelText('Move date')).toHaveValue('2027-01-01')
@@ -772,7 +904,7 @@ describe('persistent estimator conversation', () => {
     fireEvent.change(screen.getByLabelText('Moving to'), { target: { value: 'Edited destination' } })
     send('clear origin')
     await waitFor(() => expect(draft().moveDetails.from).toBeNull())
-    expect(draft().moveDetails).toMatchObject({ to: 'Edited destination', distanceMiles: 120 })
+    expect(draft().moveDetails).toMatchObject({ to: 'Edited destination', distanceMiles: null })
     expect(draft().revision).toBe(2)
     expect(JSON.parse(fetch.mock.calls[0]?.[1]?.body as string).snapshot).toMatchObject({
       revision: 1,
@@ -994,6 +1126,7 @@ describe('persistent estimator conversation', () => {
       return undefined
     })
     mount(ready())
+    reopenStage(/Reopen photos/)
     fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
     send('synthetic question during analysis')
     const operations = draft().operations
@@ -1091,7 +1224,7 @@ describe('persistent estimator conversation', () => {
                   packet(
                     [{ type: 'details.patch', patch: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' } }],
                     0,
-                    'Roughly how many miles is the move?',
+                    'Please add photos of the rooms you are moving.',
                   ),
                 ),
           )
@@ -1100,7 +1233,7 @@ describe('persistent estimator conversation', () => {
     mount(createConversationSession())
     send('from Tel Aviv to Raanana on 1.1.2027')
     fireEvent.click(await screen.findByRole('button', { name: 'Retry reply' }))
-    await screen.findByText('Roughly how many miles is the move?')
+    await screen.findByText('Please add photos of the rooms you are moving.')
     expect(draft()).toMatchObject({
       revision: 1,
       pendingProposals: [],
@@ -1263,6 +1396,7 @@ describe('persistent estimator conversation', () => {
     fireEvent.change(screen.getByLabelText('Add something we missed'), { target: { value: 'table' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add', exact: true }))
     expect(draft().items).toEqual([{ type: 'table', count: 1 }])
+    reopenStage(/Reopen photos/)
     expect(screen.getByRole('button', { name: 'Keep photo 1' })).toBeDisabled()
     expect(fetch.mock.calls).toHaveLength(0)
   })
@@ -1300,6 +1434,7 @@ describe('persistent estimator conversation', () => {
           : undefined,
       )
       const view = mount(ready({ price, estimateId: 'old-id' }))
+      reopenStage(/Reopen photos/)
       fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
       await screen.findByText(/Photo 1: Check this room/)
       expect(draft()).toMatchObject({ analysis: null, items: [], price: null, estimateId: null, photoDecisions: {} })
@@ -1336,10 +1471,12 @@ describe('persistent estimator conversation', () => {
       }),
     )
     if (change === 'details') fireEvent.change(screen.getByLabelText('Moving from'), { target: { value: '' } })
-    else
+    else {
+      reopenStage(/Reopen photos/)
       fireEvent.click(
         within(screen.getByRole('list', { name: 'Selected photos' })).getByRole('button', { name: 'Remove' }),
       )
+    }
     expect(draft()).toMatchObject({
       failedPhotoAssessments: [],
       analysis: null,
@@ -1578,6 +1715,7 @@ describe('persistent estimator conversation', () => {
         },
       }),
     )
+    reopenStage(/Reopen photos/)
     expect(screen.getByText('Photo 1: Re-upload this room.')).toBeInTheDocument()
     expect(screen.queryByText(/https:\/\/example\.test/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Keep photo 1' })).not.toBeInTheDocument()
@@ -1768,7 +1906,8 @@ describe('persistent estimator conversation', () => {
       expect(log.scrollTop).toBe(1800)
       expect(screen.getByText('New synthetic reply')).toBeInTheDocument()
       expect(screen.getByLabelText('Message')).toBe(composer)
-      expect(screen.getByRole('region', { name: 'Conversation photos' })).toBeInTheDocument()
+      expect(screen.queryByRole('region', { name: 'Conversation photos' })).not.toBeInTheDocument()
+      if (context !== 'fresh') reopenStage(/Reopen review/)
       const scroll = vi.mocked(log.scrollTo)
       log.scrollTop = 100
       fireEvent.scroll(log)
@@ -1777,8 +1916,10 @@ describe('persistent estimator conversation', () => {
       expect(scroll).not.toHaveBeenCalled()
       log.scrollTop = 2500
       fireEvent.scroll(log)
-      if (context !== 'fresh')
+      if (context !== 'fresh') {
+        reopenStage(/Reopen review/)
         fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'No' }))
+      }
       fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Reading the cards' } })
       expect(log.scrollTop).toBe(2500)
       expect(scroll).not.toHaveBeenCalled()
@@ -1837,8 +1978,10 @@ describe('persistent estimator conversation', () => {
       if (change === 'draft edit') fireEvent.change(composer, { target: { value: 'Unsent reader draft' } })
       else if (change === 'manifest change')
         fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '44' } })
-      else
+      else {
+        reopenStage(/Reopen review/)
         fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'No' }))
+      }
       expect(log.scrollTop).toBe(4700)
       expect(scroll).not.toHaveBeenCalled()
       expect(screen.getByLabelText('Message')).toBe(composer)

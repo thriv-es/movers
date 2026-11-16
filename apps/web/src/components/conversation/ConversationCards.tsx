@@ -266,7 +266,10 @@ export function ConversationPriceCard({ controller }: { controller: Conversation
     </Panel>
   )
 }
-export function ConversationRequestCards({ controller }: { controller: ConversationController }) {
+export function ConversationRequestCards({
+  controller,
+  visible = true,
+}: { controller: ConversationController; visible?: boolean }) {
   const { session } = controller
   const [name, setName] = useState(session.contact?.name ?? '')
   const [email, setEmail] = useState(session.contact?.email ?? '')
@@ -281,7 +284,7 @@ export function ConversationRequestCards({ controller }: { controller: Conversat
       (op) => op.status === 'interrupted' && op.request.kind === kind && op.revision === session.revision,
     )
   return (
-    <>
+    <div hidden={!visible}>
       <Panel as="section" className="mv-stack" aria-label="Date request">
         <Caption accent="tape">Request a move date</Caption>
         {session.scheduleResult ? (
@@ -398,7 +401,7 @@ export function ConversationRequestCards({ controller }: { controller: Conversat
           )}
         </Panel>
       ) : null}
-    </>
+    </div>
   )
 }
 export function ConversationOperationCards({ controller }: { controller: ConversationController }) {

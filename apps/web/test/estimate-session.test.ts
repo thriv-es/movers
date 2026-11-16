@@ -311,6 +311,7 @@ describe('estimate session', () => {
       ],
       needsPhotoReupload: true,
     })
+    fireEvent.click(screen.getByRole('button', { name: 'Review move details' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm move details' }))
     expect(screen.getByRole('button', { name: 'Analyse 1 photo' })).toBeDisabled()
     for (const name of ['room-a.jpg', 'room-b.jpg'])

@@ -49,9 +49,9 @@ export function validateDetails(details: MoveDetails): Partial<Record<keyof Move
   if (!details.to) errors.to = 'Where are you moving to?'
   if (details.distanceMiles === null) errors.distanceMiles = 'Roughly how many miles is the move?'
   else if (details.distanceMiles < 0) errors.distanceMiles = 'Distance cannot be negative.'
-  if (details.originFloor !== null && details.originFloor < 1) errors.originFloor = 'Use 1 for the ground floor.'
-  if (details.destinationFloor !== null && details.destinationFloor < 1)
-    errors.destinationFloor = 'Use 1 for the ground floor.'
+  if (details.originFloor !== null && details.originFloor < 0) errors.originFloor = 'Use 0 for the ground floor.'
+  if (details.destinationFloor !== null && details.destinationFloor < 0)
+    errors.destinationFloor = 'Use 0 for the ground floor.'
   return errors
 }
 
@@ -104,12 +104,12 @@ export function MoveDetailsStep({ moveDetails, onBack, onContinue }: MoveDetails
         <Field label="Move date" htmlFor="md-date" help="Optional">
           <Input id="md-date" type="date" value={draft.date} onChange={set('date')} />
         </Field>
-        <Field label="Floor at origin" htmlFor="md-ofloor" help="1 is the ground floor" error={errors.originFloor}>
+        <Field label="Floor at origin" htmlFor="md-ofloor" help="0 is the ground floor" error={errors.originFloor}>
           <Input
             id="md-ofloor"
             type="number"
             inputMode="numeric"
-            min={1}
+            min={0}
             value={draft.originFloor}
             onChange={set('originFloor')}
           />
@@ -126,7 +126,7 @@ export function MoveDetailsStep({ moveDetails, onBack, onContinue }: MoveDetails
             id="md-dfloor"
             type="number"
             inputMode="numeric"
-            min={1}
+            min={0}
             value={draft.destinationFloor}
             onChange={set('destinationFloor')}
           />

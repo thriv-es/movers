@@ -8,7 +8,9 @@ import { ConversationDataPanel } from './ConversationDataPanel'
 import { ConversationFeed } from './ConversationFeed'
 
 export function ConversationShell({ controller }: { controller: ConversationController }) {
-  const { stepRef, logRef, contentRef, followRef, resumeFollow } = useChatLayout({ follow: 'conversation' })
+  const { stepRef, logRef, contentRef, followRef, resumeFollow, pauseFollow } = useChatLayout({
+    follow: 'conversation',
+  })
   const [desktop, setDesktop] = useState(() => window.matchMedia('(min-width: 860px)').matches)
   const [open, setOpen] = useState(false)
   const dataRef = useRef<HTMLDivElement>(null)
@@ -44,6 +46,7 @@ export function ConversationShell({ controller }: { controller: ConversationCont
             contentRef={contentRef}
             followRef={followRef}
             openData={openData}
+            onInteract={pauseFollow}
           />
           <ConversationComposer controller={controller} onSend={resumeFollow} />
         </section>

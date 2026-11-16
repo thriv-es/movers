@@ -5,6 +5,7 @@ import type { ConversationController } from '../../lib/useConversationController
 import { canonicalItemType } from '../../lib/item-aliases'
 import { conversationAnalysis } from '../../lib/conversation-state'
 import { formatMoney } from '../estimate/format'
+import { displayFact, routeSummary } from './conversation-presentation'
 
 const fields: { key: keyof MoveDetails; label: string; type?: string }[] = [
   { key: 'from', label: 'Moving from' },
@@ -57,7 +58,7 @@ export function ConversationDataPanel({ controller }: { controller: Conversation
               <Input
                 id={`manifest-${key}`}
                 type={type ?? 'text'}
-                min={type === 'number' ? (key === 'distanceMiles' ? 0 : 1) : undefined}
+                min={type === 'number' ? 0 : undefined}
                 value={String(session.moveDetails[key] ?? '')}
                 onChange={(event) =>
                   controller.apply(
@@ -80,6 +81,18 @@ export function ConversationDataPanel({ controller }: { controller: Conversation
           </Field>
         ))}
       </div>
+      <p className="est-small">
+        Floor 0 is the ground floor. Unknown distance stays unknown until supported by evidence.
+      </p>
+      {session.facts
+        .filter((fact) => fact.field === 'date' || fact.field === 'dateWindow')
+        .map((fact) => (
+          <p key={fact.field}>
+            Accepted {fact.field === 'dateWindow' ? 'date window (not an exact date)' : 'date evidence'}:{' '}
+            {displayFact(fact.wording)} · {fact.uncertainty}
+          </p>
+        ))}
+      {session.route ? <p>{routeSummary(session.route)}</p> : null}
       <h2 className="conv-heading">Accepted inventory</h2>
       {!items.size ? (
         <p>No accepted inventory remains. Add an item or upload usable photos before pricing.</p>
