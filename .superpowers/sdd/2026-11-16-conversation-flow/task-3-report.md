@@ -181,3 +181,98 @@ No build or E2E was run, in accordance with this backend-only assignment and the
 - Remaining integration work: parent adapter/controller wiring, independent API review, and Task 4 browser/E2E. Existing lead-save/mover-seeding races and unrelated runtime behavior are not claimed fixed.
 - Model prose filtering is intentionally defensive but cannot establish semantic truth; proposal types/revisions/references and the separate explicit executor are the actual side-effect boundary.
 - **Blockers: none for this bounded backend deliverable.**
+
+## Fix round 1/5 — unsupported result prose and full-address correction
+
+### Checkpoint and scope
+
+- Review baseline: `39bfd5a386a9159ed48af28a90770fe0fff81cf1`.
+- Fix implementation commit: **`adead1b25949d67c539a2ed0b78fc065a0690772`** — `fix(web): render safe conversation guidance and replace complete addresses`.
+- This appended section supersedes the original report's heuristic prose-blacklist policy and its address-replacement description. The earlier evidence remains recorded as history, not as the current prose-safety guarantee.
+- Changed only the owned backend agent/prompts/route and the two owned test files; this tracked report is the documentation-only follow-up. No frontend, Task 1 schema/state, legacy chat/mock, catchall, E2E, build/preview state/process, remote resource, live AI, push or deployment change.
+
+### Finding 1: visible prose is now server-authored
+
+The review demonstrated that sentence blacklisting was not a sound boundary: syntactically valid model replies asserted booking/quote success and amounts through unlisted paraphrases. The fix **removes the semantic claim blacklist rather than expanding it**.
+
+Current intentional policy:
+
+1. The model still returns a bounded nonempty `reply` field for model-envelope shape compatibility. Its existing syntactic checks (length, control characters, links/data URLs, markup/fences and JSON snippets) remain. The server **never returns this raw model reply**, regardless of whether it sounds safe, helpful, true or false. It is not logged or echoed on retry.
+2. `parseConversationTurn(text,snapshot,messages?)` now validates the entire model batch first, then calls the private shared server renderer and constructs a fresh `{reply,basedOnRevision,proposals}` object. The actual route supplies the validated messages; callers omitting messages get current-state template guidance without contextual clarification.
+3. The private renderer uses the current validated snapshot, the validated typed commands and the latest user/question context. Both real and offline modes use it. Existing clone-only proposed-edit projection and price/dependent-result invalidation are reused for next-question selection. No operation executes or becomes successful through this projection.
+4. The normal visible reply is one of the server-authored missing-detail, confirmation, attachment/link-repair, analysis, photo-review, inventory/duplicate/follow-up/coverage, price/save-control, date/contact-control or quote-control guidance templates. The route does **not** narrate a model-supplied amount, saved reference, scheduled/booked move, sent request, payment or dispatch. Existing price/date/quote result cards remain the authoritative domain-result display.
+5. To preserve genuine model-detected ambiguity without accepting free text, the **internal model output only** may add `clarification: 'date' | 'address_side' | 'address_city' | 'item' | 'photo'`. These values select fixed questions about ISO date, origin versus destination, complete address/city, a named inventory item, or an uncertain-photo review control. Unknown selectors fail the normal bounded malformed-output path. No selector authorizes an action or claims success.
+6. Local deterministic ambiguity detection has precedence over the optional model selector, then ordinary current-state guidance is used. Date/address ambiguity continues to work when the model supplies no selector or supplies unrelated prose.
+7. `clarification` is **not** part of the client response or Task 1 protocol. It is consumed internally and omitted from the fresh response. External request/response fields, proposal IDs, revisions/references, atomic batch rejection, retry bounds, mode header and error behavior remain unchanged. No frontend wiring change is needed beyond the original Task 3 instructions.
+8. Visible duplicate guidance no longer interpolates the free-text inventory label. It refers to the items shown in the review controls, preventing a malicious or mistaken item label from turning into result prose. Other dynamic template parts are only existing validated local photo IDs and enum follow-up keys, not arbitrary domain/model text.
+9. The final server-authored object is validated again with `zConversationResponse`. Raw model claim variants may now produce HTTP 200 **with safe server guidance and validated proposals**, instead of either displaying the claim or rejecting a batch solely because of a semantic phrase match. Existing syntactically malformed output can still retry/fail normally.
+
+Relevant source: `apps/web/functions/api/_lib/conversation-agent.ts:62` (typed clarification mapping), `:103` (parser/fresh response), `:409` (shared server renderer); `apps/web/functions/api/_routes/conversation.ts:38` supplies message context. The prompt documents ignored raw prose and the typed selector in `apps/web/functions/api/_lib/conversation-prompts.ts`.
+
+### Finding 2: explicit complete locations replace old cities
+
+`addressWithCity` now classifies a comma-delimited alphabetic city component (excluding apartment/unit/floor labels) as an explicit complete address replacement before considering known-city preservation.
+
+- With origin `Tel Aviv`, `origin address: 9 Oak Street, Haifa` proposes exactly `{from:'9 Oak Street, Haifa'}`.
+- With origin `Tel Aviv`, `actually from 12 Main Street, Haifa` proposes exactly `{from:'12 Main Street, Haifa'}`.
+- A complete `9 Oak Street, Haifa` response to a one-side destination-address question replaces `Raanana`; it does not append it.
+- A genuinely city-less fragment such as `origin address: 9 Oak Street` or the existing contextual `12 Herzl Street` case still retains the known city.
+- An explicitly marked correction without an identifiable city, such as `actually from 12 Main Street`, asks for city clarification rather than treating the old city as implicitly confirmed.
+- An apparent unseparated new city after a street suffix, such as `origin address: 12 Main Street Haifa`, is ambiguous and asks for a complete city/address instead of appending `Tel Aviv`.
+- The model prompt receives the same replacement-versus-fragment instructions and both exact full-address regression examples. No address ownership, geocoding, distance, floor, elevator or confirmation inference was introduced.
+
+Relevant source: `apps/web/functions/api/_lib/conversation-agent.ts:181` and the bounded extraction caller.
+
+### Behavioral RED/GREEN and exact commands
+
+All commands below ran from the same isolated worktree on Node 24 using `/opt/homebrew/bin/pnpm`. Tests use synthetic snapshots, offline mode or fake AI bindings; no live model call.
+
+Test files changed:
+
+- `apps/web/test/conversation-agent.test.ts`: exact two full-origin replacements, contextual destination replacement, retained city-less fragment versus ambiguous correction, ignored reference/price/receipt prose and rejection of an unknown model-only clarification selector. Existing combined-answer, state precedence, targeted clarification and reference/revision tests remain.
+- `apps/web/test/conversation-route.test.ts`: nine fake-binding model claim variants covering booking, quote completion, numeric and written amounts, mover arrival, saved lead, payment and recipient notifications; current-state guidance instead of a repeated model question; local and typed-model targeted clarifications; later price/save/date/quote states; and no free-text inventory-label interpolation into prose.
+
+Exact focused command:
+
+```sh
+/opt/homebrew/bin/pnpm --filter @movers/web test test/conversation-agent.test.ts test/conversation-route.test.ts
+```
+
+Observed results:
+
+- Behavioral **RED**, exit 1: **18 failed, 58 passed, 76 total**, both files failed. Seven previously unlisted result/amount claim variants passed through to HTTP 200 verbatim, two old-blacklist examples failed rather than yielding usable safe guidance, all new complete-address corrections retained obsolete cities, ambiguous replacement was silently patched, model/state/clarification guidance was not server-rendered, and the revised ignored-prose unit expectation exposed the former semantic blacklist.
+- First implementation **GREEN**, exit 0: **76 passed**, agent 55 + route 21, two files, duration 617 ms. Root typecheck in the same command also exited 0.
+- Added a later-state coverage test exercising price, save, date-request and quote-request guidance against the same unsupported model prose without changing production behavior.
+- Final focused **GREEN after scoped formatting**, exit 0: **77 passed**, agent 55 + route 22, two files, duration 557 ms.
+
+Final scoped formatting/check commands:
+
+```sh
+/opt/homebrew/bin/pnpm exec biome check --write apps/web/functions/api/_lib/conversation-agent.ts apps/web/functions/api/_lib/conversation-prompts.ts apps/web/functions/api/_routes/conversation.ts apps/web/test/conversation-agent.test.ts apps/web/test/conversation-route.test.ts
+/opt/homebrew/bin/pnpm typecheck
+/opt/homebrew/bin/pnpm exec biome check apps/web/functions/api/_lib/conversation-agent.ts apps/web/functions/api/_lib/conversation-prompts.ts apps/web/functions/api/_routes/conversation.ts apps/web/test/conversation-agent.test.ts apps/web/test/conversation-route.test.ts
+git diff --check
+git diff --cached --check
+```
+
+- Scoped autoformat: exit 0, five files checked, three formatted, no lint errors.
+- Root typecheck: exit 0, UI/landing/web completed, including Functions.
+- Final no-write scoped Biome: exit 0, five checked files, no fixes applied.
+- Working-tree and staged whitespace checks: exit 0, no findings.
+
+Exactly one final root suite invocation in this fix round:
+
+```sh
+/opt/homebrew/bin/pnpm test
+```
+
+**Exit 0: 533 total tests** — UI 9/9 (one file), landing 9/9 (one file), web **515/515** (31 files); 33 files total. Web duration 5.53 s. The unchanged `test/example.test.tsx` again emitted jsdom's `Not implemented: navigation (except hash changes)` stderr and passed. No root suite rerun, build, E2E or preview operation was performed.
+
+### Self-review and remaining limits
+
+- Checked that there is no `turn.reply` copy/spread into the returned object, no semantic phrase blacklist left as the prose-truth boundary, no internal clarification-selector leak, and no free-text inventory-label insertion in the visible reply. Removing the renderer or returning raw model replies breaks the fake-binding behavioral tests, including later states and paraphrases not present in the former blacklist.
+- Checked full replacements before fragment preservation; removing that branch reproduces both exact reported obsolete-city regressions. Existing fragment-retention tests remain green, and ambiguous corrections now fail toward clarification rather than guessed city reuse.
+- The prose policy intentionally sacrifices arbitrary model-authored conversational wording: visible guidance is bounded English server templates, not unrestricted chat answers. A model can still choose an unnecessary but safe typed clarification; it cannot supply its wording, an amount or a success statement. This does not claim unrestricted semantic accuracy of typed model proposals; existing schema/reference/revision validation, visible proposal acceptance and trusted domain-operation results remain necessary.
+- Address detection remains a bounded synthetic grammar, not a postal parser. Complete addresses use a comma-separated alphabetic city component; postal-code formats, unseparated cities, unusual street suffixes or ambiguous correction intent may require a complete explicit city/address or panel edit. No city or country lookup is performed.
+- The client snapshot remains current-state input, not authenticated server result evidence. Templates use it to select guidance; they do not manufacture external success or monetary values. Real domain APIs/cards remain authoritative for actual results.
+- Frontend wiring and browser/E2E remain parent-owned and unmodified. No Task 1 protocol correction was required. **Blockers: none for this fix round.**
