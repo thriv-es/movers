@@ -450,6 +450,111 @@ describe('revisioned conversation controller', () => {
     ).toBe(false)
   })
 
+  it('keeps new item additions within command limits even though legacy storage accepts larger counts', () => {
+    const state = { ...ready(), items: [{ type: 'sofa', count: 10000 }] }
+    expect(send(state, { type: 'item.add', item: { type: 'couch', count: 1 } })).toBe(state)
+  })
+
+  it('invalidates prior analysis, review and dependent results when explicit reanalysis starts', () => {
+    const state = {
+      ...ready(),
+      price,
+      estimateId: 'old-lead',
+      contact: { name: 'Synthetic', email: 'synthetic@example.test', phone: '5550100', requestedDate: '2027-01-01' },
+      scheduleResult: { reference: 'old-lead', requestedDate: '2027-01-01', status: 'requested' as const },
+      quoteResult: { requests: [] },
+    }
+    expect(conversationReadiness(state).canPrice).toBe(true)
+    const started = send(
+      state,
+      { type: 'operation.started', operationId: 'reanalysis', request: { kind: 'analyze' } },
+      'system',
+    )
+    expect(started).toMatchObject({
+      analysis: null,
+      items: [],
+      photoDecisions: {},
+      photoDecisionsLocked: false,
+      duplicateResolutions: {},
+      followUps: { garage: null, closets: null, appliances: null },
+      wholeMoveCovered: null,
+      verifiedVisionFingerprint: null,
+      price: null,
+      estimateId: null,
+      contact: null,
+      scheduleResult: null,
+      quoteResult: null,
+    })
+    expect(started.revision).toBe(state.revision + 1)
+    expect(started.operations.reanalysis).toMatchObject({ status: 'pending', revision: started.revision })
+    expect(started.moveDetails).toEqual(state.moveDetails)
+    expect(started.photos).toEqual(state.photos)
+    expect(started.detailsConfirmed).toBe(true)
+  })
+
+  it.each(['photo_link_failed', 'request_failed', 'reanalyze_required'] as const)(
+    'does not restore old pricing eligibility after reanalysis fails with %s',
+    (errorCode) => {
+      let state = ready()
+      expect(conversationReadiness(state).canPrice).toBe(true)
+      state = send(
+        state,
+        { type: 'operation.started', operationId: 'reanalysis', request: { kind: 'analyze' } },
+        'system',
+      )
+      const assessments = [
+        { url: 'https://example.test/room.jpg', status: 'unavailable' as const, reason: 'Sanitized failure evidence.' },
+      ]
+      state = send(
+        state,
+        {
+          type: 'operation.failed',
+          operationId: 'reanalysis',
+          errorCode,
+          ...(errorCode === 'photo_link_failed' ? { photoAssessments: assessments } : {}),
+        },
+        'system',
+      )
+      expect(state.operations.reanalysis.status).toBe('failed')
+      expect(conversationReadiness(state).canPrice).toBe(false)
+      expect(conversationReadiness(state).canSave).toBe(false)
+      expect(state.analysis).toBeNull()
+      expect(state.items).toEqual([])
+      expect(state.verifiedVisionFingerprint).toBeNull()
+      if (errorCode === 'photo_link_failed') expect(state.failedPhotoAssessments).toEqual(assessments)
+      expect(send(state, { type: 'vision.verified', fingerprint: 'vision-one' }, 'system')).toBe(state)
+      expect(
+        send(
+          state,
+          {
+            type: 'operation.started',
+            operationId: 'old-evidence-price',
+            request: { kind: 'price', visionFingerprint: 'vision-one' },
+          },
+          'system',
+        ),
+      ).toBe(state)
+      state = send(
+        state,
+        { type: 'operation.started', operationId: 'fresh-analysis', request: { kind: 'analyze' } },
+        'system',
+      )
+      state = send(
+        state,
+        { type: 'operation.succeeded', operationId: 'fresh-analysis', result: { kind: 'analyze', analysis } },
+        'system',
+      )
+      expect(state.analysis).toEqual(analysis)
+      expect(conversationReadiness(state).canPrice).toBe(false)
+      state = send(state, { type: 'duplicate.resolve', itemType: 'sofa', resolution: 'different' })
+      for (const key of ['garage', 'closets', 'appliances'] as const)
+        state = send(state, { type: 'followUp.answer', key, answer: false })
+      state = send(state, { type: 'coverage.answer', answer: true })
+      state = send(state, { type: 'vision.verified', fingerprint: 'vision-one' }, 'system')
+      expect(conversationReadiness(state).canPrice).toBe(true)
+    },
+  )
+
   it('retains relevant failure statuses without exposing reasons and permits an explicit retry with a new ID', () => {
     let state = analyzed()
     state = send(

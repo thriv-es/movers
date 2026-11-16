@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { zDetectedItem, zEstimatedBoxes, zMoveDetails, zReviewCoverage } from './z-move-demo'
+import { zDetectedItem, zEstimatedBoxes, zMoveDetails, zPossibleDuplicate, zReviewCoverage } from './z-move-demo'
 
 /** Local identifiers are never URLs, bucket keys or receipt tokens. */
 export const zConversationId = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/)
@@ -85,7 +85,8 @@ export const zConversationSnapshot = z
         })
         .strict(),
     ),
-    inventory: z.array(zItem),
+    // A snapshot describes existing domain inventory, including valid legacy labels/counts.
+    inventory: z.array(zDetectedItem.strict()),
     analysis: z
       .object({ totalVolumeCubicFeet: z.number().nonnegative(), estimatedBoxes: zEstimatedBoxes })
       .strict()
@@ -95,7 +96,7 @@ export const zConversationSnapshot = z
         followUps: zReviewCoverage.shape.followUps,
         wholeMoveCovered: z.boolean().nullable(),
         duplicateResolutions: z.record(z.string(), z.enum(['same', 'different'])),
-        pendingDuplicates: z.array(z.object({ item: zItemType, count: z.number().int().positive() }).strict()),
+        pendingDuplicates: z.array(zPossibleDuplicate.strict()),
       })
       .strict(),
     price: z

@@ -126,9 +126,8 @@ export const zConversationDomain = z.object({
   failedPhotoAssessments: z.array(zPhotoAssessment),
   photoDecisions: z.record(z.string(), z.enum(['keep', 'exclude'])),
   photoDecisionsLocked: z.boolean(),
-  items: z.array(
-    zDetectedItem.extend({ type: z.string().trim().min(1).max(200), count: z.number().int().positive().max(10000) }),
-  ),
+  // Persisted inventory follows the existing domain contract, not new-command input limits.
+  items: z.array(zDetectedItem),
   followUps: zReviewCoverage.shape.followUps,
   wholeMoveCovered: z.boolean().nullable(),
   price: zValidatedPrice.nullable(),
@@ -405,8 +404,12 @@ function commandPatch(state: ConversationSession, command: ConversationCommand):
       const items = canonicalItems(state.items)
       const base = { ...clearPrice(), photoDecisionsLocked: true }
       switch (command.type) {
-        case 'item.add':
-          return { ...base, items: canonicalItems([...items, command.item]) }
+        case 'item.add': {
+          const combined = canonicalItems([...items, command.item])
+          const added = combined.find((item) => sameType(item.type, command.item.type))
+          if (!zConversationCommand.safeParse({ type: 'item.add', item: added }).success) return null
+          return { ...base, items: combined }
+        }
         case 'item.count':
         case 'item.remove': {
           if (!items.some((item) => sameType(item.type, command.itemType))) return null
@@ -628,10 +631,18 @@ export function reduceConversation(state: ConversationSession, input: Conversati
       case 'operation.started':
         if (state.operations[action.operationId] || !canStart(state, action.request)) return state
         operationId = action.operationId
+        // Explicit analysis supersedes prior evidence, even if the new request later fails.
+        dataChanged = action.request.kind === 'analyze'
         patch = {
+          ...(dataChanged ? { ...clearEvidence(), failedPhotoAssessments: state.failedPhotoAssessments } : {}),
           operations: {
             ...state.operations,
-            [operationId]: { id: operationId, revision: state.revision, status: 'pending', request: action.request },
+            [operationId]: {
+              id: operationId,
+              revision: state.revision + (dataChanged ? 1 : 0),
+              status: 'pending',
+              request: action.request,
+            },
           },
           requestedAction: null,
         }
@@ -684,7 +695,9 @@ export function reduceConversation(state: ConversationSession, input: Conversati
     patch.operations = Object.fromEntries(
       Object.entries(operations).map(([id, operation]) => [
         id,
-        operation.status === 'pending' ? { ...operation, status: 'superseded' as const } : operation,
+        operation.status === 'pending' && operation.revision !== revision
+          ? { ...operation, status: 'superseded' as const }
+          : operation,
       ]),
     )
     patch.pendingProposals = []

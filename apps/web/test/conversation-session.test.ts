@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { zConversationProposal, zConversationSnapshot } from '../src/data/z-common/z-conversation'
 import { loadConversationSession, saveConversationSession } from '../src/lib/conversation-session'
-import { conversationReadiness, createConversationSession, reduceConversation } from '../src/lib/conversation-state'
+import {
+  conversationReadiness,
+  conversationSnapshot,
+  createConversationSession,
+  reduceConversation,
+} from '../src/lib/conversation-state'
 import { newSession, SAMPLE_MOVE_DETAILS, SESSION_KEY } from '../src/lib/estimate-session'
 
 class Store {
@@ -70,6 +76,47 @@ describe('conversation session persistence and migration', () => {
     expect(conversationReadiness(loaded).canPrice).toBe(false)
     saveConversationSession(loaded, store)
     expect(loadConversationSession(store)).toEqual(loaded)
+  })
+
+  it.each([1, 10001])('preserves valid v5 custom inventory beyond new-command limits, count %s', (count) => {
+    const store = new Store()
+    const longLabel = `Custom inventory ${'x'.repeat(201)}`
+    const old = {
+      ...newSession(),
+      moveDetails: SAMPLE_MOVE_DETAILS,
+      photoUrls: ['https://example.test/room.jpg'],
+      photoRefs: [{ url: 'https://example.test/room.jpg', receipt: 'private-receipt' }],
+      analysis: { ...analysis, possibleDuplicates: [{ item: longLabel, count }] },
+      items: [{ type: longLabel, count }],
+    }
+    const raw = JSON.stringify(old)
+    store.value = raw
+    const loaded = loadConversationSession(store)
+    expect(loaded.sessionId).toBe(old.sessionId)
+    expect(loaded.moveDetails).toEqual(SAMPLE_MOVE_DETAILS)
+    expect(loaded.photoRefs).toEqual(old.photoRefs)
+    expect(loaded.items).toEqual([{ type: longLabel, count }])
+    expect(loaded.detailsConfirmed).toBe(false)
+    expect(store.value).toBe(raw)
+    const snapshot = conversationSnapshot(loaded)
+    expect(zConversationSnapshot.safeParse(snapshot).success).toBe(true)
+    expect(snapshot.inventory).toEqual([{ type: longLabel, count }])
+    expect(snapshot.review.pendingDuplicates).toEqual([{ item: longLabel, count }])
+    saveConversationSession(loaded, store)
+    expect(loadConversationSession(store)).toEqual(loaded)
+    const proposal = { id: 'new-item', expectedRevision: loaded.revision }
+    expect(
+      zConversationProposal.safeParse({
+        ...proposal,
+        command: { type: 'item.add', item: { type: longLabel, count: 1 } },
+      }).success,
+    ).toBe(false)
+    expect(
+      zConversationProposal.safeParse({
+        ...proposal,
+        command: { type: 'item.add', item: { type: 'sofa', count: 10001 } },
+      }).success,
+    ).toBe(false)
   })
 
   it.each([3, 4])('reuses v%s migration, retains a valid ID and requires own-photo reupload', (version) => {
