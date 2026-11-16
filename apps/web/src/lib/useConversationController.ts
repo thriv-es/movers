@@ -62,6 +62,7 @@ export function useConversationController(initial: () => ConversationSession = l
   const [chatFailed, setChatFailed] = useState(false)
   const [uploads, setUploads] = useState<ConversationUpload[]>([])
   const uploadRef = useRef(uploads)
+  const uploadCohort = useRef<{ sessionId: string; revision: number } | null>(null)
   const [movers, setMovers] = useState<PublicMover[]>([])
   const [moversBusy, setMoversBusy] = useState(false)
   const moversLoading = useRef(false)
@@ -116,6 +117,12 @@ export function useConversationController(initial: () => ConversationSession = l
     request: ConversationOperationRequest,
     call: (snapshot: ConversationSession) => Promise<ConversationOperationResult>,
   ): Promise<ConversationSession | null> => {
+    // Selection is transient and does not bump domain revision. Recheck at every operation boundary,
+    // including after vision preflight and between accepted pricing and its dependent save.
+    if (uploadRef.current.length) {
+      setError('Finish or remove pending uploads before requesting analysis, pricing or saved-estimate changes.')
+      return null
+    }
     const operationId = id()
     const started = apply({ type: 'operation.started', operationId, request }, 'system')
     const operation = started?.operations[operationId]
@@ -350,7 +357,15 @@ export function useConversationController(initial: () => ConversationSession = l
     window.confirm('Changing the photos discards the current inventory and price. Continue?')
   const uploadBatch = async (batch: ConversationUpload[]) => {
     const snapshot = current.current
-    let revision = snapshot.revision
+    if (
+      !uploadCohort.current ||
+      uploadCohort.current.sessionId !== snapshot.sessionId ||
+      uploadCohort.current.revision !== snapshot.revision
+    )
+      uploadCohort.current = { sessionId: snapshot.sessionId, revision: snapshot.revision }
+    // Overlapping selections share only upload-owned revision advances. An unrelated edit leaves
+    // older cohorts stale; a new explicit selection/retry may start a new cohort at that edit.
+    const cohort = uploadCohort.current
     await Promise.all(
       batch.map(async (card) => {
         const present = () =>
@@ -367,12 +382,12 @@ export function useConversationController(initial: () => ConversationSession = l
           patch({ status: 'uploading' })
           const ref = await uploadImage(file, snapshot.sessionId, (progress) => patch({ progress }))
           if (!present()) return
-          const accepted = apply({ type: 'photo.add', photo: { id: card.id, ...ref } }, 'chat', revision)
+          const accepted = apply({ type: 'photo.add', photo: { id: card.id, ...ref } }, 'chat', cohort.revision)
           if (!accepted) {
             patch({ status: 'error' })
             return
           }
-          revision = accepted.revision
+          cohort.revision = accepted.revision
           removeUpload(card.id)
         } catch {
           patch({ status: 'error' })

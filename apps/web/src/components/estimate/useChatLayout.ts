@@ -1,26 +1,39 @@
 import { useCallback, useLayoutEffect, useRef } from 'react'
 
 /** Keep the page still: only the transcript follows, and only while its reader is near the end. */
-export function useChatLayout() {
+export function useChatLayout({ follow = 'bottom' }: { follow?: 'bottom' | 'conversation' } = {}) {
   const stepRef = useRef<HTMLDivElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const followRef = useRef<HTMLDivElement>(null)
   const following = useRef(true)
 
+  const followTop = useCallback(
+    (log: HTMLDivElement) => {
+      const anchor = follow === 'conversation' ? followRef.current : null
+      if (!anchor) return log.scrollHeight
+      // Follow the readable start of the latest message, not the end of trailing action cards.
+      const top = log.scrollTop + anchor.getBoundingClientRect().top - log.getBoundingClientRect().top
+      return Math.max(0, Math.min(top, log.scrollHeight - log.clientHeight))
+    },
+    [follow],
+  )
   const followLatest = useCallback(() => {
     const log = logRef.current
     if (log && following.current) {
       // No animation, including for reduced-motion readers and repeated content/size changes.
-      log.scrollTo({ top: log.scrollHeight, behavior: 'instant' })
+      log.scrollTo({ top: followTop(log), behavior: 'instant' })
     }
-  }, [])
+  }, [followTop])
 
   useLayoutEffect(() => {
     const log = logRef.current
     const content = contentRef.current
     if (!log || !content) return
     const onScroll = () => {
-      following.current = log.scrollHeight - log.clientHeight - log.scrollTop <= 64
+      following.current =
+        log.scrollHeight - log.clientHeight - log.scrollTop <= 64 ||
+        (follow === 'conversation' && Math.abs(log.scrollTop - followTop(log)) <= 64)
     }
     log.addEventListener('scroll', onScroll, { passive: true })
     const observer = new ResizeObserver(followLatest)
@@ -30,7 +43,7 @@ export function useChatLayout() {
       log.removeEventListener('scroll', onScroll)
       observer.disconnect()
     }
-  }, [followLatest])
+  }, [follow, followLatest, followTop])
 
   // Covers same-count message edits and thinking/error changes as well as new messages.
   useLayoutEffect(() => {
@@ -67,5 +80,5 @@ export function useChatLayout() {
     following.current = true
   }
 
-  return { stepRef, logRef, contentRef, resumeFollow }
+  return { stepRef, logRef, contentRef, followRef, resumeFollow }
 }

@@ -13,14 +13,17 @@ export function ConversationFeed({
   controller,
   logRef,
   contentRef,
+  followRef,
   openData,
 }: {
   controller: ConversationController
   logRef: RefObject<HTMLDivElement>
   contentRef: RefObject<HTMLDivElement>
+  followRef: RefObject<HTMLDivElement>
   openData: () => void
 }) {
   const { session, readiness } = controller
+  const latestMessageId = session.timeline.filter((entry) => entry.kind === 'message').at(-1)?.id
   return (
     <div
       ref={logRef}
@@ -33,17 +36,26 @@ export function ConversationFeed({
     >
       <div ref={contentRef} className="est-chat__content">
         {!session.messages.length ? (
-          // biome-ignore lint/a11y/useValidAriaRole: Bubble's role is the speaker, not an ARIA role.
-          <Bubble role="assistant" meta="Movers">
-            Tell me where you’re moving from and to, roughly how far, and when. You can answer several things together
-            or edit the shared manifest.
-          </Bubble>
+          <div ref={followRef} className="mv-stack" data-conversation-anchor="true">
+            {/* biome-ignore lint/a11y/useValidAriaRole: Bubble's role is the speaker, not an ARIA role. */}
+            <Bubble role="assistant" meta="Movers">
+              Tell me where you’re moving from and to, roughly how far, and when. You can answer several things together
+              or edit the shared manifest.
+            </Bubble>
+          </div>
         ) : null}
         {session.timeline.map((entry) =>
           entry.kind === 'message' ? (
-            <Bubble key={entry.id} role={entry.message.role} meta={entry.message.role === 'user' ? 'You' : 'Movers'}>
-              {entry.message.content}
-            </Bubble>
+            <div
+              key={entry.id}
+              className="mv-stack"
+              ref={entry.id === latestMessageId ? followRef : undefined}
+              data-conversation-anchor={entry.id === latestMessageId ? 'true' : undefined}
+            >
+              <Bubble role={entry.message.role} meta={entry.message.role === 'user' ? 'You' : 'Movers'}>
+                {entry.message.content}
+              </Bubble>
+            </div>
           ) : entry.event === 'migration' ||
             entry.event === 'details.updated' ||
             entry.event === 'details.confirmed' ||

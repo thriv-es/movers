@@ -106,6 +106,52 @@ function api(handler?: (path: string, request?: RequestInit) => Promise<Response
   vi.stubGlobal('fetch', fetch)
   return fetch
 }
+function controlledUploads() {
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL() {
+        return 'blob:controlled-upload'
+      }
+      static revokeObjectURL() {}
+    },
+  )
+  vi.stubGlobal('createImageBitmap', undefined)
+  const pending: (() => void)[] = []
+  let number = 0
+  class XHR {
+    upload = { onprogress: null }
+    status = 200
+    responseText = ''
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+    open() {}
+    send() {
+      const index = ++number
+      this.responseText = JSON.stringify({
+        uploads: [{ url: `https://example.test/selection-${index}.jpg`, receipt: `selection-receipt-${index}` }],
+      })
+      pending.push(() => this.onload?.())
+    }
+  }
+  vi.stubGlobal('XMLHttpRequest', XHR)
+  const select = () =>
+    fireEvent.change(screen.getByLabelText('Choose from library'), {
+      target: { files: [new File(['synthetic'], 'room.jpg', { type: 'image/jpeg' })] },
+    })
+  return { pending, select }
+}
+async function rebuildEstimate() {
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm move details' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Analyse 1 photo' }))
+  await waitFor(() => expect(draft().analysis).not.toBeNull())
+  for (const label of ['Garage', 'Closets', 'Appliances'])
+    fireEvent.click(within(screen.getByRole('group', { name: label })).getByRole('button', { name: 'No' }))
+  fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'Yes' }))
+  fireEvent.click(confirmPrice())
+  await waitFor(() => expect(draft().estimateId).toBe('saved-id'))
+}
+
 beforeEach(() => {
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
     matches: true,
@@ -771,7 +817,10 @@ describe('persistent estimator conversation', () => {
   it('preserves transcript position unless near-bottom and measures short visual viewports without outer scrolling', async () => {
     const viewport = Object.assign(new EventTarget(), { height: 420, offsetTop: 0 })
     vi.stubGlobal('visualViewport', viewport)
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ top: 140 } as DOMRect)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      const log = document.querySelector('.conv-feed')
+      return { top: this.hasAttribute('data-conversation-anchor') ? 1140 - (log?.scrollTop ?? 0) : 140 } as DOMRect
+    })
     vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(3000)
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(200)
     api()
@@ -798,7 +847,7 @@ describe('persistent estimator conversation', () => {
     log.scrollTop = 2790
     fireEvent.scroll(log)
     fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '51' } })
-    expect(scroll).toHaveBeenCalledWith({ top: 3000, behavior: 'instant' })
+    expect(scroll).toHaveBeenCalledWith({ top: 1000, behavior: 'instant' })
     expect(outer).not.toHaveBeenCalled()
     viewport.height = 300
     fireEvent(viewport, new Event('resize'))
@@ -837,6 +886,208 @@ describe('persistent estimator conversation', () => {
     expect(screen.queryByText(/https:\/\/example\.test/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Keep photo 1' })).not.toBeInTheDocument()
   })
+
+  it.each(['preflight', 'price-result'] as const)(
+    'blocks dependent writes when an attachment is selected during %s',
+    async (phase) => {
+      const pending = deferred<Response>()
+      const fetch = api((path) =>
+        (phase === 'preflight' ? path === '/api/ai-status' : path === '/api/price') ? pending.promise : undefined,
+      )
+      const { pending: uploads, select } = controlledUploads()
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      mount(ready())
+      fireEvent.click(confirmPrice())
+      await waitFor(() =>
+        expect(
+          fetch.mock.calls.some(([path]) => path === (phase === 'preflight' ? '/api/ai-status' : '/api/price')),
+        ).toBe(true),
+      )
+      select()
+      await waitFor(() => expect(uploads).toHaveLength(1))
+      await act(async () =>
+        pending.resolve(
+          Response.json(phase === 'preflight' ? { visionRevision: 1, visionFingerprint: 'current-vision' } : { price }),
+        ),
+      )
+      expect(fetch.mock.calls.filter(([path]) => path === '/api/price')).toHaveLength(phase === 'preflight' ? 0 : 1)
+      expect(fetch.mock.calls.filter(([path]) => path === '/api/estimates')).toHaveLength(0)
+      expect(screen.getByRole('alert')).toHaveTextContent(/pending uploads|finish.*uploads/i)
+      expect(draft().estimateId).toBeNull()
+    },
+  )
+
+  it.each([0, 1])('accepts receipts across overlapping upload selections, completion order %s first', async (first) => {
+    const { pending, select } = controlledUploads()
+    api()
+    mount(ready({ analysis: null, items: [], photos: [], photoRefs: [], photoUrls: [] }))
+    select()
+    select()
+    await waitFor(() => expect(pending).toHaveLength(2))
+    await act(async () => pending[first]?.())
+    await act(async () => pending[1 - first]?.())
+    expect(draft().photos).toHaveLength(2)
+    expect(
+      draft()
+        .photoRefs.map((ref) => ref.receipt)
+        .sort(),
+    ).toEqual(['selection-receipt-1', 'selection-receipt-2'])
+    expect(screen.queryByRole('button', { name: 'Retry upload' })).not.toBeInTheDocument()
+  })
+
+  it('does not rebase an older upload cohort over unrelated edits or a newer selection', async () => {
+    const { pending, select } = controlledUploads()
+    api()
+    mount(ready({ analysis: null, items: [], photos: [], photoRefs: [], photoUrls: [] }))
+    select()
+    select()
+    await waitFor(() => expect(pending).toHaveLength(2))
+    await act(async () => pending[0]?.())
+    fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '44' } })
+    select()
+    await waitFor(() => expect(pending).toHaveLength(3))
+    await act(async () => pending[2]?.())
+    await act(async () => pending[1]?.())
+    expect(draft().photoRefs.map((ref) => ref.receipt)).toEqual(['selection-receipt-1', 'selection-receipt-3'])
+    expect(draft().moveDetails.distanceMiles).toBe(44)
+    expect(screen.getByRole('button', { name: 'Retry upload' })).toBeInTheDocument()
+  })
+
+  it.each([null, '2027-01-01'])(
+    'uses the current accepted move date after pricing, not the mounted default %s',
+    async (initialDate) => {
+      const fetch = api((path, request) =>
+        path.endsWith('/contact')
+          ? Promise.resolve(
+              Response.json({
+                reference: 'saved-id',
+                requestedDate: JSON.parse(request?.body as string).requestedDate,
+                note: 'Requested',
+              }),
+            )
+          : undefined,
+      )
+      mount(ready({ moveDetails: { ...ready().moveDetails, date: initialDate } }))
+      fireEvent.change(screen.getByLabelText('Move date'), { target: { value: '2027-02-02' } })
+      await rebuildEstimate()
+      expect(screen.getByLabelText('Preferred move date')).toHaveValue('2027-02-02')
+      for (const [label, value] of [
+        ['Your name', 'Synthetic'],
+        ['Email', 'synthetic@example.test'],
+        ['Phone', '555-0101'],
+      ])
+        fireEvent.change(screen.getByLabelText(label ?? ''), { target: { value } })
+      fireEvent.click(screen.getByRole('button', { name: 'Request this date' }))
+      await waitFor(() => expect(draft().scheduleResult?.requestedDate).toBe('2027-02-02'))
+      expect(
+        JSON.parse(fetch.mock.calls.find(([path]) => path.endsWith('/contact'))?.[1]?.body as string).requestedDate,
+      ).toBe('2027-02-02')
+    },
+  )
+
+  it.each(['2027-01-20', ''])(
+    'preserves an intentionally edited request date %s across accepted move-date changes',
+    async (editedDate) => {
+      const fetch = api()
+      mount(ready({ price, estimateId: 'saved-id', moveDetails: { ...ready().moveDetails, date: '2027-01-01' } }))
+      fireEvent.change(screen.getByLabelText('Preferred move date'), { target: { value: editedDate } })
+      fireEvent.change(screen.getByLabelText('Move date'), { target: { value: '2027-02-02' } })
+      await rebuildEstimate()
+      expect(screen.getByLabelText('Preferred move date')).toHaveValue(editedDate)
+      if (editedDate) {
+        for (const [label, value] of [
+          ['Your name', 'Synthetic'],
+          ['Email', 'synthetic@example.test'],
+          ['Phone', '555-0101'],
+        ])
+          fireEvent.change(screen.getByLabelText(label ?? ''), { target: { value } })
+        fireEvent.click(screen.getByRole('button', { name: 'Request this date' }))
+        await waitFor(() => expect(draft().scheduleResult?.requestedDate).toBe('2027-01-20'))
+        expect(
+          JSON.parse(fetch.mock.calls.find(([path]) => path.endsWith('/contact'))?.[1]?.body as string).requestedDate,
+        ).toBe(editedDate)
+      }
+    },
+  )
+
+  it.each(['fresh', 'long-history', 'review-cards'] as const)(
+    'follows the readable conversation anchor instead of trailing cards in %s',
+    async (context) => {
+      const pending = deferred<Response>()
+      api((path) => (path === '/api/chat' ? pending.promise : undefined))
+      vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(5000)
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300)
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+        const log = document.querySelector('.conv-feed')
+        const top = this.hasAttribute('data-conversation-anchor')
+          ? (this.textContent?.includes('New synthetic reply')
+              ? 1800
+              : this.textContent?.includes('New synthetic question')
+                ? 1600
+                : context === 'fresh'
+                  ? 0
+                  : 1000) -
+            (log?.scrollTop ?? 0) +
+            20
+          : 20
+        return { top } as DOMRect
+      })
+      Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+        configurable: true,
+        value: vi.fn(function (this: HTMLElement, options: ScrollToOptions) {
+          this.scrollTop = options.top ?? 0
+          this.dispatchEvent(new Event('scroll'))
+        }),
+      })
+      mount(
+        context === 'fresh'
+          ? createConversationSession()
+          : ready({
+              messages: Array.from({ length: 80 }, (_, index) => ({
+                id: `history-${index}`,
+                role: index === 79 ? 'assistant' : 'user',
+                content: `History ${index}`,
+              })),
+              ...(context === 'review-cards'
+                ? {
+                    analysis: {
+                      ...analysis,
+                      unseenAreas: Array.from({ length: 20 }, (_, index) => `Unseen area ${index}`),
+                    },
+                  }
+                : {}),
+            }),
+      )
+      const log = screen.getByRole('log', { name: 'Move conversation' })
+      const composer = screen.getByLabelText('Message')
+      expect(log.scrollTop).toBe(context === 'fresh' ? 0 : 1000)
+      fireEvent.change(composer, { target: { value: 'New synthetic question' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(log.scrollTop).toBe(1600)
+      await act(async () =>
+        pending.resolve(
+          Response.json({ reply: 'New synthetic reply', moveDetails: draft().moveDetails, finished: false }),
+        ),
+      )
+      expect(log.scrollTop).toBe(1800)
+      expect(screen.getByText('New synthetic reply')).toBeInTheDocument()
+      expect(screen.getByLabelText('Message')).toBe(composer)
+      expect(screen.getByRole('region', { name: 'Conversation photos' })).toBeInTheDocument()
+      const scroll = vi.mocked(log.scrollTo)
+      log.scrollTop = 100
+      fireEvent.scroll(log)
+      scroll.mockClear()
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Reader draft' } })
+      expect(scroll).not.toHaveBeenCalled()
+      log.scrollTop = 2500
+      fireEvent.scroll(log)
+      if (context !== 'fresh')
+        fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'No' }))
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Reading the cards' } })
+      expect(log.scrollTop).toBe(2500)
+      expect(scroll).not.toHaveBeenCalled()
+    },
+  )
 
   it('keeps actionable local HEIC guidance without forwarding or displaying raw upload failures', async () => {
     vi.stubGlobal(

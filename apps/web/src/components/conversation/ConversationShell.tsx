@@ -8,7 +8,7 @@ import { ConversationDataPanel } from './ConversationDataPanel'
 import { ConversationFeed } from './ConversationFeed'
 
 export function ConversationShell({ controller }: { controller: ConversationController }) {
-  const { stepRef, logRef, contentRef, resumeFollow } = useChatLayout()
+  const { stepRef, logRef, contentRef, followRef, resumeFollow } = useChatLayout({ follow: 'conversation' })
   const [desktop, setDesktop] = useState(() => window.matchMedia('(min-width: 860px)').matches)
   const [open, setOpen] = useState(false)
   const dataRef = useRef<HTMLDivElement>(null)
@@ -38,7 +38,13 @@ export function ConversationShell({ controller }: { controller: ConversationCont
               </Dialog.Trigger>
             ) : null}
           </div>
-          <ConversationFeed controller={controller} logRef={logRef} contentRef={contentRef} openData={openData} />
+          <ConversationFeed
+            controller={controller}
+            logRef={logRef}
+            contentRef={contentRef}
+            followRef={followRef}
+            openData={openData}
+          />
           <ConversationComposer controller={controller} onSend={resumeFollow} />
         </section>
         {desktop ? (

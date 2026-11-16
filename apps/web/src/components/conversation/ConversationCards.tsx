@@ -271,7 +271,8 @@ export function ConversationRequestCards({ controller }: { controller: Conversat
   const [name, setName] = useState(session.contact?.name ?? '')
   const [email, setEmail] = useState(session.contact?.email ?? '')
   const [phone, setPhone] = useState(session.contact?.phone ?? '')
-  const [date, setDate] = useState(session.contact?.requestedDate ?? session.moveDetails.date ?? '')
+  const [editedDate, setDate] = useState<string | null>(null)
+  const date = editedDate ?? session.contact?.requestedDate ?? session.moveDetails.date ?? ''
   const [picked, setPicked] = useState<string[]>([])
   const [note, setNote] = useState('')
   if (!session.estimateId || !session.price) return null
