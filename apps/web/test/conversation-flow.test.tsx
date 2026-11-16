@@ -80,12 +80,42 @@ function mount(state?: ConversationSession) {
 }
 const draft = (): ConversationSession => JSON.parse(window.sessionStorage.getItem(SESSION_KEY) ?? '{}')
 const confirmPrice = () => screen.getByRole('button', { name: 'Confirm inventory and get estimate' })
+const contact = {
+  name: 'Synthetic Customer',
+  email: 'synthetic@example.test',
+  phone: '555-0101',
+  requestedDate: '2027-01-20',
+}
+const writeCases = [
+  { kind: 'save', path: '/api/estimates' },
+  { kind: 'schedule', path: '/api/estimates/saved-id/contact' },
+  { kind: 'quotes', path: '/api/quote-requests' },
+] as const
+async function beginWrite(kind: (typeof writeCases)[number]['kind']) {
+  if (kind === 'save') fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
+  else if (kind === 'schedule') {
+    for (const [label, value] of [
+      ['Your name', contact.name],
+      ['Email', contact.email],
+      ['Phone', contact.phone],
+      ['Preferred move date', contact.requestedDate],
+    ])
+      fireEvent.change(screen.getByLabelText(label), { target: { value } })
+    fireEvent.click(screen.getByRole('button', { name: 'Request this date' }))
+  } else {
+    fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Synthetic Mover/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send quote requests' }))
+  }
+}
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 function api(handler?: (path: string, request?: RequestInit) => Promise<Response> | undefined) {
   const fetch = vi.fn(async (path: string, request?: RequestInit) => {
@@ -330,6 +360,119 @@ describe('persistent estimator conversation', () => {
     expect(screen.getByText(/unknown outcome/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retry save' })).not.toBeInTheDocument()
     expect(fetch.mock.calls.filter(([path]) => path === '/api/estimates')).toHaveLength(2)
+  })
+
+  it.each(
+    writeCases.flatMap((write) =>
+      ['pagehide abort', 'unmount abort', 'transport loss', 'response body loss', 'pagehide success'].map(
+        (boundary) => ({
+          ...write,
+          boundary,
+        }),
+      ),
+    ),
+  )(
+    'preserves unknown $kind evidence after $boundary without blind retry on reload',
+    async ({ kind, path, boundary }) => {
+      const pending = deferred<Response>()
+      const fetch = api((endpoint) => (endpoint === path ? pending.promise : undefined))
+      const view = mount(ready({ price, estimateId: kind === 'save' ? null : 'saved-id', contact }))
+      await beginWrite(kind)
+      await waitFor(() => expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1))
+      const operation = Object.values(draft().operations).find((entry) => entry.request.kind === kind)
+      if (!operation) throw new Error('Explicit action did not start its write')
+      expect(operation.status).toBe('pending')
+      // Navigation can abort the transport before React unmounts the old document.
+      if (boundary.startsWith('pagehide')) fireEvent(window, new Event('pagehide'))
+      if (boundary === 'unmount abort') view.unmount()
+      await act(async () => {
+        if (boundary === 'pagehide success')
+          pending.resolve(
+            Response.json({
+              id: 'saved-id',
+              storage: 'memory',
+              reference: 'saved-id',
+              requestedDate: contact.requestedDate,
+              requests: [
+                {
+                  id: 'quote-1',
+                  estimateId: 'saved-id',
+                  moverId: 'mover-1',
+                  moverName: mover.name,
+                  note: '',
+                  status: 'logged',
+                  createdAt: '2026-11-16T12:00:00Z',
+                },
+              ],
+              delivery: { 'mover-1': 'logged' },
+            }),
+          )
+        else if (boundary === 'response body loss') {
+          const response = Response.json({})
+          vi.spyOn(response, 'json').mockRejectedValue(new DOMException('Response interrupted', 'AbortError'))
+          pending.resolve(response)
+        } else
+          pending.reject(
+            boundary === 'transport loss'
+              ? new TypeError('Failed to fetch')
+              : new DOMException('Navigation', 'AbortError'),
+          )
+      })
+      expect(draft().operations[operation.id].status).toBe('pending')
+      const retry = screen.queryByRole('button', { name: `Retry ${kind}` })
+      if (retry) expect(retry).toBeDisabled()
+      if (boundary === 'transport loss' || boundary === 'response body loss')
+        expect(screen.getByRole('alert')).toHaveTextContent(/unknown outcome/i)
+      if (boundary !== 'unmount abort') view.unmount()
+      mount()
+      expect(draft().operations[operation.id].status).toBe('interrupted')
+      expect(screen.getByText(/interrupted — unknown outcome/i)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: `Retry ${kind}` })).not.toBeInTheDocument()
+      if (kind !== 'save') await beginWrite(kind)
+      expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1)
+    },
+  )
+
+  it('restores the composer after a pagehide-aborted reply without starting writes', async () => {
+    const pending = deferred<Response>()
+    const fetch = api((path, request) => {
+      if (path !== '/api/conversation') return undefined
+      request?.signal?.addEventListener('abort', () => pending.reject(new DOMException('Navigation', 'AbortError')))
+      return pending.promise
+    })
+    mount(ready())
+    send('Synthetic message before navigation')
+    await act(async () => fireEvent(window, new Event('pagehide')))
+    fireEvent(window, new Event('pageshow'))
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Synthetic return draft' } })
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
+    expect(draft().messages.some((message) => message.content === 'Synthetic message before navigation')).toBe(true)
+    expect(
+      fetch.mock.calls.filter(([, request]) => request?.method === 'POST' || request?.method === 'PATCH'),
+    ).toHaveLength(1)
+  })
+
+  it.each(writeCases)('keeps acknowledged $kind rejection explicitly retryable', async ({ kind, path }) => {
+    let attempts = 0
+    const fetch = api((endpoint) =>
+      endpoint === path && ++attempts === 1
+        ? Promise.resolve(Response.json({ error: 'Unavailable' }, { status: 503 }))
+        : undefined,
+    )
+    mount(ready({ price, estimateId: kind === 'save' ? null : 'saved-id', contact }))
+    await beginWrite(kind)
+    await waitFor(() =>
+      expect(Object.values(draft().operations).find((entry) => entry.request.kind === kind)?.status).toBe('failed'),
+    )
+    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: `Retry ${kind}` }))
+    await waitFor(() =>
+      expect(
+        Object.values(draft().operations).some((entry) => entry.request.kind === kind && entry.status === 'succeeded'),
+      ).toBe(true),
+    )
+    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(2)
+    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/price')).toHaveLength(0)
   })
 
   it('does not save a late price after coverage edits', async () => {

@@ -73,9 +73,22 @@ export function useConversationController(initial: () => ConversationSession = l
   useEffect(() => {
     active.current = true
     saveConversationSession(current.current)
-    return () => {
+    // Navigation does not run React cleanup. Leave durable pending evidence for the next loader.
+    const hide = () => {
       active.current = false
       chatRequest.current?.abort()
+    }
+    const show = () => {
+      active.current = true
+      setBusy(locked.current || Object.values(current.current.operations).some((op) => op.status === 'pending'))
+      setChatBusy(chatRequest.current !== null)
+    }
+    window.addEventListener('pagehide', hide)
+    window.addEventListener('pageshow', show)
+    return () => {
+      hide()
+      window.removeEventListener('pagehide', hide)
+      window.removeEventListener('pageshow', show)
       for (const card of uploadRef.current) URL.revokeObjectURL(card.src)
     }
   }, [])
@@ -108,7 +121,12 @@ export function useConversationController(initial: () => ConversationSession = l
   ) => dispatch({ ...input, id: id(), source, expectedRevision: revision } as ConversationAction)
 
   const withLock = async (work: () => Promise<void>) => {
-    if (locked.current || Object.values(current.current.operations).some((op) => op.status === 'pending')) return
+    if (
+      !active.current ||
+      locked.current ||
+      Object.values(current.current.operations).some((op) => op.status === 'pending')
+    )
+      return
     locked.current = true
     setBusy(true)
     setError(null)
@@ -116,7 +134,7 @@ export function useConversationController(initial: () => ConversationSession = l
       await work()
     } finally {
       locked.current = false
-      if (active.current) setBusy(false)
+      if (active.current) setBusy(Object.values(current.current.operations).some((op) => op.status === 'pending'))
     }
   }
   const unknown = (kind: ConversationOperationRequest['kind']) =>
@@ -148,6 +166,18 @@ export function useConversationController(initial: () => ConversationSession = l
       throw new Error('Invalid operation response')
     } catch (caught) {
       if (!active.current || current.current.sessionId !== started.sessionId) return null
+      if (
+        (request.kind === 'save' || request.kind === 'schedule' || request.kind === 'quotes') &&
+        !(caught instanceof EstimateApiError)
+      ) {
+        // A lost transport/body (including abort before pagehide) cannot prove the write failed.
+        // Keep the real pending operation, block reposts, and let reload classify it as interrupted.
+        if (current.current.operations[operationId]?.status === 'pending' && current.current.revision === revision)
+          setError(
+            'Request interrupted — unknown outcome. Check the existing request before submitting again; reload to restore the conversation status.',
+          )
+        return null
+      }
       const code = caught instanceof EstimateApiError ? caught.code : undefined
       const errorCode =
         code === 'REANALYZE_REQUIRED'
