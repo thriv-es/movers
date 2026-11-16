@@ -119,6 +119,94 @@ describe('conversation session persistence and migration', () => {
     ).toBe(false)
   })
 
+  it.each(['same', 'different'] as const)(
+    'makes migrated long-label inventory editable and duplicate %s resolvable',
+    (resolution) => {
+      const store = new Store()
+      const label = `Custom inventory ${'x'.repeat(201)}`
+      const old = {
+        ...newSession(),
+        moveDetails: SAMPLE_MOVE_DETAILS,
+        photoUrls: ['https://example.test/room.jpg'],
+        photoRefs: [{ url: 'https://example.test/room.jpg', receipt: 'private-receipt' }],
+        analysis: {
+          ...analysis,
+          items: [
+            { type: label, count: 2 },
+            { type: 'desk', count: 1 },
+          ],
+          possibleDuplicates: [{ item: label, count: 2 }],
+        },
+        items: [
+          { type: label, count: 2 },
+          { type: 'desk', count: 1 },
+        ],
+        followUps: { garage: false, closets: false, appliances: false },
+        wholeMoveCovered: true,
+      }
+      store.value = JSON.stringify(old)
+      let state = loadConversationSession(store)
+      const apply = (command: Parameters<typeof reduceConversation>[1]) => {
+        const previous = state
+        state = reduceConversation(state, { ...command, expectedRevision: state.revision })
+        expect(state).not.toBe(previous)
+      }
+      apply({ id: 'confirm', source: 'inline', expectedRevision: 0, type: 'details.confirm' })
+      apply({ id: 'verify', source: 'system', expectedRevision: 0, type: 'vision.verified', fingerprint: 'vision-one' })
+      expect(conversationReadiness(state).canPrice).toBe(false)
+      apply({ id: 'count', source: 'panel', expectedRevision: 0, type: 'item.count', itemType: label, count: 3 })
+      expect(state.items[0].count).toBe(3)
+      apply({
+        id: 'suggest',
+        source: 'agent',
+        expectedRevision: 0,
+        type: 'proposal.add',
+        proposal: {
+          id: 'resolve',
+          expectedRevision: state.revision,
+          command: { type: 'duplicate.resolve', itemType: label, resolution },
+        },
+      })
+      apply({ id: 'accept', source: 'inline', expectedRevision: 0, type: 'proposal.apply', proposalId: 'resolve' })
+      expect(state.items[0].count).toBe(resolution === 'same' ? 1 : 3)
+      expect(conversationReadiness(state).canPrice).toBe(true)
+      saveConversationSession(state, store)
+      state = loadConversationSession(store)
+      expect(state.photoRefs).toEqual(old.photoRefs)
+      expect(state.moveDetails).toEqual(old.moveDetails)
+      expect(state.items).toEqual([
+        { type: label.toLowerCase(), count: resolution === 'same' ? 1 : 3 },
+        { type: 'desk', count: 1 },
+      ])
+      apply({
+        id: 'reverify',
+        source: 'system',
+        expectedRevision: 0,
+        type: 'vision.verified',
+        fingerprint: 'vision-one',
+      })
+      apply({ id: 'remove', source: 'panel', expectedRevision: 0, type: 'item.remove', itemType: label })
+      expect(state.items).toEqual([{ type: 'desk', count: 1 }])
+      expect(conversationReadiness(state).canPrice).toBe(true)
+      const previous = state
+      for (const command of [
+        { type: 'item.remove', itemType: label },
+        { type: 'item.count', itemType: label, count: 2 },
+        { type: 'duplicate.resolve', itemType: label, resolution },
+        { type: 'item.add', item: { type: label, count: 1 } },
+        { type: 'item.add', item: { type: 'desk', count: 10000 } },
+      ])
+        expect(
+          reduceConversation(state, {
+            ...command,
+            id: 'invalid',
+            source: 'panel',
+            expectedRevision: state.revision,
+          } as Parameters<typeof reduceConversation>[1]),
+        ).toBe(previous)
+    },
+  )
+
   it.each([3, 4])('reuses v%s migration, retains a valid ID and requires own-photo reupload', (version) => {
     const store = new Store()
     const old = {

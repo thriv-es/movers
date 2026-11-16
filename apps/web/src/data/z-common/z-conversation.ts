@@ -5,6 +5,9 @@ import { zDetectedItem, zEstimatedBoxes, zMoveDetails, zPossibleDuplicate, zRevi
 export const zConversationId = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/)
 export const zConversationRevision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const zItemType = z.string().trim().min(1).max(200)
+// References may name valid persisted legacy labels; reducer/parser still require current membership.
+// This does not relax new-item labels, counts or aggregate-add limits.
+const zExistingItemType = zDetectedItem.shape.type
 const zItem = zDetectedItem.extend({ type: zItemType, count: z.number().int().positive().max(10000) }).strict()
 export const zConversationMoveDetails = zMoveDetails.extend({
   distanceMiles: z.number().finite().nonnegative().nullable(),
@@ -21,14 +24,22 @@ export const zConversationCommand = z.discriminatedUnion('type', [
   z.object({ type: z.literal('details.patch'), patch: zDetailsPatch }).strict(),
   z.object({ type: z.literal('item.add'), item: zItem }).strict(),
   z
-    .object({ type: z.literal('item.count'), itemType: zItemType, count: z.number().int().positive().max(10000) })
+    .object({
+      type: z.literal('item.count'),
+      itemType: zExistingItemType,
+      count: z.number().int().positive().max(10000),
+    })
     .strict(),
-  z.object({ type: z.literal('item.remove'), itemType: zItemType }).strict(),
+  z.object({ type: z.literal('item.remove'), itemType: zExistingItemType }).strict(),
   z
     .object({ type: z.literal('photo.decide'), photoId: zConversationId, decision: z.enum(['keep', 'exclude']) })
     .strict(),
   z
-    .object({ type: z.literal('duplicate.resolve'), itemType: zItemType, resolution: z.enum(['same', 'different']) })
+    .object({
+      type: z.literal('duplicate.resolve'),
+      itemType: zExistingItemType,
+      resolution: z.enum(['same', 'different']),
+    })
     .strict(),
   z
     .object({

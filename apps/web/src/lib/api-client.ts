@@ -15,6 +15,7 @@ import { zPhotoAssessment, zVisionStatus } from '@/data'
 import { recordAiMode } from '@/lib/ai-mode-store'
 import type { PhotoRef } from '@/lib/estimate-session'
 import { z } from 'zod'
+import { conversationContext } from './conversation-context'
 import {
   zConversationProposal,
   zConversationRevision,
@@ -147,7 +148,7 @@ export async function conversationChatApi(
   signal?: AbortSignal,
 ): Promise<ConversationResponse> {
   const response = zConversationResponse.parse(
-    await postJson<unknown>('/api/conversation', { messages, snapshot }, { ai: true, signal }),
+    await postJson<unknown>('/api/conversation', conversationContext(messages, snapshot), { ai: true, signal }),
   )
   if (response.basedOnRevision !== snapshot.revision) throw new Error('Stale conversation response')
   return response

@@ -56,6 +56,24 @@ describe('POST conversation', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['origin street: 12 Main Street', { from: '12 Main Street, Tel Aviv' }],
+    ['destination street: 9 Oak Street', { to: '9 Oak Street, Raanana' }],
+    ['origin street: 12 Main Street, Haifa', { from: '12 Main Street, Haifa' }],
+  ])('uses the actual mock extractor for side-labelled addresses: %s', async (content, expected) => {
+    const state = snapshot()
+    state.moveDetails = { ...state.moveDetails, from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' }
+    const result = await request({ messages: [{ id: 'street', role: 'user', content }], snapshot: state })
+    expect(result.status).toBe(200)
+    expect(result.headers.get('x-movers-ai-mode')).toBe('mock')
+    expect(await result.json()).toMatchObject({
+      proposals: [{ command: { type: 'details.patch', patch: expected } }],
+      reply: 'What is the approximate distance in miles?',
+    })
+    expect(state.moveDetails.from).toBe('Tel Aviv')
+    expect(state.moveDetails.to).toBe('Raanana')
+  })
+
   it('resolves the Chat role once and sends validated current state as delimited data', async () => {
     const { run, env } = fakeAI([valid()])
     env.ENV = 'development'

@@ -425,6 +425,7 @@ function commandPatch(state: ConversationSession, command: ConversationCommand):
         }
         case 'duplicate.resolve': {
           const type = canonicalItemType(command.itemType)
+          if (!items.some((item) => sameType(item.type, type))) return null
           if (state.duplicateResolutions[type])
             return state.duplicateResolutions[type] === command.resolution ? {} : null
           if (!unresolvedDuplicates(state).some((duplicate) => sameType(duplicate.item, type))) return null

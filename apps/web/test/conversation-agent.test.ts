@@ -85,6 +85,20 @@ describe('state-aware offline conversation', () => {
     })
   })
 
+  it.each([
+    ['origin street: 12 Main Street', { from: '12 Main Street, Tel Aviv' }],
+    ['destination street: 9 Oak Street', { to: '9 Oak Street, Raanana' }],
+    ['origin street address: 12 Main Street, Haifa', { from: '12 Main Street, Haifa' }],
+    ['destination street: 9 Oak Street, Haifa', { to: '9 Oak Street, Haifa' }],
+  ])('extracts explicit side-labelled street fragments without guessing the side: %s', (text, expected) => {
+    const state = snapshot()
+    state.moveDetails = { ...state.moveDetails, from: 'Tel Aviv', to: 'Raanana' }
+    expect(patch(text, state, 'What is the approximate distance in miles?')).toEqual({
+      type: 'details.patch',
+      patch: expected,
+    })
+  })
+
   it.each(['origin address: 9 Oak Street, Haifa', 'actually from 12 Main Street, Haifa'])(
     'replaces the full origin address without retaining its obsolete city: %s',
     (text) => {
@@ -337,6 +351,43 @@ describe('strict conversation proposal boundary', () => {
     expect(() =>
       parseConversationTurn(raw({ type: 'item.add', item: { type: 'sofa', count: 2 } }, state), state),
     ).toThrow()
+  })
+
+  it.each([
+    { type: 'item.count', count: 3 },
+    { type: 'item.remove' },
+    { type: 'duplicate.resolve', resolution: 'same' },
+    { type: 'duplicate.resolve', resolution: 'different' },
+  ])('accepts only current legacy-label references through mock and strict model parsing: %j', (command) => {
+    const state = snapshot()
+    const label = `legacy ${'x'.repeat(220)}`
+    state.inventory = [{ type: label, count: 2 }]
+    state.review.pendingDuplicates = [{ item: label, count: 2 }]
+    const expected = { ...command, itemType: label }
+    expect(parseConversationTurn(raw(expected, state), state).proposals[0].command).toEqual(expected)
+    const text =
+      command.type === 'item.count'
+        ? `set ${label} count to 3`
+        : command.type === 'item.remove'
+          ? `remove ${label}`
+          : `${label} ${'resolution' in command ? command.resolution : ''}`
+    expect(turn(text, state).proposals[0].command).toEqual(expected)
+    expect(() => parseConversationTurn(raw({ ...expected, itemType: `${label} nonexistent` }, state), state)).toThrow()
+    expect(() =>
+      parseConversationTurn(raw({ type: 'item.add', item: { type: label, count: 1 } }, state), state),
+    ).toThrow()
+  })
+
+  it.each([
+    'street: 12 Main Street',
+    'origin street: 12 Main Street Haifa',
+    'actually destination street: 12 Main Street',
+  ])('does not guess an ambiguous street/city: %s', (text) => {
+    const state = snapshot()
+    state.moveDetails = { ...state.moveDetails, from: 'Tel Aviv', to: 'Raanana' }
+    const result = turn(text, state)
+    expect(result.proposals).toEqual([])
+    expect(result.reply).toMatch(/origin.*destination|city/i)
   })
 
   it('validates references against current inventory, uncertainty and duplicates', () => {

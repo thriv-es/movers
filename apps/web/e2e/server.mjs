@@ -302,7 +302,9 @@ app.post('/__e2e/scenario', async (c) => {
   scenario = body.name
   chatDelay = body.chatDelay === 750 ? 750 : 0
   conversationFailure = body.conversationFailure === true
-  conversationMode = ['malformed', 'retry-once'].includes(body.conversationMode) ? body.conversationMode : 'normal'
+  conversationMode = ['malformed', 'retry-once', 'mock'].includes(body.conversationMode)
+    ? body.conversationMode
+    : 'normal'
   conversationCommands = body.commands ?? null
   saveFailures = body.saveFailures === 1 ? 1 : 0
   return c.json({ scenario })
@@ -353,6 +355,11 @@ app.use('/api/*', async (c, next) => {
   } finally {
     inFlight--
   }
+})
+// Test-only role selection for actual offline-extractor browser regressions; no provider-manufactured patch.
+app.use('/api/conversation', async (c, next) => {
+  if (conversationMode === 'mock') c.env = { ...c.env, AI_MODE: 'mock' }
+  await next()
 })
 app.use('/api/images/upload', async (c, next) => {
   const form = await c.req.raw.clone().formData()

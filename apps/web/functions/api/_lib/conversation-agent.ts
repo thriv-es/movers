@@ -218,7 +218,7 @@ function extractDetails(
     else clarification = 'Please clarify the date using YYYY-MM-DD.'
   } else if (dates.length > 1) clarification = 'Which move date should be used? Please use YYYY-MM-DD.'
 
-  const labels = [...text.matchAll(/\b(from|to|origin address|destination address)\s*:?\s+/gi)]
+  const labels = [...text.matchAll(/\b(from|to|(?:origin|destination) (?:street(?: address)?|address))\s*:?\s+/gi)]
   let foundPlace = false
   for (const [index, label] of labels.entries()) {
     const key = /^(from|origin)/i.test(label[1] ?? '') ? 'from' : 'to'

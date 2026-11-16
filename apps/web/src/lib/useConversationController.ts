@@ -30,6 +30,7 @@ import {
 } from './api-client'
 import { downscaleImage, HEIC_MESSAGE, isAcceptedType, isHeic } from './image-downscale'
 import { photoEvidence } from './review-photos'
+import { CONVERSATION_MESSAGE_LIMIT, ConversationContextError, conversationContext } from './conversation-context'
 
 type WithoutEnvelope<T> = T extends unknown ? Omit<T, 'id' | 'source' | 'expectedRevision'> : never
 export type ConversationInput = WithoutEnvelope<ConversationAction>
@@ -415,10 +416,14 @@ export function useConversationController(initial: () => ConversationSession = l
         authorization.messageId === snapshot.messages.at(-1)?.id
       )
         apply({ type: 'proposal.apply', proposalId: detail.id }, 'chat', detail.expectedRevision)
-    } catch {
+    } catch (caught) {
       if (active.current && !request.signal.aborted && chatRequest.current === request) {
         setChatFailed(true)
-        setError('The assistant did not answer. Your message is saved; retry or keep editing the manifest.')
+        setError(
+          caught instanceof ConversationContextError
+            ? caught.message
+            : 'The assistant did not answer. Your message is saved; retry or keep editing the manifest.',
+        )
       }
     } finally {
       if (chatRequest.current === request) {
@@ -429,11 +434,19 @@ export function useConversationController(initial: () => ConversationSession = l
   }
   const sendMessage = (text = draft) => {
     if (!active.current || leaving.current || !text.trim() || chatRequest.current) return
+    if (text.length > CONVERSATION_MESSAGE_LIMIT) {
+      setError('Please send a message of 12,000 characters or fewer. Your draft and history are unchanged.')
+      return
+    }
     const messageId = id()
-    const accepted = apply(
-      { type: 'message.append', message: { id: messageId, role: 'user', content: text.trim() } },
-      'chat',
-    )
+    const message = { id: messageId, role: 'user' as const, content: text.trim() }
+    try {
+      conversationContext([...current.current.messages, message], conversationSnapshot(current.current))
+    } catch (caught) {
+      if (caught instanceof ConversationContextError) setError(caught.message)
+      return
+    }
+    const accepted = apply({ type: 'message.append', message }, 'chat')
     if (!accepted) return
     submittedTurn.current = { sessionId: accepted.sessionId, messageId, revision: accepted.revision }
     setDraft('')
