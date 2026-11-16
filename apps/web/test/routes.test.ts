@@ -12,7 +12,7 @@ import { EMPTY_MOVE_DETAILS } from '../src/data'
 const sessionId = '11111111-1111-4111-8111-111111111111'
 const receiptA = 'a'.repeat(43)
 const receiptB = 'b'.repeat(43)
-const jpeg = new Uint8Array([255, 216, 255, 224, 0, 2, 255, 217])
+import { png, truncatedContainers } from './image-fixtures'
 const hashes = new Map<string, string>()
 for (const [receipt, key] of [
   [receiptA, 'a.png'],
@@ -48,8 +48,8 @@ const MODE_HEADER = 'x-movers-ai-mode'
 
 const bucket = {
   get: async () => ({
-    arrayBuffer: async () => jpeg.buffer,
-    httpMetadata: { contentType: 'image/jpeg' },
+    arrayBuffer: async () => png.buffer,
+    httpMetadata: { contentType: 'image/png' },
   }),
 }
 
@@ -268,7 +268,7 @@ describe('local development with no AI credentials (offline mock)', () => {
   it('serves the sample move from cache on the second call (MOVERS-16)', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(jpeg, { headers: { 'content-type': 'image/jpeg' } })),
+      vi.fn(async () => new Response(png, { headers: { 'content-type': 'image/png' } })),
     )
     const body = analyzeBody(['http://localhost/sample/living-room.jpg'], true)
     const first = await post(analyze, body, env())
@@ -333,6 +333,38 @@ describe('anywhere but local development: the mock is never served', () => {
 })
 
 describe('photo linkage route boundary', () => {
+  it.each(truncatedContainers)(
+    'excludes malformed $name from a mixed batch without aborting valid inventory',
+    async ({ bytes, mimeType }) => {
+      const validDataUrl = `data:image/png;base64,${btoa(String.fromCharCode(...png))}`
+      const run = vi.fn(async (_model: string, input: unknown) => {
+        const url = (input as { messages: { content: { image_url?: { url: string } }[] }[] }).messages[0]?.content[1]
+          ?.image_url?.url
+        if (url !== validDataUrl) throw new Error('Malformed image reached provider')
+        return { response: JSON.stringify({ items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 100 }) }
+      })
+      const get = vi.fn(async (key: string) =>
+        key === 'b.png'
+          ? { arrayBuffer: async () => bytes.buffer, httpMetadata: { contentType: mimeType } }
+          : bucket.get(),
+      )
+      const res = await post(
+        analyze,
+        analyzeBody(['http://localhost/api/images/a.png', 'http://localhost/api/images/b.png']),
+        env({ ENV: 'preview', AI: { run }, MOVERS_BUCKET: { get } }),
+      )
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({
+        items: [{ type: 'sofa', count: 1 }],
+        photoLinkStatuses: [
+          expect.objectContaining({ status: 'eligible' }),
+          expect.objectContaining({ status: 'unavailable' }),
+        ],
+      })
+      expect(run).toHaveBeenCalledTimes(1)
+      expect(console.error).not.toHaveBeenCalled()
+    },
+  )
   it('rejects legacy requests safely without reading bytes or calling AI', async () => {
     const get = vi.fn()
     const run = vi.fn()
@@ -399,7 +431,7 @@ describe('photo linkage route boundary', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
   it('revalidates sample links before cached results and separates canonical sample identity', async () => {
-    const fetch = vi.fn(async () => new Response(jpeg, { headers: { 'content-type': 'image/jpeg' } }))
+    const fetch = vi.fn(async () => new Response(png, { headers: { 'content-type': 'image/png' } }))
     vi.stubGlobal('fetch', fetch)
     const living = analyzeBody(['http://localhost/sample/living-room.jpg'], true)
     const kitchen = analyzeBody(['http://localhost/sample/kitchen.jpg'], true)

@@ -5,7 +5,7 @@ import { issuePhotoReceipt } from '../functions/api/_lib/photo-receipts'
 import type { Bindings } from '../functions/api/_lib/types'
 
 const origin = 'http://127.0.0.1:5610'
-const jpeg = new Uint8Array([255, 216, 255, 224, 0, 2, 255, 217])
+import { jpeg, png, webp, truncatedContainers } from './image-fixtures'
 function setup() {
   const records = new Map<string, { session_id: string; object_key: string; expires_at: string }>()
   const db = {
@@ -18,7 +18,7 @@ function setup() {
       }),
     }),
   }
-  const get = vi.fn(async () => ({ arrayBuffer: async () => jpeg.buffer, httpMetadata: { contentType: 'image/jpeg' } }))
+  const get = vi.fn(async () => ({ arrayBuffer: async () => png.buffer, httpMetadata: { contentType: 'image/png' } }))
   return {
     env: { MOVERS_DB: db, MOVERS_BUCKET: { get } } as unknown as Bindings & { MOVERS_DB: D1Database },
     records,
@@ -30,6 +30,96 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 describe('photo link gate', () => {
+  it.each(truncatedContainers)('rejects structurally incomplete $name before vision', async ({ bytes, mimeType }) => {
+    const { env } = setup()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(bytes, { headers: { 'content-type': mimeType } })),
+    )
+    const result = await resolvePhotoLinks(
+      env,
+      origin,
+      'session-a',
+      [{ url: `${origin}/sample/kitchen.jpg`, receipt: null }],
+      true,
+    )
+    expect(result[0]?.status).toBe('unavailable')
+    expect(result[0]?.image).toBeUndefined()
+  })
+  it.each([
+    { bytes: jpeg, mimeType: 'image/jpeg' },
+    { bytes: png, mimeType: 'image/png' },
+    { bytes: webp, mimeType: 'image/webp' },
+  ])('accepts complete $mimeType container', async ({ bytes, mimeType }) => {
+    const { env } = setup()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(bytes, { headers: { 'content-type': mimeType } })),
+    )
+    expect(
+      (
+        await resolvePhotoLinks(
+          env,
+          origin,
+          'session-a',
+          [{ url: `${origin}/sample/kitchen.jpg`, receipt: null }],
+          true,
+        )
+      )[0]?.status,
+    ).toBe('eligible')
+  })
+  it.each([
+    { bytes: jpeg, mimeType: 'image/jpeg' },
+    { bytes: png, mimeType: 'image/png' },
+    { bytes: webp, mimeType: 'image/webp' },
+  ])('rejects every truncated prefix of a complete $mimeType file', async ({ bytes, mimeType }) => {
+    const { env } = setup()
+    const fetch = vi.fn(async () => new Response(bytes, { headers: { 'content-type': mimeType } }))
+    vi.stubGlobal('fetch', fetch)
+    for (let length = 0; length < bytes.length; length++) {
+      fetch.mockResolvedValueOnce(new Response(bytes.slice(0, length), { headers: { 'content-type': mimeType } }))
+      expect(
+        (
+          await resolvePhotoLinks(
+            env,
+            origin,
+            'session-a',
+            [{ url: `${origin}/sample/kitchen.jpg`, receipt: null }],
+            true,
+          )
+        )[0]?.status,
+        `prefix length ${length}`,
+      ).toBe('unavailable')
+    }
+  })
+  it.each([
+    { bytes: jpeg, mimeType: 'image/jpeg', lengthOffset: 4 },
+    { bytes: png, mimeType: 'image/png', lengthOffset: 33 },
+    { bytes: webp, mimeType: 'image/webp', lengthOffset: 16 },
+  ])(
+    'rejects a $mimeType chunk/segment claiming bytes beyond its container',
+    async ({ bytes, mimeType, lengthOffset }) => {
+      const { env } = setup()
+      const malformed = bytes.slice()
+      malformed[lengthOffset] = 255
+      malformed[lengthOffset + 1] = 255
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(malformed, { headers: { 'content-type': mimeType } })),
+      )
+      expect(
+        (
+          await resolvePhotoLinks(
+            env,
+            origin,
+            'session-a',
+            [{ url: `${origin}/sample/kitchen.jpg`, receipt: null }],
+            true,
+          )
+        )[0]?.status,
+      ).toBe('unavailable')
+    },
+  )
   it.each([
     'valid',
     'wrong session',
@@ -99,7 +189,7 @@ describe('photo link gate', () => {
   })
   it('fetches only exact server-constructed sample URLs without redirect following, preserving order', async () => {
     const { env } = setup()
-    const fetch = vi.fn(async () => new Response(jpeg, { headers: { 'content-type': 'image/jpeg' } }))
+    const fetch = vi.fn(async () => new Response(png, { headers: { 'content-type': 'image/png' } }))
     vi.stubGlobal('fetch', fetch)
     const urls = [`${origin}/sample/kitchen.jpg`, 'https://other.example/a.jpg', `${origin}/sample/bedroom.jpg`]
     const result = await resolvePhotoLinks(
@@ -127,7 +217,7 @@ describe('photo link gate', () => {
     expect(get).not.toHaveBeenCalled()
     get.mockResolvedValueOnce({
       arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
-      httpMetadata: { contentType: 'image/jpeg' },
+      httpMetadata: { contentType: 'image/png' },
     })
     expect((await resolvePhotoLinks(env, origin, 'session-a', refs, false))[0]?.status).toBe('unavailable')
     get.mockRejectedValueOnce(new Error('private bucket error'))
@@ -143,10 +233,10 @@ describe('photo link gate', () => {
           if (kind === 'read error') throw new Error('sensitive URL')
           if (kind === 'redirect') return new Response(null, { status: 302 })
           return new Response(
-            kind === 'empty' ? new Uint8Array() : kind === 'oversize' ? new Uint8Array(10 * 1024 * 1024 + 1) : jpeg,
+            kind === 'empty' ? new Uint8Array() : kind === 'oversize' ? new Uint8Array(10 * 1024 * 1024 + 1) : png,
             {
               headers: {
-                'content-type': kind === 'html' ? 'text/html' : kind === 'mismatch' ? 'image/png' : 'image/jpeg',
+                'content-type': kind === 'html' ? 'text/html' : kind === 'mismatch' ? 'image/webp' : 'image/png',
               },
             },
           )
