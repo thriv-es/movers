@@ -29,6 +29,7 @@ export const test = base.extend({
     })
     expect((await request.post('/__e2e/reset')).ok()).toBe(true)
     await use(page)
+    expect((await request.post('/__e2e/drain')).ok()).toBe(true)
     expect(external, 'Browser must never request external destinations').toEqual([])
     expect(errors, 'Browser must not raise uncaught application errors').toEqual([])
   },
@@ -37,29 +38,63 @@ export { expect }
 
 export async function openPhotos(page) {
   await page.goto('/estimate')
-  await page.getByRole('button', { name: 'Fill in a form instead' }).click()
-  await page.getByLabel('Moving from', { exact: true }).fill('100 Test Street, Boston, MA')
-  await page.getByLabel('Moving to', { exact: true }).fill('200 Fixture Lane, Cambridge, MA')
-  await page.getByLabel('Distance (miles)').fill('15')
-  await page.getByRole('button', { name: 'Continue to photos' }).click()
+  await send(page, 'from Tel Aviv to Raanana on 1.1.2027')
+  await expect(page.getByLabel('Moving from', { exact: true })).toHaveValue('Tel Aviv')
+  await send(page, '15 miles')
+  await page.getByRole('button', { name: 'Confirm move details', exact: true }).click()
 }
 
 export async function upload(page, indexes) {
+  const before = (await session(page)).photos.length
   await page
     .getByLabel('Choose from library', { exact: true })
     .setInputFiles(indexes.map((index) => photos[index].path))
-  await expect(
-    page.getByRole('button', {
-      name: `Analyse ${indexes.length} photo${indexes.length === 1 ? '' : 's'}`,
-      exact: true,
-    }),
-  ).toBeEnabled()
+  await expect.poll(async () => (await session(page)).photos.length).toBe(before + indexes.length)
+  await expect(page.getByRole('button', { name: /^Analyse (again|\d+ photos?)$/ })).toBeEnabled()
 }
 
 export async function analyze(page) {
   const response = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/analyze')
-  await page.getByRole('button', { name: /^Analyse \d+ photos?$/ }).click()
+  await page.getByRole('button', { name: /^Analyse (again|\d+ photos?)$/ }).click()
   return response
+}
+
+export const priceButton = (page) =>
+  page.getByRole('button', { name: 'Confirm inventory and get estimate', exact: true })
+export const manifestPanel = (page) => page.getByRole('region', { name: 'Move manifest', exact: true })
+export async function send(page, text) {
+  const response = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/conversation')
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill(text)
+  await page.getByRole('button', { name: 'Send', exact: true }).click()
+  const result = await response
+  await expect(page.getByRole('button', { name: 'Cancel reply', exact: true })).toHaveCount(0)
+  return result
+}
+export async function review(page) {
+  const same = page.getByRole('button', { name: /^Same / })
+  while (await same.count()) await same.first().click()
+  for (const name of ['Garage', 'Closets', 'Appliances'])
+    await page.getByRole('group', { name, exact: true }).getByRole('button', { name: 'No', exact: true }).click()
+  await page
+    .getByRole('group', { name: 'Does this cover the whole move?' })
+    .getByRole('button', { name: 'Yes', exact: true })
+    .click()
+}
+export async function state(request) {
+  return (await request.get('/__e2e/state')).json()
+}
+export async function gate(request, key, release = false) {
+  expect((await request.post('/__e2e/gate', { data: { key, release } })).ok()).toBe(true)
+}
+export async function entered(request, key) {
+  await expect.poll(async () => (await state(request)).entered.includes(key)).toBe(true)
+}
+export function writes(data) {
+  return data.requests.filter(
+    (entry) =>
+      ['POST', 'PATCH'].includes(entry.method) &&
+      ['/api/price', '/api/estimates', '/api/quote-requests'].some((path) => entry.path.startsWith(path)),
+  )
 }
 
 export async function session(page) {

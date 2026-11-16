@@ -64,6 +64,33 @@ let calls = []
 let requests = []
 let scenario = 'normal'
 let chatDelay = 0
+let conversationFailure = false
+let conversationCommands = null
+let saveFailures = 0
+let emailLogsSuppressed = 0
+const log = console.log
+console.log = (...args) => {
+  // The inherited mail stub logs bodies. Never retain even synthetic contact/body text in artifacts.
+  if (typeof args[0] === 'string' && args[0].startsWith('[outbound-email]')) emailLogsSuppressed++
+  else log(...args)
+}
+const gates = new Map()
+const entered = []
+let inFlight = 0
+async function drain() {
+  for (const gate of gates.values()) gate.release()
+  gates.clear()
+  const deadline = Date.now() + 5000
+  while (inFlight && Date.now() < deadline) await new Promise((done) => setTimeout(done, 10))
+  if (inFlight) throw new Error('Offline requests did not drain')
+}
+async function hold(key) {
+  const gate = gates.get(key)
+  if (gate) {
+    entered.push(key)
+    await gate.promise
+  }
+}
 const byDigest = new Map()
 const inventory = (type = 'scripted chair') => ({
   items: [{ type, count: 1 }],
@@ -71,8 +98,8 @@ const inventory = (type = 'scripted chair') => ({
   estimated_boxes_min: 1,
   estimated_boxes_max: 2,
   special_handling: [],
-  possible_duplicates: [],
-  unseen_areas: [],
+  possible_duplicates: type === 'sofa' ? [{ item: 'sofa', count: 1 }] : [],
+  unseen_areas: ['garage', 'closets'],
 })
 const env = {
   MOVERS_DB: db,
@@ -150,7 +177,38 @@ const env = {
           }),
         }
       }
-      if (chatDelay) await new Promise((done) => setTimeout(done, chatDelay))
+      if (content.includes('CURRENT_STATE_AND_MESSAGES_JSON')) {
+        const { snapshot, messages } = JSON.parse(
+          content.split('CURRENT_STATE_AND_MESSAGES_JSON\n')[1].split('\nEND_CURRENT_STATE_AND_MESSAGES_JSON')[0],
+        )
+        // Provider-level script, not API fulfillment: the real parser/authorship/revision checks still run.
+        await hold('conversation')
+        if (chatDelay) await new Promise((done) => setTimeout(done, chatDelay))
+        if (conversationFailure) throw new Error('Scripted conversation outage')
+        const answer = messages.at(-1)?.content ?? ''
+        let commands = conversationCommands ?? []
+        if (conversationCommands === null) {
+          let patch
+          if (answer === 'from Tel Aviv to Raanana on 1.1.2027')
+            patch = { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' }
+          else if (answer === 'origin street: 12 Main Street')
+            patch = { from: `12 Main Street, ${snapshot.moveDetails.from}` }
+          else if (answer === 'origin address: 9 Oak Street, Haifa') patch = { from: '9 Oak Street, Haifa' }
+          else if (answer === '15 miles') patch = { distanceMiles: 15 }
+          commands = patch ? [{ type: 'details.patch', patch }] : []
+        }
+        return {
+          response: JSON.stringify({
+            reply: 'Scripted provider envelope, never displayed.',
+            basedOnRevision: snapshot.revision,
+            proposals: commands.map((command, index) => ({
+              id: `script-${index}`,
+              expectedRevision: snapshot.revision,
+              command,
+            })),
+          }),
+        }
+      }
       if (content.includes('total_volume_cubic_feet'))
         return {
           response: JSON.stringify({
@@ -168,30 +226,63 @@ const env = {
   },
 }
 const app = new Hono()
-app.get('/__e2e/health', (c) => c.json({ ready: true, fakeAI: true }))
+const migratedTables = (
+  await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all()
+).results.map(({ name }) => name)
+app.get('/__e2e/health', (c) =>
+  c.json({ ready: true, fakeAI: true, migrations: ['0001', '0002', '0003'], tables: migratedTables }),
+)
+app.post('/__e2e/gate', async (c) => {
+  const { key, release } = await c.req.json()
+  if (release) {
+    gates.get(key)?.release()
+    gates.delete(key)
+  } else {
+    let releaseGate
+    const promise = new Promise((done) => {
+      releaseGate = done
+    })
+    gates.set(key, { promise, release: releaseGate })
+  }
+  return c.json({ ok: true })
+})
+app.post('/__e2e/drain', async (c) => {
+  await drain()
+  return c.json({ drained: true })
+})
 app.post('/__e2e/reset', async (c) => {
+  const options = await c.req.json().catch(() => ({}))
+  await drain()
+  entered.length = 0
   for (const table of ['photo_receipts', 'quote_requests', 'estimates', 'movers', 'ai_settings'])
     await db.prepare(`DELETE FROM ${table}`).run()
   const objects = await env.MOVERS_BUCKET.list()
   if (objects.objects.length) await env.MOVERS_BUCKET.delete(objects.objects.map(({ key }) => key))
-  // Seed a single synthetic mover before concurrent lead-save/list requests (not the production seed path).
-  await db
-    .prepare('INSERT INTO movers (id, slug, name, email, service_area, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .bind(
-      'e2e-mover',
-      'e2e-fixture',
-      'Synthetic Fixture Movers',
-      'mover@example.invalid',
-      'Test area',
-      '2026-01-01T00:00:00.000Z',
-    )
-    .run()
+  // Ordinary UI tests isolate the inherited seed race; fresh-state tests explicitly opt out.
+  if (options.seed !== false) {
+    for (const suffix of ['a', 'b'])
+      await db
+        .prepare('INSERT INTO movers (id, slug, name, email, service_area, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(
+          `e2e-mover-${suffix}`,
+          `e2e-fixture-${suffix}`,
+          `Synthetic Fixture Movers ${suffix}`,
+          `mover-${suffix}@example.invalid`,
+          'Test area',
+          '2026-01-01T00:00:00.000Z',
+        )
+        .run()
+  }
   uploads = []
   calls = []
   requests = []
   byDigest.clear()
   scenario = 'normal'
   chatDelay = 0
+  conversationFailure = false
+  conversationCommands = null
+  saveFailures = 0
+  emailLogsSuppressed = 0
   return c.json({ reset: true })
 })
 app.post('/__e2e/scenario', async (c) => {
@@ -200,6 +291,9 @@ app.post('/__e2e/scenario', async (c) => {
     return c.json({ error: 'Unknown scenario' }, 400)
   scenario = body.name
   chatDelay = body.chatDelay === 750 ? 750 : 0
+  conversationFailure = body.conversationFailure === true
+  conversationCommands = body.commands ?? null
+  saveFailures = body.saveFailures === 1 ? 1 : 0
   return c.json({ scenario })
 })
 app.post('/__e2e/change-vision', async (c) => {
@@ -219,14 +313,34 @@ app.get('/__e2e/state', async (c) =>
     uploads,
     calls,
     requests,
+    entered,
+    emailLogsSuppressed,
+    movers: await db.prepare('SELECT COUNT(*) AS count FROM movers').first('count'),
+    quotes: await db.prepare('SELECT COUNT(*) AS count FROM quote_requests').first('count'),
     receipts: await db.prepare('SELECT COUNT(*) AS count FROM photo_receipts').first('count'),
     estimates: await db.prepare('SELECT COUNT(*) AS count FROM estimates').first('count'),
     objects: (await env.MOVERS_BUCKET.list()).objects.length,
   }),
 )
 app.use('/api/*', async (c, next) => {
-  await next()
-  requests.push({ path: c.req.path, method: c.req.method, status: c.res.status })
+  inFlight++
+  try {
+    const key = `${c.req.method} ${c.req.path}`
+    await hold(`before:${key}`)
+    if (key === 'POST /api/estimates' && saveFailures-- > 0) {
+      // Test-local D1 fault; production handler still runs and returns its real save-failure response.
+      await db.prepare('ALTER TABLE estimates RENAME TO unavailable_estimates').run()
+      try {
+        await next()
+      } finally {
+        await db.prepare('ALTER TABLE unavailable_estimates RENAME TO estimates').run()
+      }
+    } else await next()
+    await hold(`after:${key}`)
+    requests.push({ path: c.req.path, method: c.req.method, status: c.res.status })
+  } finally {
+    inFlight--
+  }
 })
 app.use('/api/images/upload', async (c, next) => {
   const form = await c.req.raw.clone().formData()
@@ -235,9 +349,19 @@ app.use('/api/images/upload', async (c, next) => {
     uploads.push({ file: file.name, hash, bytes: file.size })
     byDigest.set(hash, file.name)
   }
+  await hold(`upload:${form.getAll('images')[0]?.name}`)
   await next()
 })
-for (const name of ['ai-status', 'chat', 'images', 'analyze', 'price', 'estimates', 'movers', 'quote-requests']) {
+for (const name of [
+  'ai-status',
+  'conversation',
+  'images',
+  'analyze',
+  'price',
+  'estimates',
+  'movers',
+  'quote-requests',
+]) {
   const route = await vite.ssrLoadModule(resolve(root, `functions/api/_routes/${name}.ts`))
   app.route(`/api/${name}`, route.default)
 }
