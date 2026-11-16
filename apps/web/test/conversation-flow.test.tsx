@@ -4,8 +4,26 @@ import { HelmetProvider } from 'react-helmet-async'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import EstimatePage from '../src/pages/estimate.page'
-import { createConversationSession, type ConversationSession } from '../src/lib/conversation-state'
+import {
+  conversationSnapshot,
+  createConversationSession,
+  type ConversationSession,
+} from '../src/lib/conversation-state'
 import { SESSION_KEY, sampleSession } from '../src/lib/estimate-session'
+import type { ConversationCommand } from '../src/data/z-common/z-conversation'
+import { conversationChatApi, chatApi } from '../src/lib/api-client'
+
+function packet(commands: ConversationCommand[] = [], revision = 0, reply = 'Check the suggested updates.') {
+  return {
+    reply,
+    basedOnRevision: revision,
+    proposals: commands.map((command, index) => ({ id: `suggestion-${index}`, expectedRevision: revision, command })),
+  }
+}
+function send(text: string) {
+  fireEvent.change(screen.getByLabelText('Message'), { target: { value: text } })
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+}
 
 const analysis = {
   visionRevision: 1,
@@ -95,11 +113,11 @@ function api(handler?: (path: string, request?: RequestInit) => Promise<Response
         delivery: { 'mover-1': 'logged' },
       })
     if (path === '/api/analyze') return Response.json(analysis)
-    if (path === '/api/chat')
+    if (path === '/api/conversation')
       return Response.json({
         reply: 'Thanks. Check the move manifest.',
-        moveDetails: draft().moveDetails,
-        finished: true,
+        basedOnRevision: JSON.parse(request?.body as string).snapshot.revision,
+        proposals: [],
       })
     throw new Error('Unexpected synthetic endpoint')
   })
@@ -225,23 +243,30 @@ describe('persistent estimator conversation', () => {
 
   it('rejects late analysis and chat replies after a panel edit without losing the transcript or draft', async () => {
     const pending = deferred<Response>()
-    api((path) => (path === '/api/analyze' || path === '/api/chat' ? pending.promise : undefined))
+    const chat = deferred<Response>()
+    api((path) => (path === '/api/analyze' ? pending.promise : path === '/api/conversation' ? chat.promise : undefined))
     mount(ready())
     fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'hello' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'next draft' } })
     fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '99' } })
-    await act(async () =>
-      pending.resolve(
+    await act(async () => {
+      pending.resolve(Response.json(analysis))
+      chat.resolve(
         Response.json({
-          ...analysis,
           reply: 'stale reply',
-          moveDetails: sampleSession(window.location.origin).moveDetails,
-          finished: true,
+          basedOnRevision: 1,
+          proposals: [
+            {
+              id: 'late-details',
+              expectedRevision: 1,
+              command: { type: 'details.patch', patch: { from: 'Stale origin' } },
+            },
+          ],
         }),
-      ),
-    )
+      )
+    })
     expect(draft()).toMatchObject({ analysis: null, moveDetails: { distanceMiles: 99 } })
     expect(screen.queryByText('stale reply')).not.toBeInTheDocument()
     expect(screen.getByText('hello')).toBeInTheDocument()
@@ -384,16 +409,21 @@ describe('persistent estimator conversation', () => {
 
   it('applies multi-field chat details in one revision, preserves known partial details, and never acts on prose', async () => {
     const fetch = api((path) =>
-      path === '/api/chat'
+      path === '/api/conversation'
         ? Promise.resolve(
             Response.json({
               reply: 'I saved and booked it. Get a price now.',
-              moveDetails: {
-                ...createConversationSession().moveDetails,
-                to: 'Synthetic destination',
-                date: '2027-01-01',
-              },
-              finished: true,
+              basedOnRevision: 0,
+              proposals: [
+                {
+                  id: 'details-1',
+                  expectedRevision: 0,
+                  command: {
+                    type: 'details.patch',
+                    patch: { to: 'Synthetic destination', date: '2027-01-01' },
+                  },
+                },
+              ],
             }),
           )
         : undefined,
@@ -418,11 +448,310 @@ describe('persistent estimator conversation', () => {
     expect(screen.getByText('What we know so far')).toBeInTheDocument()
     expect(screen.getByLabelText('Moving from')).toHaveValue('Synthetic origin')
     expect(screen.getByLabelText('Move date')).toHaveValue('2027-01-01')
-    expect(fetch.mock.calls.filter(([path]) => path !== '/api/chat')).toHaveLength(0)
+    expect(fetch.mock.calls.filter(([path]) => path !== '/api/conversation')).toHaveLength(0)
     const request = JSON.parse(fetch.mock.calls[0]?.[1]?.body as string)
     expect(request.snapshot).toMatchObject({ version: 6, revision: 0, moveDetails: { from: 'Synthetic origin' } })
     expect(JSON.stringify(request.snapshot)).not.toContain('test-receipt')
     expect(JSON.stringify(request.snapshot)).not.toContain('example.test/room.jpg')
+  })
+
+  it('immediately fills the exact combined answer in the shared summary through one validated proposal', async () => {
+    const fetch = api((path) =>
+      path === '/api/conversation'
+        ? Promise.resolve(
+            Response.json(
+              packet(
+                [{ type: 'details.patch', patch: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' } }],
+                0,
+                'Roughly how many miles is the move?',
+              ),
+              { headers: { 'x-movers-ai-mode': 'mock' } },
+            ),
+          )
+        : undefined,
+    )
+    mount(createConversationSession())
+    send('from Tel Aviv to Raanana on 1.1.2027')
+    await screen.findByText('Roughly how many miles is the move?')
+    expect(screen.getByLabelText('Moving from')).toHaveValue('Tel Aviv')
+    expect(screen.getByLabelText('Moving to')).toHaveValue('Raanana')
+    expect(screen.getByLabelText('Move date')).toHaveValue('2027-01-01')
+    expect(screen.getByText('What we know so far')).toBeInTheDocument()
+    expect(screen.getByText('Demo data: AI is mocked locally')).toBeInTheDocument()
+    expect(screen.getByText(/Move details updated in the shared manifest/)).toBeInTheDocument()
+    expect(draft()).toMatchObject({
+      revision: 1,
+      pendingProposals: [],
+      moveDetails: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01', distanceMiles: null },
+    })
+    expect(draft().timeline.filter((entry) => entry.kind === 'event' && entry.event === 'proposal.added')).toHaveLength(
+      1,
+    )
+    expect(new Set(draft().appliedActionIds).size).toBe(draft().appliedActionIds.length)
+    expect(draft().appliedActionIds).not.toContain('suggestion-0')
+    expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation'])
+    const body = JSON.parse(fetch.mock.calls[0]?.[1]?.body as string)
+    expect(Object.keys(body).sort()).toEqual(['messages', 'snapshot'])
+  })
+
+  it('sends already edited state and preserves omission while applying an explicit null correction', async () => {
+    const fetch = api((path) =>
+      path === '/api/conversation'
+        ? Promise.resolve(Response.json(packet([{ type: 'details.patch', patch: { from: null } }], 1)))
+        : undefined,
+    )
+    mount(ready())
+    fireEvent.change(screen.getByLabelText('Moving to'), { target: { value: 'Edited destination' } })
+    send('clear origin')
+    await waitFor(() => expect(draft().moveDetails.from).toBeNull())
+    expect(draft().moveDetails).toMatchObject({ to: 'Edited destination', distanceMiles: 120 })
+    expect(draft().revision).toBe(2)
+    expect(JSON.parse(fetch.mock.calls[0]?.[1]?.body as string).snapshot).toMatchObject({
+      revision: 1,
+      moveDetails: { to: 'Edited destination' },
+    })
+  })
+
+  it.each([
+    ['legacy payload', { reply: 'Rejected', moveDetails: { from: 'Untrusted' }, finished: true }],
+    ['unknown field', { ...packet(), contact: { email: 'private@example.test' } }],
+    ['malformed reply', { ...packet(), reply: '' }],
+    ['wrong revision', packet([{ type: 'details.patch', patch: { from: 'Untrusted' } }], 9)],
+    [
+      'wrong proposal revision',
+      {
+        ...packet(),
+        proposals: [
+          { id: 'bad-revision', expectedRevision: 9, command: { type: 'details.patch', patch: { from: 'Untrusted' } } },
+        ],
+      },
+    ],
+    [
+      'private patch',
+      {
+        ...packet(),
+        proposals: [
+          {
+            id: 'private',
+            expectedRevision: 0,
+            command: { type: 'details.patch', patch: { from: 'Untrusted', receipt: 'private' } },
+          },
+        ],
+      },
+    ],
+    [
+      'invalid count',
+      {
+        ...packet(),
+        proposals: [
+          { id: 'bad-count', expectedRevision: 0, command: { type: 'item.count', itemType: 'sofa', count: 0 } },
+        ],
+      },
+    ],
+    ['invalid date', packet([{ type: 'details.patch', patch: { date: '2027-02-30' } }])],
+    [
+      'invalid reference after valid proposal',
+      packet([
+        { type: 'coverage.answer', answer: false },
+        { type: 'item.remove', itemType: 'not-present' },
+      ]),
+    ],
+    [
+      'duplicate proposal ID',
+      {
+        ...packet(),
+        proposals: [0, 1].map(() => ({
+          id: 'same',
+          expectedRevision: 0,
+          command: { type: 'request.action', action: 'price' },
+        })),
+      },
+    ],
+    [
+      'two details patches',
+      packet([
+        { type: 'details.patch', patch: { from: 'A' } },
+        { type: 'details.patch', patch: { to: 'B' } },
+      ]),
+    ],
+  ])('rejects %s atomically with retry guidance and no legacy fallback', async (_name, response) => {
+    const fetch = api((path) => (path === '/api/conversation' ? Promise.resolve(Response.json(response)) : undefined))
+    const state = ready()
+    mount(state)
+    send('synthetic answer')
+    await screen.findByRole('button', { name: 'Retry reply' })
+    expect(draft()).toMatchObject({
+      revision: 0,
+      moveDetails: state.moveDetails,
+      items: state.items,
+      pendingProposals: [],
+      wholeMoveCovered: true,
+    })
+    expect(draft().messages.filter((message) => message.role === 'assistant')).toHaveLength(0)
+    expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation'])
+  })
+
+  it.each<ConversationCommand>([
+    { type: 'item.add', item: { type: 'chair', count: 1 } },
+    { type: 'item.count', itemType: 'sofa', count: 2 },
+    { type: 'item.remove', itemType: 'sofa' },
+    { type: 'coverage.answer', answer: false },
+    { type: 'followUp.answer', key: 'garage', answer: true },
+    { type: 'photo.decide', photoId: 'photo-1', decision: 'exclude' },
+    { type: 'duplicate.resolve', itemType: 'sofa', resolution: 'same' },
+  ])('holds $type for explicit inline acceptance and supports dismissal', async (command) => {
+    api((path) => (path === '/api/conversation' ? Promise.resolve(Response.json(packet([command]))) : undefined))
+    const state = ready({
+      analysis: {
+        ...analysis,
+        possibleDuplicates: [{ item: 'sofa', count: 2 }],
+        photoAssessments:
+          command.type === 'photo.decide'
+            ? [{ url: 'https://example.test/room.jpg', status: 'uncertain', reason: 'Review' }]
+            : [],
+      },
+    })
+    mount(state)
+    send('synthetic proposed change')
+    await screen.findByRole('button', { name: 'Accept suggestion' })
+    expect(draft()).toMatchObject({ revision: 0, items: state.items, wholeMoveCovered: true, photoDecisions: {} })
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss suggestion' }))
+    expect(draft().pendingProposals).toHaveLength(0)
+    expect(draft().revision).toBe(0)
+    send('synthetic proposed change again')
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept suggestion' }))
+    expect(draft().pendingProposals).toHaveLength(0)
+    expect(draft().revision).toBe(1)
+  })
+
+  it.each(['accept', 'panel edit'] as const)(
+    'visibly expires the remaining batch after %s without rebasing or automatic refresh',
+    async (change) => {
+      const fetch = api((path) =>
+        path === '/api/conversation'
+          ? Promise.resolve(
+              Response.json(
+                packet([
+                  { type: 'item.count', itemType: 'sofa', count: 2 },
+                  { type: 'coverage.answer', answer: false },
+                ]),
+              ),
+            )
+          : undefined,
+      )
+      mount(ready())
+      send('change count and coverage')
+      const [accept] = await screen.findAllByRole('button', { name: 'Accept suggestion' })
+      if (!accept) throw new Error('Missing suggestion control')
+      if (change === 'accept') fireEvent.click(accept)
+      else fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '42' } })
+      expect(screen.getByText(/suggestions expired/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Refresh suggestions' })).toBeEnabled()
+      expect(screen.queryByRole('button', { name: 'Accept suggestion' })).not.toBeInTheDocument()
+      expect(draft().wholeMoveCovered).toBe(change === 'accept' ? true : null)
+      expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation'])
+    },
+  )
+
+  it.each(['analyze', 'price', 'schedule', 'quotes'] as const)(
+    'accepting a %s action hint and prose never executes an operation',
+    async (action) => {
+      const fetch = api((path) =>
+        path === '/api/conversation'
+          ? Promise.resolve(
+              Response.json(
+                packet(
+                  [{ type: 'request.action', action }],
+                  0,
+                  'Untrusted prose claiming a saved estimate and requested date.',
+                ),
+              ),
+            )
+          : undefined,
+      )
+      mount(ready())
+      send(`please ${action}`)
+      fireEvent.click(await screen.findByRole('button', { name: 'Accept suggestion' }))
+      expect(draft().requestedAction).toBe(action)
+      expect(draft()).toMatchObject({
+        revision: 0,
+        price: null,
+        estimateId: null,
+        scheduleResult: null,
+        quoteResult: null,
+        operations: {},
+      })
+      expect(screen.getByText(/use the explicit.*control/i)).toBeInTheDocument()
+      expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation'])
+    },
+  )
+
+  it('keeps a mixed detail/action batch pending until acceptance and expires its remaining suggestion', async () => {
+    const fetch = api((path) =>
+      path === '/api/conversation'
+        ? Promise.resolve(
+            Response.json(
+              packet([
+                { type: 'details.patch', patch: { from: 'New origin' } },
+                { type: 'request.action', action: 'analyze' },
+              ]),
+            ),
+          )
+        : undefined,
+    )
+    mount(ready())
+    send('change origin and analyze')
+    const [accept] = await screen.findAllByRole('button', { name: 'Accept suggestion' })
+    if (!accept) throw new Error('Missing suggestion control')
+    expect(draft().moveDetails.from).toBe('Boston, MA')
+    expect(draft().revision).toBe(0)
+    fireEvent.click(accept)
+    expect(draft().moveDetails.from).toBe('New origin')
+    expect(draft().requestedAction).toBeNull()
+    expect(screen.getByText(/suggestions expired/i)).toBeInTheDocument()
+    expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation'])
+  })
+
+  it('retrying a reply keeps its user message once and leaves a pending explicit analysis intact', async () => {
+    const pending = deferred<Response>()
+    let replies = 0
+    const fetch = api((path) => {
+      if (path === '/api/analyze') return pending.promise
+      if (path === '/api/conversation')
+        return Promise.resolve(
+          ++replies === 1
+            ? Response.json({ error: 'Unavailable', retryable: true }, { status: 502 })
+            : Response.json(packet([], 1, 'Use the existing analysis control.')),
+        )
+      return undefined
+    })
+    mount(ready())
+    fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
+    send('synthetic question during analysis')
+    const operations = draft().operations
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry reply' }))
+    await screen.findByText('Use the existing analysis control.')
+    expect(draft().operations).toEqual(operations)
+    expect(draft().messages.filter((message) => message.role === 'user')).toHaveLength(1)
+    expect(fetch.mock.calls.filter(([path]) => path === '/api/analyze')).toHaveLength(1)
+    const requests = fetch.mock.calls
+      .filter(([path]) => path === '/api/conversation')
+      .map(([, request]) => JSON.parse(request?.body as string))
+    expect(requests).toHaveLength(2)
+    expect(requests[0]).toEqual(requests[1])
+    await act(async () => pending.resolve(Response.json(analysis)))
+    expect(draft().analysis).toEqual(analysis)
+  })
+
+  it('validates packets at adapter ingress while leaving legacy chatApi compatible', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ ...packet(), receipt: 'private' }))
+      .mockResolvedValueOnce(Response.json({ reply: 'legacy', moveDetails: {}, finished: false }))
+    vi.stubGlobal('fetch', fetch)
+    await expect(conversationChatApi([], conversationSnapshot(ready()))).rejects.toThrow()
+    await expect(chatApi([])).resolves.toMatchObject({ reply: 'legacy', finished: false })
+    expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation', '/api/chat'])
   })
 
   it('blocks pricing while a selected photo is still uploading and supports failure/retry/removal without losing chat', async () => {
@@ -735,11 +1064,11 @@ describe('persistent estimator conversation', () => {
     let replies = 0
     const late = deferred<Response>()
     api((path) =>
-      path === '/api/chat'
+      path === '/api/conversation'
         ? ++replies === 1
           ? Promise.resolve(Response.json({}, { status: 503 }))
           : replies === 2
-            ? Promise.resolve(Response.json({ reply: 'Recovered', moveDetails: ready().moveDetails, finished: false }))
+            ? Promise.resolve(Response.json({ reply: 'Recovered', basedOnRevision: 0, proposals: [] }))
             : late.promise
         : undefined,
     )
@@ -752,9 +1081,7 @@ describe('persistent estimator conversation', () => {
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'another' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel reply' }))
-    await act(async () =>
-      late.resolve(Response.json({ reply: 'Too late', moveDetails: ready().moveDetails, finished: false })),
-    )
+    await act(async () => late.resolve(Response.json({ reply: 'Too late', basedOnRevision: 0, proposals: [] })))
     expect(screen.queryByText('Too late')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Message')).toBeEnabled()
   })
@@ -1015,7 +1342,7 @@ describe('persistent estimator conversation', () => {
     'follows the readable conversation anchor instead of trailing cards in %s',
     async (context) => {
       const pending = deferred<Response>()
-      api((path) => (path === '/api/chat' ? pending.promise : undefined))
+      api((path) => (path === '/api/conversation' ? pending.promise : undefined))
       vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(5000)
       vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300)
       vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
@@ -1067,7 +1394,7 @@ describe('persistent estimator conversation', () => {
       expect(log.scrollTop).toBe(1600)
       await act(async () =>
         pending.resolve(
-          Response.json({ reply: 'New synthetic reply', moveDetails: draft().moveDetails, finished: false }),
+          Response.json({ reply: 'New synthetic reply', basedOnRevision: draft().revision, proposals: [] }),
         ),
       )
       expect(log.scrollTop).toBe(1800)
@@ -1094,7 +1421,7 @@ describe('persistent estimator conversation', () => {
     'preserves a bottom-of-card-stack reader during %s, then resumes on explicit Send',
     async (change) => {
       const pending = deferred<Response>()
-      api((path) => (path === '/api/chat' ? pending.promise : undefined))
+      api((path) => (path === '/api/conversation' ? pending.promise : undefined))
       vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(5000)
       vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300)
       vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
@@ -1153,7 +1480,7 @@ describe('persistent estimator conversation', () => {
       expect(log.scrollTop).toBe(1600)
       await act(async () =>
         pending.resolve(
-          Response.json({ reply: 'Resumed synthetic reply', moveDetails: draft().moveDetails, finished: false }),
+          Response.json({ reply: 'Resumed synthetic reply', basedOnRevision: draft().revision, proposals: [] }),
         ),
       )
       expect(log.scrollTop).toBe(1800)

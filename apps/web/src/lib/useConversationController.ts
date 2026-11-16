@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { zChatApiResponse, zContact } from '../data/z-common/z-move-demo'
+import { zContact } from '../data/z-common/z-move-demo'
 import type { Contact, PublicMover } from '../data'
 import type {
   ConversationAction,
@@ -60,6 +60,7 @@ export function useConversationController(initial: () => ConversationSession = l
   const chatRequest = useRef<AbortController | null>(null)
   const [chatBusy, setChatBusy] = useState(false)
   const [chatFailed, setChatFailed] = useState(false)
+  const [suggestionsExpired, setSuggestionsExpired] = useState(false)
   const [uploads, setUploads] = useState<ConversationUpload[]>([])
   const uploadRef = useRef(uploads)
   const uploadCohort = useRef<{ sessionId: string; revision: number } | null>(null)
@@ -85,6 +86,13 @@ export function useConversationController(initial: () => ConversationSession = l
       setError('That update is stale or not ready. Check the current move manifest and try again.')
       return null
     }
+    if (
+      next.revision !== previous.revision &&
+      previous.pendingProposals.some(
+        (proposal) => action.type !== 'proposal.apply' || proposal.id !== action.proposalId,
+      )
+    )
+      setSuggestionsExpired(true)
     // Ref and storage update synchronously: repeat clicks and same-tick actions see the accepted revision.
     current.current = next
     setSession(next)
@@ -299,25 +307,46 @@ export function useConversationController(initial: () => ConversationSession = l
     setError(null)
     const snapshot = current.current // Original request revision, before any await.
     try {
-      const reply = zChatApiResponse.parse(
-        await conversationChatApi(snapshot.messages, conversationSnapshot(snapshot), request.signal),
-      )
+      const reply = await conversationChatApi(snapshot.messages, conversationSnapshot(snapshot), request.signal)
       if (!active.current || chatRequest.current !== request || current.current.sessionId !== snapshot.sessionId) return
-      if (current.current.revision !== snapshot.revision) {
-        setError('The move changed while the assistant replied. The stale reply was not applied.')
+      if (current.current.revision !== snapshot.revision || reply.basedOnRevision !== snapshot.revision) {
+        setChatFailed(true)
+        setError(
+          'The move changed while the assistant replied. The stale reply was not applied. Retry with the current manifest.',
+        )
         return
       }
-      apply(
-        { type: 'message.append', message: { id: id(), role: 'assistant', content: reply.reply } },
-        'agent',
-        snapshot.revision,
-      )
-      const patch = Object.fromEntries(
-        Object.entries(reply.moveDetails).filter(
-          ([key, value]) => value !== null && value !== snapshot.moveDetails[key as keyof typeof reply.moveDetails],
+      // Validate every reference against the captured state before exposing any part of the batch.
+      // Proposal additions and prose do not advance the domain revision.
+      const actions: ConversationAction[] = [
+        {
+          type: 'message.append',
+          message: { id: id(), role: 'assistant', content: reply.reply },
+          id: id(),
+          source: 'agent',
+          expectedRevision: snapshot.revision,
+        },
+        ...reply.proposals.map(
+          (proposal): ConversationAction => ({
+            type: 'proposal.add',
+            proposal,
+            id: id(),
+            source: 'agent',
+            expectedRevision: snapshot.revision,
+          }),
         ),
-      )
-      if (Object.keys(patch).length) apply({ type: 'details.patch', patch }, 'chat', snapshot.revision)
+      ]
+      let checked = current.current
+      for (const action of actions) {
+        const next = reduceConversation(checked, action)
+        if (next === checked) throw new Error('Invalid conversation proposal')
+        checked = next
+      }
+      for (const action of actions) dispatch(action)
+      setSuggestionsExpired(false)
+      const detail = reply.proposals.length === 1 ? reply.proposals[0] : undefined
+      if (detail?.command.type === 'details.patch' && snapshot.messages.at(-1)?.role === 'user')
+        apply({ type: 'proposal.apply', proposalId: detail.id }, 'chat', detail.expectedRevision)
     } catch {
       if (active.current && chatRequest.current === request) {
         setChatFailed(true)
@@ -463,6 +492,7 @@ export function useConversationController(initial: () => ConversationSession = l
     setSession(next)
     saveConversationSession(next)
     setError(null)
+    setSuggestionsExpired(false)
     setMovers([])
   }
   const retry = (operationId: string) => {
@@ -490,6 +520,7 @@ export function useConversationController(initial: () => ConversationSession = l
     busy,
     chatBusy,
     chatFailed,
+    suggestionsExpired,
     sendMessage,
     cancel,
     retryChat: turn,

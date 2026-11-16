@@ -14,7 +14,43 @@ import type {
 import { zPhotoAssessment, zVisionStatus } from '@/data'
 import { recordAiMode } from '@/lib/ai-mode-store'
 import type { PhotoRef } from '@/lib/estimate-session'
-import type { ConversationSnapshot } from '../data/z-common/z-conversation'
+import { z } from 'zod'
+import {
+  zConversationProposal,
+  zConversationRevision,
+  type ConversationSnapshot,
+} from '../data/z-common/z-conversation'
+
+/** Frontend-only ingress contract: never import the Functions parser or mock here. */
+export const zConversationResponse = z
+  .object({
+    reply: z.string().trim().min(1).max(3000),
+    basedOnRevision: zConversationRevision,
+    proposals: z.array(zConversationProposal).max(12),
+  })
+  .strict()
+  .superRefine((response, context) => {
+    const ids = new Set<string>()
+    let details = false
+    for (const proposal of response.proposals) {
+      if (ids.has(proposal.id) || proposal.expectedRevision !== response.basedOnRevision)
+        context.addIssue({ code: 'custom', message: 'Invalid proposal envelope' })
+      ids.add(proposal.id)
+      if (proposal.command.type === 'details.patch') {
+        const date = proposal.command.patch.date
+        if (
+          details ||
+          (date != null &&
+            (!/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+              !Number.isFinite(Date.parse(date)) ||
+              new Date(date).toISOString().slice(0, 10) !== date))
+        )
+          context.addIssue({ code: 'custom', message: 'Invalid detail proposal' })
+        details = true
+      }
+    }
+  })
+export type ConversationResponse = z.infer<typeof zConversationResponse>
 
 /**
  * API client for the estimator. Relative URLs are proxied to the Functions backend in dev and served
@@ -104,17 +140,17 @@ export function chatApi(
   return postJson<ChatApiResponse>('/api/chat', { messages, moveDetails }, { ai: true, signal })
 }
 
-/** Task 2 adapter: the legacy route ignores snapshot until Task 3's state-aware protocol lands. */
-export function conversationChatApi(
+/** Stateful conversation turns carry only the public snapshot and transcript. */
+export async function conversationChatApi(
   messages: ChatMessage[],
   snapshot: ConversationSnapshot,
   signal?: AbortSignal,
-): Promise<ChatApiResponse> {
-  return postJson<ChatApiResponse>(
-    '/api/chat',
-    { messages, moveDetails: snapshot.moveDetails, snapshot },
-    { ai: true, signal },
+): Promise<ConversationResponse> {
+  const response = zConversationResponse.parse(
+    await postJson<unknown>('/api/conversation', { messages, snapshot }, { ai: true, signal }),
   )
+  if (response.basedOnRevision !== snapshot.revision) throw new Error('Stale conversation response')
+  return response
 }
 
 /**

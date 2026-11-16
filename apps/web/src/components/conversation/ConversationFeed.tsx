@@ -81,29 +81,70 @@ export function ConversationFeed({
             Retry reply
           </Button>
         ) : null}
-        {session.pendingProposals.map((proposal) => (
-          <Panel key={proposal.id} className="mv-stack">
-            <Caption>Suggested update</Caption>
-            <p>
-              {proposal.command.type === 'details.patch'
-                ? 'Update the move details shown in this proposal.'
-                : proposal.command.type}
+        {controller.suggestionsExpired ||
+        session.pendingProposals.some((proposal) => proposal.expectedRevision !== session.revision) ? (
+          <Panel className="mv-stack">
+            <p role="status">
+              Earlier suggestions expired because the move changed. Refresh suggestions or send a new message.
             </p>
-            <pre className="conv-proposal">{JSON.stringify(proposal.command, null, 2)}</pre>
-            <div className="mv-actions">
-              <Button size="sm" onClick={() => controller.apply({ type: 'proposal.apply', proposalId: proposal.id })}>
-                Apply suggestion
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => controller.apply({ type: 'proposal.dismiss', proposalId: proposal.id })}
-              >
-                Dismiss suggestion
-              </Button>
-            </div>
+            <Button size="sm" disabled={controller.chatBusy} onClick={() => void controller.retryChat()}>
+              Refresh suggestions
+            </Button>
           </Panel>
-        ))}
+        ) : null}
+        {session.requestedAction ? (
+          <p role="status">
+            Use the explicit{' '}
+            {session.requestedAction === 'analyze'
+              ? 'photo analysis'
+              : session.requestedAction === 'price'
+                ? 'Confirm inventory and get estimate'
+                : session.requestedAction === 'schedule'
+                  ? 'Request this date'
+                  : 'Send quote requests'}{' '}
+            control below. Accepting a suggestion does not run it.
+          </p>
+        ) : null}
+        {session.pendingProposals
+          .filter((proposal) => proposal.expectedRevision === session.revision)
+          .map((proposal) => (
+            <Panel key={proposal.id} className="mv-stack">
+              <Caption>Suggested update</Caption>
+              <p>
+                {proposal.command.type === 'details.patch'
+                  ? 'Update the move details shown in this proposal.'
+                  : proposal.command.type}
+              </p>
+              <pre className="conv-proposal">{JSON.stringify(proposal.command, null, 2)}</pre>
+              <div className="mv-actions">
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    controller.apply(
+                      { type: 'proposal.apply', proposalId: proposal.id },
+                      'inline',
+                      proposal.expectedRevision,
+                    )
+                  }
+                >
+                  Accept suggestion
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() =>
+                    controller.apply(
+                      { type: 'proposal.dismiss', proposalId: proposal.id },
+                      'inline',
+                      proposal.expectedRevision,
+                    )
+                  }
+                >
+                  Dismiss suggestion
+                </Button>
+              </div>
+            </Panel>
+          ))}
         <Panel as="section" className="mv-stack" aria-label="Confirm move details">
           <Caption accent="tape">The move we are estimating</Caption>
           <p>
