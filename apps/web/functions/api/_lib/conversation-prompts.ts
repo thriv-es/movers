@@ -17,10 +17,70 @@ export function conversationPrompt(
     tools: phase === 'interpret' ? [{ type: 'resolve_route' }] : [],
     nextAction: 'request_photos',
   }
+  const extractionSource = {
+    id: 'example-source',
+    role: 'user',
+    content: 'From Dizengoff 100, Tel Aviv to Bezalel 2, Raanana on 2027-01-11.',
+  }
+  const extractionExample = {
+    reply: 'Could you share photos of the rooms and large items?',
+    basedOnRevision: snapshot.revision,
+    proposals: [
+      {
+        id: 'local-1',
+        expectedRevision: snapshot.revision,
+        command: {
+          type: 'details.patch',
+          patch: { from: 'Dizengoff 100, Tel Aviv', to: 'Bezalel 2, Raanana', date: '2027-01-11' },
+        },
+      },
+    ],
+    facts: [
+      {
+        field: 'from',
+        sourceMessageId: extractionSource.id,
+        wording: 'Dizengoff 100, Tel Aviv',
+        uncertainty: 'certain',
+        precision: 'address',
+        correction: false,
+      },
+      {
+        field: 'to',
+        sourceMessageId: extractionSource.id,
+        wording: 'Bezalel 2, Raanana',
+        uncertainty: 'certain',
+        precision: 'address',
+        correction: false,
+      },
+      {
+        field: 'date',
+        sourceMessageId: extractionSource.id,
+        wording: '2027-01-11',
+        uncertainty: 'certain',
+        precision: 'exact',
+        correction: false,
+      },
+    ],
+    tools: [],
+    nextAction: 'request_photos',
+  }
   return `You are a moving-estimate intake interpreter. Understand the latest customer message using the current facts and recent conversation; do not use a scripted slot loop. Return ONLY a JSON object.
 ${phase === 'interpret' ? 'INTERPRET EXAMPLE: assume both useful endpoints are already accepted, the customer explicitly asks you to calculate driving distance, and no matching ready route or already-attempted unconfigured/unavailable result exists. Select the closed read-only tool, not an invented distance. This hypothetical example does not authorize tools when endpoints are missing or genuinely ambiguous.' : 'CONTINUATION EXAMPLE: actual route results are already supplied below. Facts are frozen; output no fact updates, no proposals and no further tools. Missing routing still allows photos.'}
 ${JSON.stringify(example)}
-${phase === 'continue' ? 'CONTINUE is read-only. The extraction/command definitions below describe INTERPRET only; do not apply them in this phase. Return proposals:[], tools:[], and no facts.\n' : ''}Proposals may be empty. IDs unique ASCII letters/digits/_/- (1-128 chars). Extract all supported fields into ONE details.patch. Preserve original language/wording via exact fact quotes, source message identity and uncertainty. Facts describe ONLY fields in this patch (or dateWindow for date:null). Do not invent evidence. Use uncertainty certain|uncertain, precision city|address|exact|window|unknown; correction true only for explicit replacement intent. nextAction is clarify_origin|clarify_destination|request_photos|review. Optional clarification is date|address_side|address_city|item|photo.
+${
+  phase === 'interpret'
+    ? `INTERPRET EXACT ENVELOPES: every proposals[] entry MUST have exactly id, expectedRevision, command. For details it is {"id":"unique-local-id","expectedRevision":${snapshot.revision},"command":{"type":"details.patch","patch":{"from":"supported endpoint"}}}. expectedRevision and basedOnRevision MUST equal the captured revision ${snapshot.revision}. For every other allowed command, put type and its fields INSIDE command, never directly on the proposal. Never omit the proposal envelope or replace it with a patch/field/value object.
+Every facts[] entry MUST contain ALL SIX keys with these exact names: {"field":"from","sourceMessageId":"actual latest user message id","wording":"exact substring of that message","uncertainty":"certain","precision":"address","correction":false}. field is from|to|date|dateWindow|distanceMiles|originFloor|destinationFloor|originElevator|destinationElevator. uncertainty is certain|uncertain; precision is city|address|exact|window|unknown; correction is a boolean and MUST be present. sourceMessageId MUST be the actual latest user id; wording MUST be an exact quote from that user's content. Do not substitute value/text/quote/source fields or add unknown keys.
+HYPOTHETICAL EXTRACTION EXAMPLE ONLY: the source below is invented public-location test data, not the current customer. Learn its envelope shapes; NEVER copy its addresses, date, source id or wording into the actual turn. Use only CURRENT_STATE_AND_MESSAGES_JSON for actual values and evidence. Extraction alone does not require a tool.
+EXAMPLE_SOURCE_MESSAGE_JSON
+${JSON.stringify(extractionSource)}
+END_EXAMPLE_SOURCE_MESSAGE_JSON
+EXAMPLE_EXTRACTION_DECISION_JSON
+${JSON.stringify(extractionExample)}
+END_EXAMPLE_EXTRACTION_DECISION_JSON
+`
+    : ''
+}${phase === 'continue' ? 'CONTINUE is read-only. The extraction/command definitions below describe INTERPRET only; do not apply them in this phase. Return proposals:[], tools:[], and no facts.\n' : ''}Proposals may be empty. IDs unique ASCII letters/digits/_/- (1-128 chars). Extract all supported fields into ONE details.patch. Preserve original language/wording via exact fact quotes, source message identity and uncertainty. Facts describe ONLY fields in this patch (or dateWindow for date:null). Do not invent evidence. Use uncertainty certain|uncertain, precision city|address|exact|window|unknown; correction true only for explicit replacement intent. nextAction is clarify_origin|clarify_destination|request_photos|review. Optional clarification is date|address_side|address_city|item|photo.
 Allowed commands:
 - details.patch: nonempty partial {from,to,date,distanceMiles,originFloor,destinationFloor,originElevator,destinationElevator}; null clears, omission retains. Floors are nonnegative integers: ground floor is 0. Unknown date stays null. Optional date-window wording is a dateWindow fact with precision window and date:null, NEVER an invented exact date. Exact dates YYYY-MM-DD only; clarify genuinely ambiguous numeric dates.
 - For a volunteered distance, select distanceMiles with a numeric placeholder; the SERVER reads the customer's explicitly stated km/mile/miles/meters and normalizes units. Never calculate, invent, zero-fill or REQUEST distance. Do not infer it from place names.

@@ -185,6 +185,16 @@ describe('conversation evaluator opt-in and privacy boundaries', () => {
   it.each([
     { from: null, to: null, text: 'Please add room photos.', want: false },
     { from: 'Springfield', to: 'Springfield', text: 'Please add room photos.', want: false },
+    { from: 'Springfield', to: 'Springfield', text: 'Please share photos of the rooms at each address.', want: false },
+    { from: 'Springfield', to: 'Springfield', text: 'Could you share photos at the pickup address?', want: false },
+    { from: 'Springfield', to: 'Springfield', text: 'Which photos show each address?', want: false },
+    { from: 'Springfield', to: 'Springfield', text: 'Please provide pictures of both cities.', want: false },
+    {
+      from: 'Springfield',
+      to: 'Springfield',
+      text: 'Please specify the state or country for each Springfield. Room photos can come now.',
+      want: true,
+    },
     { from: 'Springfield', to: 'Springfield', text: 'Which state or country is each Springfield in?', want: true },
     {
       from: 'Springfield',
@@ -238,6 +248,15 @@ describe('conversation evaluator opt-in and privacy boundaries', () => {
   it.each([
     { text: 'What is your move date? You can add photos later.', want: false },
     { text: 'Please provide a move date before adding photos.', want: false },
+    { text: 'Please provide a move date so we can add photos later.', want: false },
+    { text: 'Please share the move date later before we can continue with photos.', want: false },
+    { text: 'You can provide the date later so we can add photos.', want: false },
+    { text: 'A move date is required before photos can be added later.', want: false },
+    { text: 'Update the move date before we can add photos later.', want: false },
+    { text: 'It is optional to provide a date later. Please add photos now.', want: true },
+    { text: 'No move date is required. Please add photos now.', want: true },
+    { text: 'You can share the date later if you learn it. Please add photos now.', want: true },
+    { text: 'Please add photos now. You may update the move date whenever you know it.', want: true },
     { text: 'When are you moving? Room photos can follow.', want: false },
     { text: 'Tell me which day you move; photos can follow.', want: false },
     { text: 'Do you have a moving date yet? Please add photos.', want: false },

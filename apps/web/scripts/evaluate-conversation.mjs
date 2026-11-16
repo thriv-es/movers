@@ -135,24 +135,52 @@ function demandsOptionalDetail(text) {
       )
     )
       return true
+    const requirement = /\b(?:date|day|street|address)\b.{0,30}\b(?:required|needed|mandatory|necessary)\b/i.exec(
+      clause,
+    )
     if (
-      /\b(?:later|whenever|if you|when you know|optional|not required|no need|don.t need|do not need|not needed)\b/i.test(
+      requirement &&
+      !/\b(?:not|isn.t|never)\b/i.test(requirement[0]) &&
+      !/\bno\s+(?:move\s+)?$/i.test(clause.slice(0, requirement.index))
+    )
+      return true
+    const demand =
+      /\b(?:provide|share|tell me|confirm|choose|pick|enter|set|update|need|require|must)\b.{0,50}\b(?:date|day|street|address)\b/i.exec(
+        clause,
+      )
+    if (!demand) return false
+    // A negation must govern this demand. A deferral word elsewhere does not cancel a prerequisite.
+    const before = clause.slice(0, demand.index)
+    if (/\b(?:no|not|don.t|do not)\s+(?:really\s+)?$/i.test(before)) return false
+    if (/\b(?:before|first|so (?:we|you|i)|in order to|must|need|require|required)\b/i.test(clause)) return true
+    return !(
+      /\boptional\s+to\s*$/i.test(before) ||
+      /\b(?:if you (?:learn|know|have|decide)|when you (?:know|learn|decide)|whenever you|you (?:can|may|could))\b/i.test(
         clause,
       )
     )
-      return false
-    return /\b(?:provide|share|tell me|confirm|choose|pick|enter|set|need|require|must)\b.{0,50}\b(?:date|day|street|address)\b/i.test(
-      clause,
-    )
   })
 }
-const usefulAmbiguityResponse = (text) =>
-  /\b(?:state|country|region|city|address|which springfield|multiple springfields|ambiguous|disambiguat\w*)\b/i.test(
-    text,
-  ) &&
-  /\?|\b(?:which|clarify|provide|share|specify|ambiguous|several|multiple|different|uncertain|disambiguat\w*)\b/i.test(
-    text,
-  )
+function usefulAmbiguityResponse(text) {
+  return (text.match(/[^.!?;]+[.!?;]?/g) ?? []).some((clause) => {
+    // The request's object must be geography, not photos that merely happen to mention an address.
+    const clarification =
+      /\b(?:which|what|provide|share|specify|clarify|confirm|tell me|need)\s+(?:(?!photos?\b|pictures?\b|images?\b)\w+\s+){0,6}(?:states?|countr(?:y|ies)|regions?|cit(?:y|ies)|address(?:es)?|springfields?)\b/i.test(
+        clause,
+      )
+    const alternatives =
+      /\b(?:several|multiple|different)\s+(?:(?!photos?\b|pictures?\b|images?\b|rooms?\b)\w+\s+){0,3}(?:springfields?|cities|locations?|endpoints?)\b/i.test(
+        clause,
+      )
+    const uncertainty =
+      /\b(?:springfields?|cit(?:y|ies)|locations?|endpoints?)\s+(?:is|are|may be|can be|could be|remains?)\s+(?:ambiguous|uncertain|unclear)\b|\b(?:uncertain|unclear|not sure)\s+(?:about\s+)?which\s+(?:springfield|city|location|state|country)\b/i.test(
+        clause,
+      )
+    const disambiguation =
+      /\bdisambiguat\w*\b/i.test(clause) && /\b(?:state|country|region|city|springfield)\b/i.test(clause)
+    return clarification || alternatives || uncertainty || disambiguation
+  })
+}
 const asksDistance = (text) =>
   /(?:how (?:many|far)|what(?:'s| is)|share|provide|tell me|roughly|estimate).{0,55}(?:distance|miles|kilomet|\bkm\b)|(?:distance|miles|kilomet).{0,30}\?/i.test(
     text,
