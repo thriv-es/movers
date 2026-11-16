@@ -1,5 +1,6 @@
 import type { AnalysisResult, ChatMessage, Contact, DetectedItem, MoveDetails, Price, ReviewCoverage } from '@/data'
 import { EMPTY_MOVE_DETAILS } from '@/data'
+export interface PhotoRef { url: string; receipt: string | null }
 
 /**
  * The customer's progress through the estimator, kept in sessionStorage so a refresh or a phone
@@ -10,8 +11,8 @@ export type EstimateStep = 'chat' | 'details' | 'upload' | 'review' | 'estimate'
 
 export const ESTIMATE_STEPS: EstimateStep[] = ['chat', 'details', 'upload', 'review', 'estimate', 'schedule']
 
-/** Bump when the shape changes; v3 drafts are migrated below. */
-export const SESSION_VERSION = 4
+/** Bump when the shape changes; v3/v4 drafts are migrated below. */
+export const SESSION_VERSION = 5
 
 export const SESSION_KEY = 'movers.estimate'
 
@@ -24,12 +25,16 @@ export const EMPTY_FOLLOW_UPS: FollowUpAnswers = { garage: null, closets: null, 
 
 export interface EstimateSession {
   version: number
+  sessionId: string
   step: EstimateStep
   messages: ChatMessage[]
   moveDetails: MoveDetails
   chatFinished: boolean
   /** Public URLs of the uploaded (or bundled sample) photos. */
   photoUrls: string[]
+  photoRefs: PhotoRef[]
+  /** Legacy own-photo thumbnails need new uploads before analysis. */
+  needsPhotoReupload: boolean
   analysis: AnalysisResult | null
   /** The inventory as the customer confirmed it; starts as the detected items. */
   items: DetectedItem[]
@@ -44,11 +49,14 @@ export interface EstimateSession {
 
 export const EMPTY_SESSION: EstimateSession = {
   version: SESSION_VERSION,
+  sessionId: crypto.randomUUID(),
   step: 'chat',
   messages: [],
   moveDetails: EMPTY_MOVE_DETAILS,
   chatFinished: false,
   photoUrls: [],
+  photoRefs: [],
+  needsPhotoReupload: false,
   analysis: null,
   items: [],
   followUps: EMPTY_FOLLOW_UPS,
@@ -91,39 +99,58 @@ function isStep(value: unknown): value is EstimateStep {
   return typeof value === 'string' && (ESTIMATE_STEPS as string[]).includes(value)
 }
 
-/**
- * Reads a saved session. v3 drafts keep the inventory and photos but must be repriced after review;
- * unsupported versions and invalid steps are discarded.
- */
+export function newSession(): EstimateSession {
+  return { ...EMPTY_SESSION, sessionId: crypto.randomUUID() }
+}
+
+/** Reads a saved session; legacy own-photo URLs remain visible but never become verified refs. */
 export function loadSession(store: StorageLike | null = storage()): EstimateSession {
-  if (!store) return EMPTY_SESSION
+  if (!store) return newSession()
   const raw = store.getItem(SESSION_KEY)
-  if (!raw) return EMPTY_SESSION
+  if (!raw) return newSession()
   try {
     const parsed = JSON.parse(raw) as Partial<EstimateSession> | null
     if (!parsed || typeof parsed !== 'object' || !isStep(parsed.step)) {
       store.removeItem(SESSION_KEY)
-      return EMPTY_SESSION
+      return newSession()
     }
-    if (parsed.version === 3) {
+    if (parsed.version === 3 || parsed.version === 4) {
+      const photoUrls = Array.isArray(parsed.photoUrls) ? parsed.photoUrls.filter((url): url is string => typeof url === 'string') : []
+      const sample = parsed.sample === true
+      const needsPhotoReupload = !sample && (photoUrls.length > 0 || !!parsed.analysis || !!parsed.price || parsed.step === 'review' || parsed.step === 'estimate' || parsed.step === 'schedule')
       return {
         ...EMPTY_SESSION,
         ...parsed,
         version: SESSION_VERSION,
-        step: parsed.analysis ? 'review' : 'upload',
-        price: null,
-        estimateId: null,
-        wholeMoveCovered: null,
+        sessionId: crypto.randomUUID(),
+        photoUrls,
+        photoRefs: sample ? photoUrls.map((url) => ({ url, receipt: null })) : [],
+        needsPhotoReupload,
+        ...(needsPhotoReupload ? {
+          step: 'upload' as const,
+          analysis: null,
+          items: [],
+          followUps: { ...EMPTY_FOLLOW_UPS },
+          wholeMoveCovered: null,
+          price: null,
+          estimateId: null,
+          contact: null,
+        } : parsed.version === 3 ? {
+          step: parsed.analysis ? 'review' as const : 'upload' as const,
+          price: null,
+          estimateId: null,
+          wholeMoveCovered: null,
+        } : {}),
       }
     }
     if (parsed.version !== SESSION_VERSION) {
       store.removeItem(SESSION_KEY)
-      return EMPTY_SESSION
+      return newSession()
     }
     return { ...EMPTY_SESSION, ...parsed, version: SESSION_VERSION }
   } catch {
     store.removeItem(SESSION_KEY)
-    return EMPTY_SESSION
+    return newSession()
   }
 }
 
@@ -143,11 +170,12 @@ export function clearSession(store: StorageLike | null = storage()): void {
 /** A fresh session preloaded with the sample move. */
 export function sampleSession(origin: string): EstimateSession {
   return {
-    ...EMPTY_SESSION,
+    ...newSession(),
     step: 'upload',
     chatFinished: true,
     moveDetails: SAMPLE_MOVE_DETAILS,
     photoUrls: SAMPLE_PHOTO_PATHS.map((path) => `${origin}${path}`),
+    photoRefs: SAMPLE_PHOTO_PATHS.map((path) => ({ url: `${origin}${path}`, receipt: null })),
     sample: true,
   }
 }

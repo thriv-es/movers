@@ -12,12 +12,13 @@ import { PageSeo } from '@/components/seo'
 import { CONFIG } from '@/config'
 import type { AnalysisResult, ChatMessage, Contact, DetectedItem, MoveDetails, Price } from '@/data'
 import {
-  EMPTY_SESSION,
   EMPTY_FOLLOW_UPS,
   ESTIMATE_STEPS,
   type EstimateStep as StepKey,
   type FollowUpKey,
+  type PhotoRef,
   loadSession,
+  newSession,
   sampleSession,
 } from '@/lib/estimate-session'
 import { canonicalItemType } from '@/lib/item-aliases'
@@ -83,9 +84,11 @@ export default function EstimatePage(): JSX.Element {
   }, [session.analysis])
 
   const onPhotosChange = useCallback(
-    (photoUrls: string[]) =>
+    (photoRefs: PhotoRef[], legacyUrls: string[]) =>
       update({
-        photoUrls,
+        photoRefs,
+        photoUrls: [...legacyUrls, ...photoRefs.map((ref) => ref.url)],
+        needsPhotoReupload: legacyUrls.length > 0,
         analysis: null,
         items: [],
         followUps: { ...EMPTY_FOLLOW_UPS },
@@ -142,13 +145,15 @@ export default function EstimatePage(): JSX.Element {
 
   const onScheduled = useCallback((contact: Contact) => update({ contact }), [update])
 
-  const startOver = useCallback(() => reset(EMPTY_SESSION), [reset])
+  const startOver = useCallback(() => reset(newSession()), [reset])
   const startSample = useCallback(() => reset(sampleSession(window.location.origin)), [reset])
   const useOwnPhotos = useCallback(
     () =>
       update({
         sample: false,
         photoUrls: [],
+        photoRefs: [],
+        needsPhotoReupload: false,
         analysis: null,
         items: [],
         followUps: { ...EMPTY_FOLLOW_UPS },
@@ -179,7 +184,11 @@ export default function EstimatePage(): JSX.Element {
       case 'upload':
         return (
           <UploadStep
+            key={session.sample ? 'sample' : 'own'}
             photoUrls={session.photoUrls}
+            photoRefs={session.photoRefs}
+            sessionId={session.sessionId}
+            needsPhotoReupload={session.needsPhotoReupload}
             sample={session.sample}
             hasAnalysis={session.analysis !== null}
             confirmChange={confirmPhotoChange}

@@ -3,14 +3,18 @@ import { type ChangeEvent, useEffect, useRef, useState } from 'react'
 import type { AnalysisResult } from '@/data'
 import { analyzeApi, uploadImage } from '@/lib/api-client'
 import { downscaleImage } from '@/lib/image-downscale'
+import type { PhotoRef } from '@/lib/estimate-session'
 
 interface UploadStepProps {
   photoUrls: string[]
+  photoRefs: PhotoRef[]
+  sessionId: string
+  needsPhotoReupload: boolean
   sample: boolean
   hasAnalysis: boolean
   /** Asked before a change that would discard an existing analysis; false cancels the change. */
   confirmChange: () => boolean
-  onPhotosChange: (urls: string[]) => void
+  onPhotosChange: (refs: PhotoRef[], legacyUrls: string[]) => void
   onAnalyzed: (analysis: AnalysisResult) => void
   onUseOwnPhotos: () => void
   onUseSample: () => void
@@ -27,7 +31,7 @@ interface PhotoCard {
   objectUrl: string | null
   status: PhotoStatus
   progress: number
-  url: string | null
+  ref: PhotoRef | null
   error: string | null
 }
 
@@ -38,14 +42,14 @@ let cardSeq = 0
 /** Uploaded files are stored as `<uuid>-<original name>`; show the original name. */
 const UPLOAD_PREFIX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i
 
-const fromUrl = (url: string): PhotoCard => ({
+const fromUrl = (url: string, ref: PhotoRef | null): PhotoCard => ({
   id: `saved-${cardSeq++}`,
   name: decodeURIComponent(url.split('/').pop() ?? 'photo').replace(UPLOAD_PREFIX, ''),
   src: url,
   objectUrl: null,
   status: 'done',
   progress: 100,
-  url,
+  ref,
   error: null,
 })
 
@@ -58,6 +62,9 @@ const SAMPLE_LABELS: Record<string, string> = {
 /** Step 3: photos from the phone camera or library, each downscaled, uploaded with progress and removable. */
 export function UploadStep({
   photoUrls,
+  photoRefs,
+  sessionId,
+  needsPhotoReupload,
   sample,
   hasAnalysis,
   confirmChange,
@@ -67,7 +74,9 @@ export function UploadStep({
   onUseSample,
   onBack,
 }: UploadStepProps): JSX.Element {
-  const [cards, setCards] = useState<PhotoCard[]>(() => photoUrls.map(fromUrl))
+  const [cards, setCards] = useState<PhotoCard[]>(() =>
+    photoUrls.map((url) => fromUrl(url, photoRefs.find((ref) => ref.url === url) ?? null)),
+  )
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
@@ -84,12 +93,18 @@ export function UploadStep({
 
   const publish = (next: PhotoCard[]) => {
     setCards(next)
-    const urls = next.flatMap((card) => (card.url ? [card.url] : []))
-    if (urls.join('\n') !== photoUrls.join('\n')) onPhotosChange(urls)
+    const refs = next.flatMap((card) => (card.ref ? [card.ref] : []))
+    const legacyUrls = next.flatMap((card) => (card.status === 'done' && !card.ref ? [card.src] : []))
+    if (JSON.stringify(refs) !== JSON.stringify(photoRefs) ||
+      JSON.stringify([...legacyUrls, ...refs.map((ref) => ref.url)]) !== JSON.stringify(photoUrls)) {
+      onPhotosChange(refs, legacyUrls)
+    }
   }
 
   const patch = (id: string, change: Partial<PhotoCard>) => {
-    const next = cardsRef.current.map((card) => (card.id === id ? { ...card, ...change } : card))
+    const next = cardsRef.current
+      .filter((card) => !change.ref || card.ref || card.objectUrl)
+      .map((card) => (card.id === id ? { ...card, ...change } : card))
     cardsRef.current = next
     publish(next)
   }
@@ -98,7 +113,7 @@ export function UploadStep({
     const files = Array.from(event.target.files ?? [])
     event.target.value = ''
     if (files.length === 0) return
-    const room = MAX_PHOTOS - cardsRef.current.length
+    const room = MAX_PHOTOS - (needsPhotoReupload ? cardsRef.current.filter((card) => card.ref || card.objectUrl).length : cardsRef.current.length)
     if (room <= 0) {
       setError(`Up to ${MAX_PHOTOS} photos per estimate.`)
       return
@@ -113,7 +128,7 @@ export function UploadStep({
         objectUrl,
         status: 'preparing',
         progress: 0,
-        url: null,
+        ref: null,
         error: null,
       }
     })
@@ -128,8 +143,8 @@ export function UploadStep({
         try {
           const prepared = await downscaleImage(file)
           patch(card.id, { status: 'uploading' })
-          const url = await uploadImage(prepared, (percent) => patch(card.id, { progress: percent }))
-          patch(card.id, { status: 'done', progress: 100, url })
+          const ref = await uploadImage(prepared, sessionId, (percent) => patch(card.id, { progress: percent }))
+          patch(card.id, { status: 'done', progress: 100, ref })
         } catch (caught) {
           patch(card.id, { status: 'error', error: caught instanceof Error ? caught.message : 'Upload failed' })
         }
@@ -146,8 +161,11 @@ export function UploadStep({
     publish(next)
   }
 
+  const usable = (ref: PhotoRef | null): ref is PhotoRef =>
+    !!ref && (sample || (typeof ref.receipt === 'string' && ref.receipt.length > 0))
+
   const analyze = async () => {
-    const urls = cards.flatMap((card) => (card.url ? [card.url] : []))
+    const urls = cards.flatMap((card) => (usable(card.ref) ? [card.ref.url] : []))
     if (urls.length === 0) return
     setAnalyzing(true)
     setError(null)
@@ -160,7 +178,7 @@ export function UploadStep({
     }
   }
 
-  const ready = cards.filter((card) => card.status === 'done')
+  const ready = cards.filter((card) => card.status === 'done' && usable(card.ref))
   const pending = cards.some((card) => card.status === 'preparing' || card.status === 'uploading')
 
   return (
@@ -168,6 +186,9 @@ export function UploadStep({
       <div className="mv-row est-upload__head">
         <Caption accent="green">{sample ? 'Sample photos' : 'Photograph each room'}</Caption>
       </div>
+      {needsPhotoReupload ? (
+        <p className="est-error" role="alert">Re-upload your photos to continue. Your previous photos are shown for reference only.</p>
+      ) : null}
       {sample ? (
         <p className="mv-lede">Three rooms of a two-bedroom flat. Run the analysis to see what the model spots.</p>
       ) : (

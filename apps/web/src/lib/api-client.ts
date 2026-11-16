@@ -11,6 +11,7 @@ import type {
   QuoteRequestRecord,
 } from '@/data'
 import { recordAiMode } from '@/lib/ai-mode-store'
+import type { PhotoRef } from '@/lib/estimate-session'
 
 /**
  * API client for the estimator. Relative URLs are proxied to the Functions backend in dev and served
@@ -55,11 +56,12 @@ export function chatApi(messages: ChatMessage[], moveDetails?: Partial<MoveDetai
 }
 
 /**
- * Uploads one photo and returns its public URL. One request per photo so each card can show its own progress.
+ * Uploads one photo and returns its session-bound receipt. One request per photo preserves card progress.
  */
-export function uploadImage(file: File, onProgress?: (percent: number) => void): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
+export function uploadImage(file: File, sessionId: string, onProgress?: (percent: number) => void): Promise<PhotoRef> {
+  return new Promise<PhotoRef>((resolve, reject) => {
     const form = new FormData()
+    form.append('sessionId', sessionId)
     form.append('images', file)
     const xhr = new XMLHttpRequest()
     xhr.open('POST', '/api/images/upload')
@@ -80,11 +82,13 @@ export function uploadImage(file: File, onProgress?: (percent: number) => void):
         return
       }
       try {
-        const urls = JSON.parse(xhr.responseText) as string[]
-        const url = urls[0]
-        if (!url) throw new Error('Upload returned no URL')
+        const body = JSON.parse(xhr.responseText) as { uploads?: PhotoRef[] }
+        const ref = body.uploads?.[0]
+        if (!ref || typeof ref.url !== 'string' || typeof ref.receipt !== 'string' || !ref.receipt) {
+          throw new Error('Upload returned no photo receipt')
+        }
         onProgress?.(100)
-        resolve(url)
+        resolve(ref)
       } catch (error) {
         reject(error instanceof Error ? error : new Error('Upload returned an unexpected response'))
       }

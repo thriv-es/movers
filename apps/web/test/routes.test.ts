@@ -10,6 +10,7 @@ import type { Bindings } from '../functions/api/_lib/types'
 import { sampleCacheKey } from '../functions/api/_lib/sample-cache'
 import analyze from '../functions/api/_routes/analyze'
 import chat from '../functions/api/_routes/chat'
+import images from '../functions/api/_routes/images'
 import price from '../functions/api/_routes/price'
 
 const MODE_HEADER = 'x-movers-ai-mode'
@@ -57,6 +58,18 @@ beforeEach(() => {
 })
 
 afterEach(() => vi.restoreAllMocks())
+
+describe('photo upload availability', () => {
+  it('returns 503 without D1 instead of creating an unverified object', async () => {
+    const form = new FormData()
+    form.set('sessionId', '11111111-1111-4111-8111-111111111111')
+    form.set('images', new File(['photo'], 'room.jpg', { type: 'image/jpeg' }))
+    const put = vi.fn()
+    const res = await images.request('/upload', { method: 'POST', body: form }, env({ MOVERS_BUCKET: { put } }))
+    expect(res.status).toBe(503)
+    expect(put).not.toHaveBeenCalled()
+  })
+})
 
 describe('local development with no AI credentials (offline mock)', () => {
   it('walks chat -> analyze -> price, labelling every answer as mock', async () => {
