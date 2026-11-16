@@ -1,0 +1,174 @@
+import { z } from 'zod'
+import { type MoveDetails, zMoveDetails, zPhotoInventory } from '../../../src/data'
+import { runVision } from './ai-client'
+import { type AiMode, resolveRole } from './ai-mode'
+import { type ModelAnalysis, mergeAnalyses, parseModelAnalysis } from './analysis-merge'
+import { mockAnalysisReply } from './mock'
+import type { LinkedPhoto } from './photo-links'
+import { photoAssessmentPrompt } from './prompts'
+import { withSampleCache } from './sample-cache'
+import type { Bindings } from './types'
+
+export type PhotoVerdict = 'relevant' | 'unrelated' | 'uncertain'
+export interface PhotoAssessment {
+  url: string
+  status: PhotoVerdict | 'unlinked' | 'unavailable'
+  reason: string
+  candidates?: ModelAnalysis
+}
+export interface VisionAssessment {
+  analysis: ModelAnalysis
+  photos: PhotoAssessment[]
+  mode: AiMode
+  configRevision: number
+  cached?: boolean
+}
+
+export class AnalysisFormatError extends Error {
+  constructor() {
+    super('Photo assessment format invalid after retry')
+  }
+}
+export class NoUsableInventoryError extends Error {
+  constructor(public readonly photos: PhotoAssessment[]) {
+    super('No usable moving inventory')
+  }
+}
+
+const envelope = z
+  .object({
+    verdict: z.enum(['relevant', 'unrelated', 'uncertain']),
+    reason: z.string().trim().min(1).max(500),
+    inventory: z.unknown().optional(),
+  })
+  .strict()
+interface AssessedPhoto {
+  verdict: PhotoVerdict
+  inventory?: z.infer<typeof zPhotoInventory>
+}
+
+function parseAssessment(text: string): AssessedPhoto | null {
+  try {
+    const data = envelope.parse(JSON.parse(text))
+    if (data.verdict === 'unrelated') return { verdict: data.verdict }
+    const inventory = zPhotoInventory.parse(parseModelAnalysis(JSON.stringify(data.inventory)))
+    return { verdict: data.verdict, inventory: { ...inventory, items: mergeAnalyses([inventory]).items } }
+  } catch {
+    // Neither raw replies nor free-form model reasons are logged or returned: they may echo private details.
+    return null
+  }
+}
+
+const reasons: Record<PhotoVerdict, string> = {
+  relevant: 'Photo is consistent with the confirmed move; only detected movable items are included.',
+  unrelated: 'Photo does not show inventory relevant to the confirmed move and was excluded.',
+  uncertain: 'Photo relevance is uncertain. Candidate items were not added to the confirmed inventory.',
+}
+
+/** Link/byte validation belongs to the resolver and must finish before this function or any cache lookup. */
+export async function assessPhotos(
+  env: Bindings,
+  linked: LinkedPhoto[],
+  details: MoveDetails,
+  sample: boolean,
+): Promise<VisionAssessment> {
+  const eligible = linked.filter((photo) => photo.status === 'eligible' && photo.image)
+  if (!eligible.length) {
+    throw new NoUsableInventoryError(
+      linked.map(({ url, status, reason }) => ({
+        url,
+        status: status === 'eligible' ? 'unavailable' : status,
+        reason,
+      })),
+    )
+  }
+  // Parse again to restrict prompt/cache context to confirmed fields, even for non-route callers.
+  const confirmed = zMoveDetails.parse(details)
+  const role = await resolveRole(env, 'vision')
+  if (!role.available) throw new Error('Vision provider unavailable')
+  const prompt = photoAssessmentPrompt(confirmed)
+  const { value, cached } = await withSampleCache(
+    sample,
+    'analyze',
+    {
+      role: 'vision',
+      backend: role.mode,
+      model: role.selection.model,
+      configRevision: role.revision,
+      moveDetails: confirmed,
+      // Only server-validated bundled identities; no receipts, customer URLs, or images enter the cache.
+      photos: eligible.map((photo) => new URL(photo.url).pathname),
+    },
+    async () => {
+      const assessments: AssessedPhoto[] = new Array(eligible.length)
+      const modes: AiMode[] = new Array(eligible.length)
+      let next = 0
+      let failed = false
+      let failure: unknown
+      async function worker() {
+        while (!failed && next < eligible.length) {
+          const index = next++
+          const image = eligible[index]?.image
+          if (!image) continue
+          try {
+            let parsed: AssessedPhoto | null = null
+            for (let attempt = 0; attempt < 2; attempt++) {
+              const result = await runVision(
+                env,
+                prompt,
+                [image],
+                () =>
+                  JSON.stringify({
+                    verdict: 'relevant',
+                    reason: 'Offline demo inventory; not a relevance assessment.',
+                    inventory: JSON.parse(mockAnalysisReply(1)),
+                  }),
+                role,
+              )
+              modes[index] = result.mode
+              parsed = result.texts.length === 1 ? parseAssessment(result.texts[0] ?? '') : null
+              if (parsed) break
+            }
+            if (!parsed) throw new AnalysisFormatError()
+            assessments[index] = parsed
+          } catch (error) {
+            // Stop dequeuing, but drain the at most three in-flight calls before failing the entire batch.
+            if (!failed) failure = error
+            failed = true
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(3, eligible.length) }, worker))
+      if (failed) throw failure
+      return { assessments, mode: modes.includes('mock') ? ('mock' as const) : role.mode }
+    },
+    (value) =>
+      value.mode === role.mode &&
+      value.assessments.some((photo) => photo.verdict === 'relevant' && photo.inventory?.items.length),
+  )
+  let index = 0
+  const parts: ModelAnalysis[] = []
+  const photos: PhotoAssessment[] = linked.map((photo) => {
+    if (photo.status !== 'eligible' || !photo.image) {
+      return {
+        url: photo.url,
+        status: photo.status === 'eligible' ? 'unavailable' : photo.status,
+        reason: photo.reason,
+      }
+    }
+    const assessment = value.assessments[index++]
+    if (!assessment) throw new AnalysisFormatError()
+    if (assessment.verdict === 'relevant' && assessment.inventory?.items.length) parts.push(assessment.inventory)
+    return {
+      url: photo.url,
+      status: assessment.verdict,
+      reason:
+        value.mode === 'mock'
+          ? 'Offline demo data only; photo relevance has not been established.'
+          : reasons[assessment.verdict],
+      ...(assessment.verdict === 'uncertain' ? { candidates: assessment.inventory } : {}),
+    }
+  })
+  if (!parts.length) throw new NoUsableInventoryError(photos)
+  return { analysis: mergeAnalyses(parts), photos, mode: value.mode, configRevision: role.revision, cached }
+}

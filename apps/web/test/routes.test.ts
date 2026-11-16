@@ -262,7 +262,7 @@ describe('local development with no AI credentials (offline mock)', () => {
   })
 
   it('uses a new sample cache namespace after the analysis changes', async () => {
-    expect(await sampleCacheKey('analyze', { count: 1 })).toContain('/v4/analyze/')
+    expect(await sampleCacheKey('analyze', { count: 1 })).toContain('/v5/analyze/')
   })
 
   it('serves the sample move from cache on the second call (MOVERS-16)', async () => {
@@ -341,7 +341,13 @@ describe('photo linkage route boundary', () => {
         const url = (input as { messages: { content: { image_url?: { url: string } }[] }[] }).messages[0]?.content[1]
           ?.image_url?.url
         if (url !== validDataUrl) throw new Error('Malformed image reached provider')
-        return { response: JSON.stringify({ items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 100 }) }
+        return {
+          response: JSON.stringify({
+            verdict: 'relevant',
+            reason: 'Moving furniture',
+            inventory: { items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 100 },
+          }),
+        }
       })
       const get = vi.fn(async (key: string) =>
         key === 'b.png'
@@ -383,7 +389,11 @@ describe('photo linkage route boundary', () => {
   })
   it('preserves mixed exclusions in input order and sends only eligible bytes to AI without logging sensitive data', async () => {
     const run = vi.fn(async () => ({
-      response: JSON.stringify({ items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 100 }),
+      response: JSON.stringify({
+        verdict: 'relevant',
+        reason: 'Moving furniture',
+        inventory: { items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 100 },
+      }),
     }))
     const get = vi.fn(async (key: string) => (key === 'b.png' ? null : bucket.get()))
     const fetch = vi.fn()
@@ -446,9 +456,128 @@ describe('photo linkage route boundary', () => {
   })
 })
 
+describe('semantic photo route responses', () => {
+  it('returns all assessment statuses and only uncertain candidates without leaking model reason, details or receipts', async () => {
+    const answers = ['relevant', 'uncertain'].map((verdict) =>
+      JSON.stringify({
+        verdict,
+        reason: 'PRIVATE model echoed customer details',
+        inventory: {
+          items: [{ type: verdict === 'relevant' ? 'sofa' : 'chair', count: 1 }],
+          total_volume_cubic_feet: 80,
+          secret: 'PRIVATE',
+        },
+      }),
+    )
+    const AI = { run: vi.fn(async () => ({ response: answers.shift() })) }
+    const body = {
+      ...analyzeBody([
+        'http://localhost/api/images/a.png',
+        'http://localhost/api/images/b.png',
+        'https://outside.invalid/photo',
+      ]),
+      moveDetails: { ...EMPTY_MOVE_DETAILS, from: 'PRIVATE confirmed details' },
+      messages: [{ content: 'CHAT MUST NOT REACH VISION' }],
+    }
+    const res = await post(analyze, body, env({ ENV: 'preview', AI }))
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    const result = JSON.parse(text)
+    expect(result.items).toEqual([{ type: 'sofa', count: 1 }])
+    expect(result.photoAssessments.map((p: { status: string }) => p.status)).toEqual([
+      'relevant',
+      'uncertain',
+      'unlinked',
+    ])
+    expect(result.photoAssessments[1].candidates.items).toEqual([{ type: 'chair', count: 1 }])
+    expect(result.photoAssessments[0].candidates).toBeUndefined()
+    expect(text).not.toMatch(/PRIVATE|receipt/)
+    expect(JSON.stringify(AI.run.mock.calls)).not.toContain('CHAT MUST NOT REACH VISION')
+  })
+
+  it.each(['unrelated', 'uncertain', 'empty'])(
+    'returns retryable NO_USABLE_PHOTOS with %s assessments',
+    async (kind) => {
+      const AI = {
+        run: vi.fn(async () => ({
+          response: JSON.stringify({
+            verdict: kind === 'empty' ? 'relevant' : kind,
+            reason: 'PRIVATE',
+            inventory: { items: kind === 'empty' ? [] : [{ type: 'chair', count: 1 }], total_volume_cubic_feet: 0 },
+          }),
+        })),
+      }
+      const res = await post(analyze, analyzeBody(), env({ ENV: 'preview', AI }))
+      expect(res.status).toBe(400)
+      expect(await res.json()).toMatchObject({
+        code: 'NO_USABLE_PHOTOS',
+        photoAssessments: [{ status: kind === 'empty' ? 'relevant' : kind }],
+      })
+    },
+  )
+
+  it('returns sanitized 503 and safe statuses for explicitly selected provider failures', async () => {
+    const AI = {
+      run: vi.fn(async () => {
+        throw new Error('PRIVATE provider details')
+      }),
+    }
+    const res = await post(analyze, analyzeBody(), env({ AI_MODE: 'binding', AI }))
+    expect(res.status).toBe(503)
+    expect(res.headers.get(MODE_HEADER)).toBeNull()
+    const text = await res.text()
+    expect(text).not.toMatch(/PRIVATE|receipt/)
+    expect(JSON.parse(text)).toMatchObject({ photoAssessments: [{ status: 'unavailable' }] })
+    expect(AI.run).toHaveBeenCalledTimes(1)
+  })
+
+  it('separates sample cache by resolved vision backend, model, revision, details and canonical identities, pinning settings per request', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(png, { headers: { 'content-type': 'image/png' } })),
+    )
+    const run = vi.fn(async () => ({
+      response: JSON.stringify({
+        verdict: 'relevant',
+        reason: 'furniture',
+        inventory: { items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 80 },
+      }),
+    }))
+    let revision = 301
+    const roles = {
+      chat: { backend: 'binding', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' },
+      price: { backend: 'binding', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' },
+      vision: { backend: 'binding', model: '@cf/meta/llama-3.2-11b-vision-instruct' },
+    }
+    const read = vi.fn(async () => ({ revision, roles_json: JSON.stringify(roles) }))
+    const bindings = env({ AI: { run }, MOVERS_DB: { prepare: () => ({ first: read }) } })
+    const body = analyzeBody(['http://localhost/sample/bedroom.jpg', 'http://localhost/sample/kitchen.jpg'], true)
+    const first = await post(analyze, body, bindings)
+    expect(first.status).toBe(200)
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(run).toHaveBeenCalledTimes(2)
+    const hit = await post(analyze, body, bindings)
+    expect(hit.headers.get('x-movers-sample-cache')).toBe('hit')
+    revision++
+    expect((await post(analyze, body, bindings)).headers.get('x-movers-sample-cache')).toBeNull()
+    expect(run).toHaveBeenCalledTimes(4)
+    const changed = { ...body, moveDetails: { ...EMPTY_MOVE_DETAILS, from: 'confirmed new origin' } }
+    expect((await post(analyze, changed, bindings)).headers.get('x-movers-sample-cache')).toBeNull()
+    expect(run).toHaveBeenCalledTimes(6)
+    roles.vision.backend = 'gateway'
+    const unavailable = await post(analyze, body, bindings)
+    expect(unavailable.status).toBe(503)
+    expect(unavailable.headers.get('x-movers-sample-cache')).toBeNull()
+  })
+})
+
 describe('photo analysis through the Workers AI binding (one image per call)', () => {
   const inventory = (type: string, volume: number) =>
-    JSON.stringify({ items: [{ type, count: 1 }], total_volume_cubic_feet: volume, unseen_areas: ['garage'] })
+    JSON.stringify({
+      verdict: 'relevant',
+      reason: 'Moving furniture',
+      inventory: { items: [{ type, count: 1 }], total_volume_cubic_feet: volume, unseen_areas: ['garage'] },
+    })
 
   it('analyzes each photo separately, retries a photo whose answer is not JSON, and merges the inventories', async () => {
     const answers = [inventory('couch', 100), 'Sorry, I cannot see a kitchen here.', inventory('fridge', 60)]

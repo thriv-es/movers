@@ -31,10 +31,10 @@ function requireBinding(env: Bindings): Ai {
 }
 
 /** Workers AI returns `{ response }`; some models hand back already-parsed JSON instead of a string. */
-function readBindingText(output: unknown): string {
+function readBindingText(output: unknown, allowEmpty = false): string {
   const response = (output as { response?: unknown } | null)?.response
   const text = typeof response === 'string' ? response : response == null ? '' : JSON.stringify(response)
-  if (!text.trim()) throw new Error('Workers AI returned an empty response')
+  if (!allowEmpty && !text.trim()) throw new Error('Workers AI returned an empty response')
   return text
 }
 
@@ -116,6 +116,7 @@ export async function runVision(
   prompt: string,
   images: AiImage[],
   mock: () => string,
+  resolvedRole?: Awaited<ReturnType<typeof resolveRole>>,
 ): Promise<AiVisionResult> {
   const { value, mode } = await run(
     env,
@@ -155,11 +156,13 @@ export async function runVision(
               ],
               max_tokens: BINDING_MAX_TOKENS,
             })
-            return readBindingText(output)
+            // Empty vision replies are malformed assessments, so the caller owns their bounded retry.
+            return readBindingText(output, true)
           }),
         ),
     },
     () => [mock()],
+    resolvedRole,
   )
   return { texts: value, mode }
 }

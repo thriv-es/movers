@@ -1,56 +1,13 @@
 import { Hono } from 'hono'
 import type { Bindings } from '../_lib/types'
 import type { AnalysisResult } from '../../../src/data'
-import { zAnalysisResult, zAnalyzeRequest } from '../../../src/data'
-import { type AiImage, runVision } from '../_lib/ai-client'
-import { type ModelAnalysis, mergeAnalyses, parseModelAnalysis } from '../_lib/analysis-merge'
-import { mockAnalysisReply } from '../_lib/mock'
-import { IMAGE_ANALYSIS_PROMPT } from '../_lib/prompts'
-import { withSampleCache } from '../_lib/sample-cache'
+import { zAnalysisResult, zAnalyzeRequest, zPhotoAssessment } from '../../../src/data'
+import { AnalysisFormatError, NoUsableInventoryError, assessPhotos } from '../_lib/vision-assessment'
 import { resolvePhotoLinks } from '../_lib/photo-links'
 
 const analyze = new Hono<{ Bindings: Bindings }>()
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
-
-interface PhotoAnalysis {
-  analysis: ModelAnalysis
-  mode: string
-}
-
-/** A photo's answer was not the inventory JSON even after one retry. Thrown, so the sample cache never stores it. */
-class AnalysisFormatError extends Error {}
-
-/**
- * One vision call per photo (the model takes a single image), merged into one inventory. A photo whose answer is not
- * valid inventory JSON is asked once more; the model's output format is not deterministic.
- */
-async function analyzePhotos(env: Bindings, images: AiImage[]): Promise<PhotoAnalysis> {
-  const first = await runVision(env, IMAGE_ANALYSIS_PROMPT, images, () => mockAnalysisReply(images.length))
-  const parts = first.texts.map(tryParse)
-
-  // the mock answers once for all photos, so a retry only makes sense when there is one answer per photo
-  if (first.texts.length === images.length) {
-    for (const [index, part] of parts.entries()) {
-      if (part || !images[index]) continue
-      const retry = await runVision(env, IMAGE_ANALYSIS_PROMPT, [images[index]], () => mockAnalysisReply(1))
-      parts[index] = tryParse(retry.texts[0] ?? '')
-    }
-  }
-
-  const good = parts.filter((part): part is ModelAnalysis => part !== null)
-  if (good.length !== parts.length) throw new AnalysisFormatError(`${parts.length - good.length} photo(s) not analyzed`)
-  return { analysis: mergeAnalyses(good), mode: first.mode }
-}
-
-function tryParse(text: string): ModelAnalysis | null {
-  try {
-    return parseModelAnalysis(text)
-  } catch {
-    // Model output may contain customer information. Never log raw responses.
-    return null
-  }
-}
 
 analyze.post('/', async (c) => {
   try {
@@ -67,46 +24,52 @@ analyze.post('/', async (c) => {
     const { sessionId, photoRefs, moveDetails, sample } = parsed.data
     const linked = await resolvePhotoLinks(c.env, c.req.url, sessionId, photoRefs, sample === true)
     const photoLinkStatuses = linked.map(({ url, status, reason }) => ({ url, status, reason }))
-    const images = linked.flatMap((photo) => (photo.status === 'eligible' && photo.image ? [photo.image] : []))
-    if (images.length === 0) {
-      return c.json(
-        {
-          error: 'No usable photos. Re-upload your photos and analyze again.',
-          code: 'NO_USABLE_PHOTOS',
-          photoLinkStatuses,
-        },
-        400,
-      )
-    }
-
-    // Validation always runs before cache lookup. Never place receipts or customer URLs in the cache.
-    let value: PhotoAnalysis
-    let cached: boolean
+    // Validation always runs before role resolution and sample cache lookup.
+    let value: Awaited<ReturnType<typeof assessPhotos>>
     try {
-      ;({ value, cached } = await withSampleCache(
-        sample,
-        'analyze',
-        {
-          linkageVersion: 1,
-          sessionId,
-          photos: linked.filter((photo) => photo.status === 'eligible').map((photo) => new URL(photo.url).pathname),
-          moveDetails,
-        },
-        () => analyzePhotos(c.env, images),
-      ))
+      value = await assessPhotos(c.env, linked, moveDetails, sample === true)
     } catch (error) {
-      if (!(error instanceof AnalysisFormatError)) throw error
+      const photoAssessments =
+        error instanceof NoUsableInventoryError
+          ? error.photos
+          : linked.map((photo) => ({
+              url: photo.url,
+              status: photo.status === 'eligible' ? ('unavailable' as const) : photo.status,
+              reason:
+                photo.status === 'eligible'
+                  ? 'Photo assessment could not be completed. Please try again.'
+                  : photo.reason,
+            }))
+      if (error instanceof NoUsableInventoryError) {
+        return c.json(
+          {
+            error:
+              'No confirmed movable inventory found. Please upload clearer photos of the items being moved and try again.',
+            code: 'NO_USABLE_PHOTOS',
+            photoLinkStatuses,
+            photoAssessments,
+          },
+          400,
+        )
+      }
+      if (error instanceof AnalysisFormatError) {
+        return c.json(
+          {
+            error: "We couldn't analyze these images. Please try again with clearer photos of your items.",
+            code: 'ANALYSIS_FAILED',
+            photoLinkStatuses,
+            photoAssessments,
+          },
+          400,
+        )
+      }
       return c.json(
-        {
-          error: "We couldn't analyze these images. Please try uploading clearer photos of your items.",
-          code: 'ANALYSIS_FAILED',
-          photoLinkStatuses,
-        },
-        400,
+        { error: 'Photo analysis is temporarily unavailable. Please try again.', photoLinkStatuses, photoAssessments },
+        503,
       )
     }
     c.header('x-movers-ai-mode', value.mode)
-    if (cached) c.header('x-movers-sample-cache', 'hit')
+    if (value.cached) c.header('x-movers-sample-cache', 'hit')
 
     const llmData = value.analysis
 
@@ -136,6 +99,7 @@ analyze.post('/', async (c) => {
     const unseenAreas = (Array.isArray(llmData.unseen_areas) ? llmData.unseen_areas : []).map(str).filter(Boolean)
 
     const result: AnalysisResult = {
+      photoAssessments: zPhotoAssessment.array().parse(value.photos),
       photoLinkStatuses,
       items,
       totalVolumeCubicFeet: totalVol,

@@ -102,7 +102,31 @@ export const zPrice = z
   })
   .refine((p) => p.low <= p.total && p.total <= p.high, { message: 'low <= total <= high' })
 
+/** Model-shaped inventory for uncertain photos only; it is never part of confirmed inventory. */
+export const zPhotoInventory = z.object({
+  items: z.array(zDetectedItem),
+  total_volume_cubic_feet: z.number().finite().nonnegative(),
+  estimated_boxes_min: z.number().int().nonnegative().optional(),
+  estimated_boxes_max: z.number().int().nonnegative().optional(),
+  boxes_explanation: z.string().optional(),
+  special_handling: z.array(zSpecialHandling).optional(),
+  possible_duplicates: z.array(zPossibleDuplicate).optional(),
+  unseen_areas: z.array(z.string()).optional(),
+})
+
+export const zPhotoAssessment = z
+  .object({
+    url: z.string(),
+    status: z.enum(['relevant', 'unrelated', 'uncertain', 'unlinked', 'unavailable']),
+    reason: z.string(),
+    candidates: zPhotoInventory.optional(),
+  })
+  .refine((photo) => photo.candidates === undefined || photo.status === 'uncertain', {
+    message: 'Only uncertain photos can have candidates',
+  })
+
 export const zAnalysisResult = z.object({
+  photoAssessments: z.array(zPhotoAssessment).optional(),
   photoLinkStatuses: z
     .array(z.object({ url: z.string(), status: z.enum(['eligible', 'unlinked', 'unavailable']), reason: z.string() }))
     .optional(),
