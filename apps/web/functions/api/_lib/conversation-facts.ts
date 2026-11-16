@@ -7,13 +7,18 @@ import type { ChatMessage } from '../../../src/data/types/move-demo.types'
 
 type DetailCommand = Extract<ConversationCommand, { type: 'details.patch' }>
 export function volunteeredDistance(text: string): number | null {
-  const matches = [
-    ...text.matchAll(/(?<![-\d.])(\d+(?:\.\d+)?)\s*(km|kilometers?|kilometres?|miles?|meters?|metres?)\b/gi),
-  ]
-  if (matches.length !== 1) return null
-  const match = matches[0]
-  const value = Number(match?.[1])
-  const unit = match?.[2]?.toLowerCase() ?? ''
+  // Count ALL unit mentions before validating a complete token: never match a numeric suffix.
+  const units = [...text.matchAll(/(km|kilometers?|kilometres?|miles?|meters?|metres?)\b/gi)]
+  if (units.length !== 1) return null
+  const unitMatch = units[0]
+  const prefix = text.slice(0, unitMatch?.index).trimEnd()
+  const token = /\S+$/.exec(prefix)?.[0]
+  if (!token || !/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(token)) return null
+  const before = prefix.slice(0, -token.length)
+  if (/[\d.,+\-−]\s*$/.test(before)) return null
+  const value = Number(token.replaceAll(',', ''))
+  if (!Number.isFinite(value)) return null
+  const unit = unitMatch?.[1]?.toLowerCase() ?? ''
   return unit.startsWith('k') ? value / 1.609344 : /^mi/.test(unit) ? value : value / 1609.344
 }
 /** The interpreter selects facts; the server checks their source and owns units/address retention. */
@@ -30,7 +35,11 @@ export function validateDetailFacts(
   const facts = [...(command.facts ?? supplied)]
   if (facts.some((fact) => !source || fact.sourceMessageId !== source.id || !source.content.includes(fact.wording)))
     throw new Error('Invalid conversation output')
-  if (new Set(facts.map((fact) => fact.field)).size !== facts.length) throw new Error('Invalid conversation output')
+  if (
+    new Set(facts.map((fact) => fact.field)).size !== facts.length ||
+    facts.filter((fact) => fact.field === 'date' || fact.field === 'dateWindow').length > 1
+  )
+    throw new Error('Invalid conversation output')
   for (const field of Object.keys(patch) as (keyof typeof patch)[]) {
     let fact = facts.find((fact) => fact.field === field || (field === 'date' && fact.field === 'dateWindow'))
     if (!fact && source && source.content.trim().length <= 1000) {
@@ -59,7 +68,19 @@ export function validateDetailFacts(
       patch.distanceMiles = distance
     }
   }
-  const retained = facts.filter((fact) => (fact.field === 'dateWindow' ? 'date' in patch : fact.field in patch))
+  const route = snapshot.route
+  const endpoints = { ...snapshot.moveDetails, ...patch }
+  const preferRoute =
+    route?.status === 'ready' &&
+    route.precision === 'address' &&
+    route.from === endpoints.from &&
+    route.to === endpoints.to
+  if (preferRoute && 'distanceMiles' in patch) patch.distanceMiles = route.distanceMiles
+  const retained = facts.filter(
+    (fact) =>
+      (fact.field === 'dateWindow' ? 'date' in patch : fact.field in patch) &&
+      !(preferRoute && fact.field === 'distanceMiles'),
+  )
   if (!Object.keys(patch).length) return null
   return { type: 'details.patch', patch, ...(retained.length ? { facts: retained } : {}) }
 }

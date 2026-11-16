@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { runConversationAgent } from '../functions/api/_lib/conversation-runner'
 import { conversationSnapshot, createConversationSession, reduceConversation } from '../src/lib/conversation-state'
 const snap = () => conversationSnapshot(createConversationSession())
+const answer = (text: string) => ({ text, mode: 'binding' as const })
 function output(snapshot: ReturnType<typeof snap>, patch: Record<string, unknown> = {}, extra = {}) {
   return JSON.stringify({
     reply: 'Could you share photos of the rooms and large items?',
@@ -17,7 +18,8 @@ async function interpreted(content: string, patch: Record<string, unknown>, snap
   return runConversationAgent({
     messages: [{ id: 'user-one', role: 'user', content }],
     snapshot,
-    model: async () => output(snapshot, patch, extra),
+    model: async (request) =>
+      answer(request.phase === 'continue' ? output(request.snapshot) : output(snapshot, patch, extra)),
   })
 }
 describe('validated bounded conversation runner', () => {
@@ -73,17 +75,19 @@ describe('validated bounded conversation runner', () => {
       }),
     ).rejects.toThrow('Invalid conversation output')
     const model = vi.fn(async () =>
-      JSON.stringify({
-        reply: 'Photos?',
-        basedOnRevision: 0,
-        proposals: [
-          {
-            id: 'one',
-            expectedRevision: 0,
-            command: { type: 'details.patch', patch: { from: 'Haifa' }, route: { status: 'ready' } },
-          },
-        ],
-      }),
+      answer(
+        JSON.stringify({
+          reply: 'Photos?',
+          basedOnRevision: 0,
+          proposals: [
+            {
+              id: 'one',
+              expectedRevision: 0,
+              command: { type: 'details.patch', patch: { from: 'Haifa' }, route: { status: 'ready' } },
+            },
+          ],
+        }),
+      ),
     )
     await expect(runConversationAgent({ messages: [], snapshot: snap(), model })).rejects.toThrow()
     expect(model).toHaveBeenCalledTimes(2)
@@ -102,11 +106,11 @@ describe('validated bounded conversation runner', () => {
   it('rejects a patch without any user source instead of persisting an untraceable fact', async () => {
     const snapshot = snap()
     await expect(
-      runConversationAgent({ messages: [], snapshot, model: async () => output(snapshot, { from: 'Haifa' }) }),
+      runConversationAgent({ messages: [], snapshot, model: async () => answer(output(snapshot, { from: 'Haifa' })) }),
     ).rejects.toThrow('Invalid conversation output')
   })
   it('uses at most one malformed retry, with no raw output echo or provider-failure retry', async () => {
-    const model = vi.fn(async () => 'private invalid output')
+    const model = vi.fn(async () => answer('private invalid output'))
     await expect(runConversationAgent({ messages: [], snapshot: snap(), model })).rejects.toThrow(
       'Invalid conversation output',
     )
@@ -141,7 +145,9 @@ describe('validated bounded conversation runner', () => {
   it('integrates only backend route distance and leaves ambiguous/unconfigured routing nonblocking', async () => {
     const snapshot = snap()
     snapshot.moveDetails.from = 'Tel Aviv'
-    const noKey = await interpreted('moving to Raanana', { to: 'Raanana' }, snapshot)
+    const noKey = await interpreted('moving to Raanana', { to: 'Raanana' }, snapshot, {
+      tools: [{ type: 'resolve_route' }],
+    })
     expect(noKey.agent?.route).toMatchObject({ status: 'unconfigured' })
     expect(noKey.reply).toMatch(/photo/i)
     const fetcher = vi.fn(async () =>
@@ -157,7 +163,12 @@ describe('validated bounded conversation runner', () => {
       snapshot,
       key: 'key',
       fetcher,
-      model: async () => output(snapshot, { to: 'Springfield' }),
+      model: async (request) =>
+        answer(
+          request.phase === 'continue'
+            ? output(request.snapshot)
+            : output(snapshot, { to: 'Springfield' }, { tools: [{ type: 'resolve_route' }] }),
+        ),
     })
     expect(result.agent?.route).toMatchObject({ status: 'ambiguous' })
     expect(result.reply).toMatch(/photo/i)
@@ -183,7 +194,12 @@ describe('validated bounded conversation runner', () => {
         snapshot,
         key: 'key',
         fetcher,
-        model: async () => output(snapshot, { to: 'Bezalel 2, Raanana' }),
+        model: async (request) =>
+          answer(
+            request.phase === 'continue'
+              ? output(request.snapshot)
+              : output(snapshot, { to: 'Bezalel 2, Raanana' }, { tools: [{ type: 'resolve_route' }] }),
+          ),
       })
       expect(response.agent?.route).toMatchObject({
         status: 'ready',
@@ -205,7 +221,7 @@ describe('validated bounded conversation runner', () => {
         { id: 'question', role: 'assistant', content: 'What is the origin city or address?' },
         { id: 'user-one', role: 'user', content: 'not sure' },
       ],
-      model: async () => output(snapshot),
+      model: async () => answer(output(snapshot)),
     })
     expect(response.reply).not.toBe('What is the origin city or address?')
     expect(response.reply).toMatch(/pickup/i)

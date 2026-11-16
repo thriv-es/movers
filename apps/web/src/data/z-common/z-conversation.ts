@@ -136,6 +136,8 @@ export const zConversationSnapshot = z
     version: z.literal(6),
     revision: zConversationRevision,
     moveDetails: zConversationMoveDetails,
+    /** Accepted read-only route evidence; no receipt/contact/URL data. Old clients may omit it. */
+    route: zConversationRoute.nullable().optional(),
     detailsConfirmed: z.boolean(),
     sample: z.boolean(),
     photos: z.array(

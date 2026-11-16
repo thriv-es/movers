@@ -14,6 +14,7 @@ import type { ChatMessage, MoveDetails } from '../../../src/data/types/move-demo
 import { canonicalItemType } from '../../../src/lib/item-aliases'
 import { validateDetailFacts, volunteeredDistance } from './conversation-facts'
 import { safePhotoRequest } from './conversation-guidance'
+import { type ConversationToolIntent, zConversationToolIntent } from './conversation-decisions'
 
 // Task 1's schema is the protocol. Tighten nested stripping objects at this ingress:
 // reject unknown private fields instead of ever forwarding an unvalidated request object.
@@ -31,6 +32,13 @@ const zSafeSnapshot = zConversationSnapshot
       .nullable(),
   })
   .superRefine((state, context) => {
+    if (
+      state.route &&
+      (state.route.from !== state.moveDetails.from ||
+        state.route.to !== state.moveDetails.to ||
+        state.route.endpointRevision > state.revision)
+    )
+      context.addIssue({ code: 'custom', message: 'Stale route endpoints' })
     if (new Set(state.photos.map((photo) => photo.id)).size !== state.photos.length) {
       context.addIssue({ code: 'custom', message: 'Duplicate photo identifiers' })
     }
@@ -76,6 +84,7 @@ const zModelConversationTurn = zConversationResponse.omit({ agent: true }).exten
   clarification: zClarification.optional(),
   facts: z.array(zConversationFact).max(12).optional(),
   nextAction: zConversationAgentMetadata.shape.nextAction.optional(),
+  tools: z.array(zConversationToolIntent).max(1).optional(),
 })
 
 const sameType = (left: string, right: string) => canonicalItemType(left) === canonicalItemType(right)
@@ -108,13 +117,27 @@ function currentReference(command: ConversationCommand, state: ConversationSnaps
   }
 }
 
-/** Reject the entire batch on error; never leak a parsed partial response or model text. */
+export interface ConversationDecision {
+  response: ConversationResponse
+  tools: ConversationToolIntent[]
+  clarification?: z.infer<typeof zClarification>
+}
+/** Keep the public parser export; the runner consumes the complete validated decision instead. */
 export function parseConversationTurn(
   text: string,
   snapshot: ConversationSnapshot,
   messages: ChatMessage[] = [],
   interpret = false,
 ): ConversationResponse {
+  return parseConversationDecision(text, snapshot, messages, interpret).response
+}
+/** Reject the entire batch on error; no partial proposals or unvalidated tool requests escape. */
+export function parseConversationDecision(
+  text: string,
+  snapshot: ConversationSnapshot,
+  messages: ChatMessage[] = [],
+  interpret = true,
+): ConversationDecision {
   if (text.length > 24000) throw new Error('Invalid conversation output')
   const turn = zModelConversationTurn.parse(JSON.parse(text))
   const ids = new Set<string>()
@@ -164,13 +187,45 @@ export function parseConversationTurn(
   const detailCommand = turn.proposals.find((proposal) => proposal.command.type === 'details.patch')?.command
   const projected = { ...snapshot.moveDetails, ...(detailCommand?.type === 'details.patch' ? detailCommand.patch : {}) }
   const photoContext = [projected.from, projected.to].every((value) => !!value?.trim() && /\p{L}/u.test(value))
-  const safePhotoQuestion = interpret && photoContext && !snapshot.photos.length && safePhotoRequest(turn.reply)
-  return zConversationResponse.parse({
-    // Only a constrained pre-photo request can use live wording; commercial guidance remains server-authored.
-    reply: safePhotoQuestion ? turn.reply : fallback,
-    basedOnRevision: turn.basedOnRevision,
-    proposals: turn.proposals.map((proposal) => ({ ...proposal, id: `proposal-${crypto.randomUUID()}` })),
-  })
+  const defaultAction =
+    !projected.from?.trim() || !/\p{L}/u.test(projected.from)
+      ? 'clarify_origin'
+      : !projected.to?.trim() || !/\p{L}/u.test(projected.to)
+        ? 'clarify_destination'
+        : !snapshot.photos.length
+          ? 'request_photos'
+          : 'review'
+  const nextAction =
+    turn.nextAction === 'request_photos' && !photoContext ? defaultAction : (turn.nextAction ?? defaultAction)
+  const actionReply = turn.clarification
+    ? clarificationReplies[turn.clarification]
+    : nextAction === 'clarify_origin'
+      ? 'What is the origin city or address?'
+      : nextAction === 'clarify_destination'
+        ? 'What is the destination city or address?'
+        : nextAction === 'request_photos'
+          ? 'Please attach photos in this chat to start the inventory.'
+          : snapshot.photos.length
+            ? fallback
+            : 'Please review the current move details and outstanding checks.'
+  const safePhotoQuestion =
+    interpret &&
+    nextAction === 'request_photos' &&
+    !turn.clarification &&
+    photoContext &&
+    !snapshot.photos.length &&
+    safePhotoRequest(turn.reply)
+  return {
+    response: zConversationResponse.parse({
+      // A photo request must not displace a model-selected targeted clarification.
+      reply: safePhotoQuestion ? turn.reply : interpret ? actionReply : fallback,
+      basedOnRevision: turn.basedOnRevision,
+      proposals: turn.proposals.map((proposal) => ({ ...proposal, id: `proposal-${crypto.randomUUID()}` })),
+      ...(interpret ? { agent: { nextAction } } : {}),
+    }),
+    tools: turn.tools ?? [],
+    clarification: turn.clarification,
+  }
 }
 
 function numericDate(value: string): string | null {

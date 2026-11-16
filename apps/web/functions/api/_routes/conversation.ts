@@ -26,21 +26,26 @@ conversation.post('/', async (c) => {
     // Freeze the Chat role for this request, including its one malformed-output retry.
     const role = await resolveRole(c.env, 'chat')
     c.header('x-movers-ai-mode', role.mode)
+    let effectiveMock = false
     const response = await runConversationAgent({
       messages,
       snapshot,
-      // Offline mechanics must never call live geocoding, even if a key exists.
-      key: role.mode === 'mock' ? undefined : c.env.GEOAPIFY_API_KEY,
-      model: async (retry) => {
+      // The runner gates tools on each effective result mode, not the pre-fallback role.
+      key: c.env.GEOAPIFY_API_KEY,
+      model: async (request) => {
         const result = await runText(
           c.env,
-          conversationPrompt(messages, snapshot, retry),
-          () => JSON.stringify(mockConversationTurn(messages, snapshot)),
+          conversationPrompt(messages, request.snapshot, request.retry, request),
+          () => {
+            const mock = mockConversationTurn(messages, request.snapshot)
+            return JSON.stringify(request.phase === 'continue' ? { ...mock, proposals: [] } : mock)
+          },
           'chat',
           role,
         )
-        c.header('x-movers-ai-mode', result.mode)
-        return result.text
+        effectiveMock ||= result.mode === 'mock'
+        c.header('x-movers-ai-mode', effectiveMock ? 'mock' : result.mode)
+        return result
       },
     })
     return c.json(response)

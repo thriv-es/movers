@@ -39,6 +39,19 @@ function fakeAI(outputs: (string | Error)[]) {
 afterEach(() => vi.restoreAllMocks())
 
 describe('POST conversation', () => {
+  it('never sends locations to routing after development auto mode falls back to mock', async () => {
+    const { run, env } = fakeAI([new Error('provider unavailable')])
+    env.ENV = 'development'
+    env.AI_MODE = undefined
+    env.GEOAPIFY_API_KEY = 'offline-test-key'
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('No external requests allowed'))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = await request({ messages, snapshot: snapshot() }, env)
+    expect(result.status).toBe(200)
+    expect(result.headers.get('x-movers-ai-mode')).toBe('mock')
+    expect(fetch).not.toHaveBeenCalled()
+    expect(run).toHaveBeenCalledTimes(1)
+  })
   it('returns the typed offline turn and labels the actual mode, without side effects', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('External writes forbidden'))
     const result = await request({ messages, snapshot: snapshot() })

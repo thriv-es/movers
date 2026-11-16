@@ -388,7 +388,12 @@ function reviewEditable(state: ConversationSession) {
 function commandPatch(state: ConversationSession, command: ConversationCommand): DomainPatch | null {
   switch (command.type) {
     case 'details.patch': {
-      const facts = command.facts ?? []
+      let facts = command.facts ?? []
+      if (
+        facts.filter((fact) => fact.field === 'date' || fact.field === 'dateWindow').length > 1 ||
+        facts.some((fact) => fact.field === 'dateWindow' && command.patch.date !== null)
+      )
+        return null
       if (
         facts.some(
           (fact) =>
@@ -410,23 +415,32 @@ function commandPatch(state: ConversationSession, command: ConversationCommand):
           command.route.endpointRevision !== state.revision)
       )
         return null
-      if (endpointChanged)
-        moveDetails.distanceMiles =
-          command.route?.status === 'ready' && command.route.precision === 'address'
-            ? (command.route.distanceMiles ?? null)
-            : (command.patch.distanceMiles ?? null)
+      const addressRoute = (
+        route: ConversationSession['route'] | undefined,
+      ): route is NonNullable<ConversationSession['route']> =>
+        route?.status === 'ready' && route.precision === 'address'
+      const route = addressRoute(command.route)
+        ? command.route
+        : !endpointChanged && addressRoute(state.route)
+          ? state.route
+          : (command.route ?? (endpointChanged ? null : state.route))
+      if (endpointChanged) moveDetails.distanceMiles = command.patch.distanceMiles ?? null
+      if (addressRoute(route)) {
+        moveDetails.distanceMiles = route?.distanceMiles ?? null
+        facts = facts.filter((fact) => fact.field !== 'distanceMiles')
+      }
       const changed = JSON.stringify(moveDetails) !== JSON.stringify(state.moveDetails)
       const replaced = new Set([
         ...Object.keys(command.patch),
         ...facts.map((fact) => fact.field),
-        ...(endpointChanged ? ['distanceMiles'] : []),
+        ...(endpointChanged || addressRoute(route) ? ['distanceMiles'] : []),
+        ...('date' in command.patch ? ['date', 'dateWindow'] : []),
       ])
+      const nextFacts = [...state.facts.filter((fact) => !replaced.has(fact.field)), ...facts]
       return {
         ...(changed ? { ...clearEvidence(), moveDetails, detailsConfirmed: false } : {}),
-        ...(facts.length || changed
-          ? { facts: [...state.facts.filter((fact) => !replaced.has(fact.field)), ...facts] }
-          : {}),
-        ...(command.route ? { route: command.route } : endpointChanged ? { route: null } : {}),
+        ...(JSON.stringify(nextFacts) !== JSON.stringify(state.facts) ? { facts: nextFacts } : {}),
+        ...(route !== state.route ? { route } : {}),
       }
     }
     case 'request.action':
@@ -789,6 +803,7 @@ export function conversationSnapshot(state: ConversationSession): ConversationSn
     version: 6,
     revision: state.revision,
     moveDetails: { ...state.moveDetails },
+    route: state.route ? { ...state.route } : null,
     detailsConfirmed: state.detailsConfirmed,
     sample: state.sample,
     photos: state.photos.map((photo) => ({
