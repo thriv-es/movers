@@ -41,6 +41,10 @@ export interface ConversationUpload {
   progress: number
 }
 const id = () => crypto.randomUUID()
+const isWrite = (kind: ConversationOperationRequest['kind']) =>
+  kind === 'save' || kind === 'schedule' || kind === 'quotes'
+const unknownWriteMessage =
+  'Request interrupted — unknown outcome. Check the existing request before submitting again; reload to restore the conversation status.'
 export function sampleConversation(): ConversationSession {
   return migrate(sampleSession(window.location.origin))
 }
@@ -57,6 +61,8 @@ export function useConversationController(initial: () => ConversationSession = l
   const [busy, setBusy] = useState(false)
   const locked = useRef(false)
   const active = useRef(true)
+  const leaving = useRef(false)
+  const pageGeneration = useRef(0)
   const chatRequest = useRef<AbortController | null>(null)
   // Authorization belongs to the explicit Send, not to a later retry's snapshot or transcript role.
   const submittedTurn = useRef<{ sessionId: string; messageId: string; revision: number } | null>(null)
@@ -72,20 +78,25 @@ export function useConversationController(initial: () => ConversationSession = l
 
   useEffect(() => {
     active.current = true
+    leaving.current = false
     saveConversationSession(current.current)
-    // Navigation does not run React cleanup. Leave durable pending evidence for the next loader.
+    // Page departure cancels continuation authorization, not mounted read-only result handling.
     const hide = () => {
-      active.current = false
+      leaving.current = true
+      pageGeneration.current += 1
       chatRequest.current?.abort()
     }
     const show = () => {
-      active.current = true
-      setBusy(locked.current || Object.values(current.current.operations).some((op) => op.status === 'pending'))
+      leaving.current = false
+      const pending = Object.values(current.current.operations).filter((op) => op.status === 'pending')
+      setBusy(locked.current || pending.length > 0)
+      if (pending.some((op) => isWrite(op.request.kind))) setError(unknownWriteMessage)
       setChatBusy(chatRequest.current !== null)
     }
     window.addEventListener('pagehide', hide)
     window.addEventListener('pageshow', show)
     return () => {
+      active.current = false
       hide()
       window.removeEventListener('pagehide', hide)
       window.removeEventListener('pageshow', show)
@@ -123,6 +134,7 @@ export function useConversationController(initial: () => ConversationSession = l
   const withLock = async (work: () => Promise<void>) => {
     if (
       !active.current ||
+      leaving.current ||
       locked.current ||
       Object.values(current.current.operations).some((op) => op.status === 'pending')
     )
@@ -145,6 +157,9 @@ export function useConversationController(initial: () => ConversationSession = l
     request: ConversationOperationRequest,
     call: (snapshot: ConversationSession) => Promise<ConversationOperationResult>,
   ): Promise<ConversationSession | null> => {
+    if (!active.current || leaving.current) return null
+    const generation = pageGeneration.current
+    const write = isWrite(request.kind)
     // Selection is transient and does not bump domain revision. Recheck at every operation boundary,
     // including after vision preflight and between accepted pricing and its dependent save.
     if (uploadRef.current.length) {
@@ -159,23 +174,29 @@ export function useConversationController(initial: () => ConversationSession = l
     const revision = operation.revision
     try {
       const result = await call(started)
-      if (!active.current || current.current.sessionId !== started.sessionId) return null
+      if (
+        !active.current ||
+        current.current.sessionId !== started.sessionId ||
+        (write && generation !== pageGeneration.current)
+      )
+        return null
       const accepted = apply({ type: 'operation.succeeded', operationId, result }, 'system', revision)
-      if (accepted) return accepted
+      // Persist a real read-only result, but never resume its old dependent-write chain after departure.
+      if (accepted) return generation === pageGeneration.current ? accepted : null
       if (current.current.operations[operationId]?.status !== 'pending') return null
       throw new Error('Invalid operation response')
     } catch (caught) {
-      if (!active.current || current.current.sessionId !== started.sessionId) return null
       if (
-        (request.kind === 'save' || request.kind === 'schedule' || request.kind === 'quotes') &&
-        !(caught instanceof EstimateApiError)
-      ) {
+        !active.current ||
+        current.current.sessionId !== started.sessionId ||
+        (write && generation !== pageGeneration.current)
+      )
+        return null
+      if (write && !(caught instanceof EstimateApiError)) {
         // A lost transport/body (including abort before pagehide) cannot prove the write failed.
         // Keep the real pending operation, block reposts, and let reload classify it as interrupted.
         if (current.current.operations[operationId]?.status === 'pending' && current.current.revision === revision)
-          setError(
-            'Request interrupted — unknown outcome. Check the existing request before submitting again; reload to restore the conversation status.',
-          )
+          setError(unknownWriteMessage)
         return null
       }
       const code = caught instanceof EstimateApiError ? caught.code : undefined
@@ -206,10 +227,12 @@ export function useConversationController(initial: () => ConversationSession = l
     }
   }
   const verify = async (snapshot: ConversationSession): Promise<ConversationSession | null> => {
-    if (!snapshot.analysis) return null
+    if (!active.current || leaving.current || !snapshot.analysis) return null
+    const generation = pageGeneration.current
     try {
       await checkVision(snapshot.analysis)
-      if (!active.current || current.current.sessionId !== snapshot.sessionId) return null
+      if (!active.current || generation !== pageGeneration.current || current.current.sessionId !== snapshot.sessionId)
+        return null
       return apply(
         { type: 'vision.verified', fingerprint: snapshot.analysis.visionFingerprint ?? '' },
         'system',
@@ -315,7 +338,7 @@ export function useConversationController(initial: () => ConversationSession = l
       })
     })
   const loadMovers = async () => {
-    if (moversLoading.current) return
+    if (!active.current || leaving.current || moversLoading.current) return
     moversLoading.current = true
     setMoversBusy(true)
     const sessionId = current.current.sessionId
@@ -331,7 +354,7 @@ export function useConversationController(initial: () => ConversationSession = l
   }
 
   const turn = async () => {
-    if (chatRequest.current) return
+    if (!active.current || leaving.current || chatRequest.current) return
     const request = new AbortController()
     chatRequest.current = request
     setChatBusy(true)
@@ -341,7 +364,13 @@ export function useConversationController(initial: () => ConversationSession = l
     const authorization = submittedTurn.current
     try {
       const reply = await conversationChatApi(snapshot.messages, conversationSnapshot(snapshot), request.signal)
-      if (!active.current || chatRequest.current !== request || current.current.sessionId !== snapshot.sessionId) return
+      if (
+        !active.current ||
+        request.signal.aborted ||
+        chatRequest.current !== request ||
+        current.current.sessionId !== snapshot.sessionId
+      )
+        return
       if (current.current.revision !== snapshot.revision || reply.basedOnRevision !== snapshot.revision) {
         setChatFailed(true)
         setError(
@@ -387,7 +416,7 @@ export function useConversationController(initial: () => ConversationSession = l
       )
         apply({ type: 'proposal.apply', proposalId: detail.id }, 'chat', detail.expectedRevision)
     } catch {
-      if (active.current && chatRequest.current === request) {
+      if (active.current && !request.signal.aborted && chatRequest.current === request) {
         setChatFailed(true)
         setError('The assistant did not answer. Your message is saved; retry or keep editing the manifest.')
       }
@@ -399,7 +428,7 @@ export function useConversationController(initial: () => ConversationSession = l
     }
   }
   const sendMessage = (text = draft) => {
-    if (!text.trim() || chatRequest.current) return
+    if (!active.current || leaving.current || !text.trim() || chatRequest.current) return
     const messageId = id()
     const accepted = apply(
       { type: 'message.append', message: { id: messageId, role: 'user', content: text.trim() } },

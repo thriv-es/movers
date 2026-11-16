@@ -423,6 +423,10 @@ describe('persistent estimator conversation', () => {
       if (retry) expect(retry).toBeDisabled()
       if (boundary === 'transport loss' || boundary === 'response body loss')
         expect(screen.getByRole('alert')).toHaveTextContent(/unknown outcome/i)
+      if (boundary.startsWith('pagehide')) {
+        fireEvent(window, new Event('pageshow'))
+        expect(screen.getByRole('alert')).toHaveTextContent(/unknown outcome/i)
+      }
       if (boundary !== 'unmount abort') view.unmount()
       mount()
       expect(draft().operations[operation.id].status).toBe('interrupted')
@@ -432,6 +436,127 @@ describe('persistent estimator conversation', () => {
       expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1)
     },
   )
+
+  it.each(
+    (['analyze', 'price'] as const).flatMap((kind) =>
+      (['success', 'HTTP rejection', 'transport rejection'] as const).map((outcome) => ({ kind, outcome })),
+    ),
+  )('settles hidden $kind $outcome and restores explicit controls without saving', async ({ kind, outcome }) => {
+    const pending = deferred<Response>()
+    let attempts = 0
+    const path = `/api/${kind}`
+    const fetch = api((endpoint) => (endpoint === path && ++attempts === 1 ? pending.promise : undefined))
+    mount(ready())
+    const control = () =>
+      screen.getByRole('button', {
+        name: kind === 'analyze' ? /^Analyse / : draft().price ? 'Retry save' : 'Confirm inventory and get estimate',
+      })
+    fireEvent.click(control())
+    await waitFor(() => expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1))
+    fireEvent(window, new Event('pagehide'))
+    await act(async () => {
+      if (outcome === 'transport rejection') pending.reject(new TypeError('Failed to fetch'))
+      else
+        pending.resolve(
+          outcome === 'HTTP rejection'
+            ? Response.json({ error: 'Unavailable' }, { status: 503 })
+            : Response.json(kind === 'analyze' ? analysis : { price }),
+        )
+    })
+    expect(Object.values(draft().operations).find((operation) => operation.request.kind === kind)?.status).toBe(
+      outcome === 'success' ? 'succeeded' : 'failed',
+    )
+    fireEvent.click(control())
+    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1)
+    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/estimates')).toHaveLength(0)
+    fireEvent(window, new Event('pageshow'))
+    expect(control()).toBeEnabled()
+    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/estimates')).toHaveLength(0)
+    expect(draft().estimateId).toBeNull()
+    if (outcome === 'success')
+      expect(kind === 'analyze' ? draft().analysis : draft().price).toEqual(kind === 'analyze' ? analysis : price)
+    fireEvent.click(control())
+    await waitFor(() => {
+      if (kind === 'price') expect(draft().estimateId).toBe('saved-id')
+      else
+        expect(
+          Object.values(draft().operations).filter(
+            (operation) => operation.request.kind === kind && operation.status === 'succeeded',
+          ),
+        ).toHaveLength(outcome === 'success' ? 2 : 1)
+    })
+    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/estimates')).toHaveLength(
+      kind === 'price' ? 1 : 0,
+    )
+  })
+
+  it.each(['success', 'rejection'])('settles hidden mover loader %s and restores Choose movers', async (outcome) => {
+    const pending = deferred<Response>()
+    let attempts = 0
+    const fetch = api((path) => (path === '/api/movers' && ++attempts === 1 ? pending.promise : undefined))
+    mount(ready({ price, estimateId: 'saved-id', contact }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
+    fireEvent(window, new Event('pagehide'))
+    await act(async () => {
+      if (outcome === 'success') pending.resolve(Response.json({ movers: [mover] }))
+      else pending.reject(new TypeError('Failed to fetch'))
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
+    expect(fetch.mock.calls.filter(([path]) => path === '/api/movers')).toHaveLength(1)
+    fireEvent(window, new Event('pageshow'))
+    expect(screen.getByRole('button', { name: 'Choose movers' })).toBeEnabled()
+    if (outcome === 'success') expect(screen.getByRole('checkbox', { name: /Synthetic Mover/i })).toBeInTheDocument()
+    else expect(screen.getByRole('alert')).toHaveTextContent(/Unable to load movers/i)
+    fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
+    expect(await screen.findByRole('checkbox', { name: /Synthetic Mover/i })).not.toBeChecked()
+    expect(fetch.mock.calls.filter(([path]) => path === '/api/movers')).toHaveLength(2)
+    expect(
+      fetch.mock.calls.filter(([, request]) => request?.method === 'POST' || request?.method === 'PATCH'),
+    ).toHaveLength(0)
+  })
+
+  it.each(['preflight', 'price'])(
+    'does not resume the %s-to-save chain across a pagehide/pageshow cycle',
+    async (stage) => {
+      const pending = deferred<Response>()
+      let attempts = 0
+      const path = stage === 'preflight' ? '/api/ai-status' : '/api/price'
+      const fetch = api((endpoint) => (endpoint === path && ++attempts === 1 ? pending.promise : undefined))
+      mount(ready())
+      fireEvent.click(confirmPrice())
+      await waitFor(() => expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1))
+      fireEvent(window, new Event('pagehide'))
+      fireEvent(window, new Event('pageshow'))
+      await act(async () =>
+        pending.resolve(
+          Response.json(
+            stage === 'preflight' ? { visionRevision: 99, visionFingerprint: 'current-vision' } : { price },
+          ),
+        ),
+      )
+      expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/estimates')).toHaveLength(0)
+      expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/price')).toHaveLength(stage === 'price' ? 1 : 0)
+      expect(Object.values(draft().operations).every((operation) => operation.status !== 'pending')).toBe(true)
+      fireEvent.click(stage === 'price' ? screen.getByRole('button', { name: 'Retry save' }) : confirmPrice())
+      await waitFor(() => expect(draft().estimateId).toBe('saved-id'))
+      expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/estimates')).toHaveLength(1)
+      expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/price')).toHaveLength(1)
+    },
+  )
+
+  it.each(['analysis', 'pricing', 'movers', 'chat'])('does not start %s while the page is leaving', async (kind) => {
+    const fetch = api()
+    mount(ready(kind === 'movers' ? { price, estimateId: 'saved-id', contact } : {}))
+    fireEvent(window, new Event('pagehide'))
+    await act(async () => {
+      if (kind === 'analysis') fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
+      else if (kind === 'pricing') fireEvent.click(confirmPrice())
+      else if (kind === 'movers') fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
+      else send('Synthetic hidden-page message')
+    })
+    expect(fetch.mock.calls).toHaveLength(0)
+    expect(Object.values(draft().operations)).toHaveLength(0)
+  })
 
   it('restores the composer after a pagehide-aborted reply without starting writes', async () => {
     const pending = deferred<Response>()
