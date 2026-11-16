@@ -77,6 +77,8 @@ export default function EstimatePage(): JSX.Element {
   }, [update])
 
   useEffect(() => {
+    // Verification belongs only to this check; leaving/re-entering a step must not reuse it.
+    setVerified(null)
     if (!session.analysis || !['review', 'estimate'].includes(session.step)) return
     let cancelled = false
     const analysis = session.analysis
@@ -100,6 +102,7 @@ export default function EstimatePage(): JSX.Element {
   const goTo = useCallback(
     (step: StepKey) => {
       if ((step === 'estimate' || step === 'schedule') && evidence.unresolvedCount > 0) return
+      setVerified(null)
       update((current) => ({
         step,
         ...(step === 'upload'

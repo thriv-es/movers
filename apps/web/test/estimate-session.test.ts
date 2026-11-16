@@ -800,6 +800,120 @@ describe('request-aware photo review', () => {
   })
 })
 
+describe('saved estimate re-entry freshness', () => {
+  const currentStatus = { visionRevision: 1, visionFingerprint: 'current-vision' }
+  const mover = { id: 'mover-1', name: 'Test Mover', slug: 'test-mover', serviceArea: 'Boston' }
+
+  async function enterSchedule(recheck: () => Promise<Response>) {
+    let checks = 0
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string) => {
+        calls.push(path)
+        if (path === '/api/ai-status') return ++checks === 2 ? recheck() : Response.json(currentStatus)
+        if (path === '/api/movers') return Response.json({ movers: [mover] })
+        throw new Error(`Unexpected route ${path}`)
+      }),
+    )
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        ...EMPTY_SESSION,
+        step: 'estimate',
+        analysis,
+        items: analysis.items,
+        ...review,
+        moveDetails: sampleSession(window.location.origin).moveDetails,
+        price: savedPrice,
+        estimateId: 'saved-id',
+      }),
+    )
+    render(
+      createElement(
+        HelmetProvider,
+        null,
+        createElement(MemoryRouter, { initialEntries: ['/estimate'] }, createElement(EstimatePage)),
+      ),
+    )
+    const schedule = await screen.findByRole('button', { name: 'Schedule the move' })
+    await screen.findByRole('checkbox')
+    expect(screen.getByRole('region', { name: 'Your estimate' })).toBeInTheDocument()
+    fireEvent.click(schedule)
+    expect(screen.getByRole('form', { name: 'Schedule your move' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    return calls
+  }
+
+  function expectSavedActionsGated() {
+    expect(screen.queryByRole('region', { name: 'Your estimate' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Schedule the move' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /for quotes/i })).not.toBeInTheDocument()
+  }
+
+  it('hides saved-price actions during delayed Schedule-to-Estimate revalidation, then restores them on success', async () => {
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve
+    })
+    const calls = await enterSchedule(() => pending)
+    expectSavedActionsGated()
+    expect(screen.getByRole('status')).toHaveTextContent(/checking photo analysis settings/i)
+    await act(async () => {
+      finish(Response.json(currentStatus))
+    })
+    expect(await screen.findByRole('button', { name: 'Schedule the move' })).toBeEnabled()
+    fireEvent.click(await screen.findByRole('checkbox'))
+    expect(screen.getByRole('button', { name: /for quotes/i })).toBeEnabled()
+    expect(calls).not.toContain('/api/price')
+    expect(calls).not.toContain('/api/estimates')
+  })
+
+  it('keeps saved-price actions gated after failed revalidation and recovers only after a new successful check', async () => {
+    const calls = await enterSchedule(async () => Response.json({ error: 'Status unavailable' }, { status: 503 }))
+    await screen.findByRole('alert')
+    expectSavedActionsGated()
+    expect(screen.getByRole('status')).toHaveTextContent(/unable to check/i)
+    expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY) ?? '{}')).toMatchObject({
+      price: savedPrice,
+      estimateId: 'saved-id',
+      step: 'estimate',
+    })
+    fireEvent.click(screen.getByRole('button', { name: /4 Review/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm and price it' }))
+    expect(await screen.findByRole('button', { name: 'Schedule the move' })).toBeEnabled()
+    fireEvent.click(await screen.findByRole('checkbox'))
+    expect(screen.getByRole('button', { name: /for quotes/i })).toBeEnabled()
+    expect(calls).not.toContain('/api/price')
+    expect(calls).not.toContain('/api/estimates')
+  })
+
+  it('clears saved evidence and price when the Schedule-to-Estimate recheck finds a stale fingerprint', async () => {
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve
+    })
+    const calls = await enterSchedule(() => pending)
+    expectSavedActionsGated()
+    await act(async () => {
+      finish(Response.json({ ...currentStatus, visionFingerprint: 'changed-vision' }))
+    })
+    await waitFor(() =>
+      expect(JSON.parse(window.sessionStorage.getItem(SESSION_KEY) ?? '{}')).toMatchObject({
+        step: 'upload',
+        analysis: null,
+        items: [],
+        price: null,
+        estimateId: null,
+      }),
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent(/analyze your photos again/i)
+    expectSavedActionsGated()
+    expect(calls).not.toContain('/api/price')
+    expect(calls).not.toContain('/api/estimates')
+  })
+})
+
 describe('estimate review and API', () => {
   it('sends the analyze session, receipt refs and confirmed move details without chat', async () => {
     const fetch = vi.fn(async () => Response.json(analysis))
