@@ -743,6 +743,106 @@ describe('persistent estimator conversation', () => {
     expect(draft().analysis).toEqual(analysis)
   })
 
+  it.each(['Retry reply', 'Refresh suggestions'] as const)(
+    '%s does not reauthorize a failed old answer after panel edits, even when its new packet matches the current revision',
+    async (control) => {
+      let attempts = 0
+      const fetch = api((path, request) => {
+        if (path !== '/api/conversation') return undefined
+        attempts += 1
+        if (attempts === 1)
+          return Promise.resolve(Response.json({ error: 'Unavailable', retryable: true }, { status: 502 }))
+        const revision = JSON.parse(request?.body as string).snapshot.revision
+        // A current-revision, well-formed response can still describe an old submitted command.
+        return Promise.resolve(
+          Response.json(
+            packet(
+              [{ type: 'details.patch', patch: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' } }],
+              revision,
+              'Review this extracted answer.',
+            ),
+          ),
+        )
+      })
+      const state = createConversationSession()
+      if (control === 'Refresh suggestions')
+        state.pendingProposals = [
+          {
+            id: 'earlier-suggestion',
+            expectedRevision: 0,
+            command: { type: 'request.action', action: 'analyze' },
+          },
+        ]
+      mount(state)
+      send('from Tel Aviv to Raanana on 1.1.2027')
+      await screen.findByRole('button', { name: 'Retry reply' })
+      fireEvent.change(screen.getByLabelText('Moving from'), { target: { value: 'Haifa' } })
+      fireEvent.change(screen.getByLabelText('Moving to'), { target: { value: 'Jerusalem' } })
+      fireEvent.change(screen.getByLabelText('Move date'), { target: { value: '2028-02-02' } })
+      const revision = draft().revision
+      fireEvent.click(screen.getByRole('button', { name: control }))
+      await screen.findByText('Review this extracted answer.')
+      expect(draft()).toMatchObject({
+        revision,
+        moveDetails: { from: 'Haifa', to: 'Jerusalem', date: '2028-02-02' },
+        operations: {},
+      })
+      expect(screen.getByLabelText('Moving from')).toHaveValue('Haifa')
+      expect(screen.getByLabelText('Moving to')).toHaveValue('Jerusalem')
+      expect(screen.getByLabelText('Move date')).toHaveValue('2028-02-02')
+      expect(draft().messages.filter((message) => message.role === 'user')).toHaveLength(1)
+      const requests = fetch.mock.calls.map(([path, request]) => ({ path, body: JSON.parse(request?.body as string) }))
+      expect(requests.map(({ path }) => path)).toEqual(['/api/conversation', '/api/conversation'])
+      expect(requests[1]?.body.snapshot).toMatchObject({
+        revision,
+        moveDetails: { from: 'Haifa', to: 'Jerusalem', date: '2028-02-02' },
+      })
+      expect(requests[1]?.body.messages).toEqual(requests[0]?.body.messages)
+      expect(draft().pendingProposals).toMatchObject([
+        { expectedRevision: revision, command: { type: 'details.patch' } },
+      ])
+      fireEvent.click(screen.getByRole('button', { name: 'Accept suggestion' }))
+      expect(draft()).toMatchObject({
+        revision: revision + 1,
+        pendingProposals: [],
+        moveDetails: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' },
+        operations: {},
+      })
+      expect(fetch).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it('allows a failed combined answer to autoapply on retry only while its original submitted revision is unchanged', async () => {
+    let attempts = 0
+    const fetch = api((path) =>
+      path === '/api/conversation'
+        ? Promise.resolve(
+            ++attempts === 1
+              ? Response.json({ error: 'Unavailable', retryable: true }, { status: 502 })
+              : Response.json(
+                  packet(
+                    [{ type: 'details.patch', patch: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' } }],
+                    0,
+                    'Roughly how many miles is the move?',
+                  ),
+                ),
+          )
+        : undefined,
+    )
+    mount(createConversationSession())
+    send('from Tel Aviv to Raanana on 1.1.2027')
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry reply' }))
+    await screen.findByText('Roughly how many miles is the move?')
+    expect(draft()).toMatchObject({
+      revision: 1,
+      pendingProposals: [],
+      moveDetails: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' },
+      operations: {},
+    })
+    expect(draft().messages.filter((message) => message.role === 'user')).toHaveLength(1)
+    expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation', '/api/conversation'])
+  })
+
   it('validates packets at adapter ingress while leaving legacy chatApi compatible', async () => {
     const fetch = vi
       .fn()

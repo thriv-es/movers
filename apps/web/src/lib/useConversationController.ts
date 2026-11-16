@@ -58,6 +58,8 @@ export function useConversationController(initial: () => ConversationSession = l
   const locked = useRef(false)
   const active = useRef(true)
   const chatRequest = useRef<AbortController | null>(null)
+  // Authorization belongs to the explicit Send, not to a later retry's snapshot or transcript role.
+  const submittedTurn = useRef<{ sessionId: string; messageId: string; revision: number } | null>(null)
   const [chatBusy, setChatBusy] = useState(false)
   const [chatFailed, setChatFailed] = useState(false)
   const [suggestionsExpired, setSuggestionsExpired] = useState(false)
@@ -306,6 +308,7 @@ export function useConversationController(initial: () => ConversationSession = l
     setChatFailed(false)
     setError(null)
     const snapshot = current.current // Original request revision, before any await.
+    const authorization = submittedTurn.current
     try {
       const reply = await conversationChatApi(snapshot.messages, conversationSnapshot(snapshot), request.signal)
       if (!active.current || chatRequest.current !== request || current.current.sessionId !== snapshot.sessionId) return
@@ -344,8 +347,14 @@ export function useConversationController(initial: () => ConversationSession = l
       }
       for (const action of actions) dispatch(action)
       setSuggestionsExpired(false)
+      submittedTurn.current = null // A successful turn consumes authorization; errors may retry at the same revision.
       const detail = reply.proposals.length === 1 ? reply.proposals[0] : undefined
-      if (detail?.command.type === 'details.patch' && snapshot.messages.at(-1)?.role === 'user')
+      if (
+        detail?.command.type === 'details.patch' &&
+        authorization?.sessionId === snapshot.sessionId &&
+        authorization.revision === snapshot.revision &&
+        authorization.messageId === snapshot.messages.at(-1)?.id
+      )
         apply({ type: 'proposal.apply', proposalId: detail.id }, 'chat', detail.expectedRevision)
     } catch {
       if (active.current && chatRequest.current === request) {
@@ -361,11 +370,18 @@ export function useConversationController(initial: () => ConversationSession = l
   }
   const sendMessage = (text = draft) => {
     if (!text.trim() || chatRequest.current) return
-    apply({ type: 'message.append', message: { id: id(), role: 'user', content: text.trim() } }, 'chat')
+    const messageId = id()
+    const accepted = apply(
+      { type: 'message.append', message: { id: messageId, role: 'user', content: text.trim() } },
+      'chat',
+    )
+    if (!accepted) return
+    submittedTurn.current = { sessionId: accepted.sessionId, messageId, revision: accepted.revision }
     setDraft('')
     return turn()
   }
   const cancel = () => {
+    submittedTurn.current = null
     chatRequest.current?.abort()
     chatRequest.current = null
     setChatBusy(false)
