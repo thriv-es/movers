@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "source": "MiniMax image generation via connector__matrix__generate_image",
+  "generatedAt": "2026-11-16",
+  "synthetic": true,
+  "count": 10,
+  "labelPolicy": "Scenario names describe generation prompts, not verified image contents, ground-truth inventory, or measured vision verdicts. No live Workers AI evaluation has been run on these images.",
+  "photos": [
+    {
+      "file": "movers-e2e-01-living-room.jpg",
+      "nodeId": "463964914753658",
+      "intendedScenario": "living room furniture"
+    },
+    { "file": "movers-e2e-02-bedroom.jpg", "nodeId": "463965128933608", "intendedScenario": "bedroom furniture" },
+    {
+      "file": "movers-e2e-03-home-office.jpg",
+      "nodeId": "463964967055591",
+      "intendedScenario": "home office furniture"
+    },
+    {
+      "file": "movers-e2e-04-dining-room.jpg",
+      "nodeId": "463965123932328",
+      "intendedScenario": "dining room furniture"
+    },
+    {
+      "file": "movers-e2e-05-kitchen.jpg",
+      "nodeId": "463965128933615",
+      "intendedScenario": "movable objects among built-in kitchen fixtures"
+    },
+    { "file": "movers-e2e-06-garage.jpg", "nodeId": "463965128933617", "intendedScenario": "garage items" },
+    {
+      "file": "movers-e2e-07-unrelated-beach.jpg",
+      "nodeId": "463965123932332",
+      "intendedScenario": "unrelated beach scene"
+    },
+    {
+      "file": "movers-e2e-08-unrelated-food.jpg",
+      "nodeId": "463965416767557",
+      "intendedScenario": "unrelated food close-up"
+    },
+    {
+      "file": "movers-e2e-09-uncertain-dark-room.jpg",
+      "nodeId": "463965439893638",
+      "intendedScenario": "low-light uncertain room"
+    },
+    {
+      "file": "movers-e2e-10-uncertain-occluded.jpg",
+      "nodeId": "463965555929233",
+      "intendedScenario": "occluded uncertain objects"
+    }
+  ]
+}
