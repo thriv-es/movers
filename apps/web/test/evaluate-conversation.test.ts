@@ -158,7 +158,11 @@ describe('conversation evaluator opt-in and privacy boundaries', () => {
               text: JSON.stringify({
                 reply: 'Please add room photos.',
                 basedOnRevision: snapshot.revision,
-                nextAction: patch?.to || request.snapshot.moveDetails.to ? 'request_photos' : 'clarify_destination',
+                nextAction: latest.startsWith('Moving from Springfield')
+                  ? 'clarify_origin'
+                  : patch?.to || request.snapshot.moveDetails.to
+                    ? 'request_photos'
+                    : 'clarify_destination',
                 proposals: patch
                   ? [{ id: 'details', expectedRevision: snapshot.revision, command: { type: 'details.patch', patch } }]
                   : [],
@@ -177,6 +181,117 @@ describe('conversation evaluator opt-in and privacy boundaries', () => {
     expect(result.cases.filter((entry) => !entry.pass)).toEqual([])
     expect(result.pass).toBe(true)
     expect(continuations).toBe(1)
+  })
+  it.each([
+    { from: null, to: null, text: 'Please add room photos.', want: false },
+    { from: 'Springfield', to: 'Springfield', text: 'Please add room photos.', want: false },
+    { from: 'Springfield', to: 'Springfield', text: 'Which state or country is each Springfield in?', want: true },
+    {
+      from: 'Springfield',
+      to: 'Springfield',
+      text: 'Please provide the complete street address and city for this replacement.',
+      want: true,
+    },
+    {
+      from: 'Springfield',
+      to: 'Springfield',
+      text: 'Several cities are named Springfield; state or country would disambiguate them. You can share photos meanwhile.',
+      want: true,
+    },
+  ])(
+    'requires retained Springfield evidence and useful ambiguity response: $text / $from',
+    async ({ from, to, text, want }) => {
+      const result = await evaluateDialogues(
+        { ...options(), caseId: 'ambiguous-city' },
+        runtime,
+        async (_url, init) => {
+          const { snapshot } = JSON.parse(init.body)
+          return Response.json(
+            {
+              reply: text,
+              basedOnRevision: snapshot.revision,
+              agent: { nextAction: text.startsWith('Which') ? 'clarify_origin' : 'request_photos' },
+              proposals: from
+                ? [
+                    {
+                      id: 'locations',
+                      expectedRevision: snapshot.revision,
+                      command: { type: 'details.patch', patch: { from, to } },
+                    },
+                  ]
+                : [],
+            },
+            { headers: { 'x-movers-ai-mode': 'binding' } },
+          )
+        },
+      )
+      expect(result.pass).toBe(want)
+      if (want)
+        expect(result.cases[0].checks).toEqual(
+          expect.arrayContaining([
+            { name: 'ambiguous_places_retained', pass: true },
+            { name: 'useful_ambiguity_response', pass: true },
+          ]),
+        )
+    },
+  )
+  it.each([
+    { text: 'What is your move date? You can add photos later.', want: false },
+    { text: 'Please provide a move date before adding photos.', want: false },
+    { text: 'When are you moving? Room photos can follow.', want: false },
+    { text: 'Tell me which day you move; photos can follow.', want: false },
+    { text: 'Do you have a moving date yet? Please add photos.', want: false },
+    { text: 'Your moving date? Please add photos.', want: false },
+    { text: 'Please add photos. When you know the move date, update the manifest later.', want: true },
+    { text: 'You do not need to know the date yet. Please add room photos.', want: true },
+    { text: 'Please add room photos. If you learn the date later, update the manifest.', want: true },
+    { text: 'Please add photos of the rooms you are moving.', want: true },
+  ])('proves repeated optional clarification stops, not merely a photo keyword: $text', async ({ text, want }) => {
+    const result = await evaluateDialogues({ ...options(), caseId: 'repeated-answer' }, runtime, async (_url, init) => {
+      const { snapshot } = JSON.parse(init.body)
+      return Response.json(
+        {
+          reply: text,
+          basedOnRevision: snapshot.revision,
+          agent: { nextAction: 'request_photos' },
+          proposals: snapshot.moveDetails.from
+            ? []
+            : [
+                {
+                  id: 'locations',
+                  expectedRevision: snapshot.revision,
+                  command: {
+                    type: 'details.patch',
+                    patch: { from: 'Dizengoff 100, Tel Aviv', to: 'Bezalel 2, Raanana' },
+                  },
+                },
+              ],
+        },
+        { headers: { 'x-movers-ai-mode': 'binding' } },
+      )
+    })
+    expect(result.pass).toBe(want)
+    expect(result.cases[0].checks).toContainEqual({ name: 'no_progress_recovery', pass: want })
+  })
+  it.each([
+    { from: '100 Aviv', to: '2 bezalel raanana', want: false },
+    { from: '100 Tel Aviv', to: '2 bezalel raanana', want: false },
+    { from: 'Dizengoff 2100, Tel Aviv', to: 'Bezalel 2, Raanana', want: false },
+    { from: 'Dizengoff 100, Tel Aviv', to: 'Bezalel 12, Raanana', want: false },
+    { from: 'Dizengoff 100, Tel Aviv', to: 'Raanana 2', want: false },
+    { from: 'dizingoff 100 tel-aviv', to: 'bezalel street 2, raanana', want: true },
+    { from: '100 Dizengoff St., Tel-Aviv', to: '2 Betzalel Street, Ra’anana', want: true },
+    { from: '100 Dizingof, TelAviv', to: '2 Betsalel, Ra anana', want: true },
+    { from: 'דיזנגוף 100, תל אביב', to: 'בצלאל 2, רעננה', want: true },
+  ])('requires full meaningful street, exact house number and city: $from → $to', async ({ from, to, want }) => {
+    const result = await evaluateDialogues(options(), runtime, async (_url, init) => {
+      const { snapshot } = JSON.parse(init.body)
+      return Response.json(reply(snapshot, { from, to, date: '2027-01-11' }), {
+        headers: { 'x-movers-ai-mode': 'binding' },
+      })
+    })
+    expect(result.pass).toBe(want)
+    expect(result.cases[0].checks).toContainEqual({ name: 'full_endpoints_preserved', pass: want })
   })
   it('sanitizes request exceptions and bounds a stalled request', async () => {
     const result = await evaluateDialogues(

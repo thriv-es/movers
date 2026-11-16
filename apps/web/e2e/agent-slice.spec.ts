@@ -88,6 +88,32 @@ test('upload-first intake cannot analyze without endpoints and incomplete review
   expect(writes(await state(request))).toEqual([])
 })
 
+test('keyboard review completion moves focus to the summary and preserves composer/panel editing focus', async ({
+  page,
+}) => {
+  const { openPhotos } = await import('./fixtures.mjs')
+  await openPhotos(page)
+  await upload(page, [2])
+  expect((await analyze(page)).status()).toBe(200)
+  for (const label of ['Garage', 'Closets', 'Appliances'])
+    await page.getByRole('group', { name: label, exact: true }).getByRole('button', { name: 'No', exact: true }).click()
+  const finalAnswer = page
+    .getByRole('group', { name: 'Does this cover the whole move?' })
+    .getByRole('button', { name: 'Yes', exact: true })
+  await finalAnswer.focus()
+  await finalAnswer.press('Enter')
+  const summary = page.getByRole('button', { name: /Inventory reviewed.*Reopen review/ })
+  await expect(summary).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(priceButton(page)).toBeFocused()
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true })
+  await composer.fill('Keyboard draft stays')
+  await expect(composer).toBeFocused()
+  await page.getByLabel('Distance (miles)', { exact: true }).fill('42')
+  await expect(page.getByLabel('Distance (miles)', { exact: true })).toBeFocused()
+  await expect(composer).toHaveValue('Keyboard draft stays')
+})
+
 test('repeated optional date clarification recovers to contextual photos without distance or write authority', async ({
   page,
   request,

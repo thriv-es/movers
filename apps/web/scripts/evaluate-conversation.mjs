@@ -107,9 +107,52 @@ export function integrateReply(runtime, state, raw, originalSend) {
 }
 
 const check = (name, pass) => ({ name, pass: !!pass })
-const hasAddress = (value, tokens) => tokens.every((token) => value?.toLowerCase().includes(token))
-const fullEndpoints = (state) =>
-  hasAddress(state.moveDetails.from, ['100', 'aviv']) && hasAddress(state.moveDetails.to, ['2', 'bezalel', 'raanana'])
+// Fixed public-location oracle, not a geocoder: preserve meaningful words and exact house-number tokens.
+const normalizedPlace = (value) =>
+  (value ?? '')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+const addressMatches = (value, number, street, city) => {
+  const normalized = normalizedPlace(value)
+  return normalized.split(' ').includes(String(number)) && street.test(normalized) && city.test(normalized)
+}
+const originPreserved = (value) =>
+  addressMatches(value, 100, /(?:\bdiz[ei]ngof{1,2}\b|דיזנגוף)/u, /(?:\btel\s*aviv\b|תל\s*אביב)/u)
+const destinationPreserved = (value) =>
+  addressMatches(value, 2, /(?:\bbe(?:tz|ts|z)alel\b|בצלאל)/u, /(?:\bra\s*anana\b|רעננה)/u)
+const fullEndpoints = (state) => originPreserved(state.moveDetails.from) && destinationPreserved(state.moveDetails.to)
+
+function demandsOptionalDetail(text) {
+  return (text.match(/[^.!?;]+[.!?;]?/g) ?? []).some((clause) => {
+    // Questions are still demands even when they also mention photos or deferral.
+    if (/\?/.test(clause) && /\b(?:date|day|street|address)\b/i.test(clause)) return true
+    if (
+      /\b(?:what|which)\b.{0,50}\b(?:date|day|street|address)\b|\bwhen\s+(?:are|will|is|do|would|can)\b.{0,35}\b(?:move|moving)\b|\b(?:do you know|can you|could you)\b.{0,50}\b(?:date|day|street|address)\b/i.test(
+        clause,
+      )
+    )
+      return true
+    if (
+      /\b(?:later|whenever|if you|when you know|optional|not required|no need|don.t need|do not need|not needed)\b/i.test(
+        clause,
+      )
+    )
+      return false
+    return /\b(?:provide|share|tell me|confirm|choose|pick|enter|set|need|require|must)\b.{0,50}\b(?:date|day|street|address)\b/i.test(
+      clause,
+    )
+  })
+}
+const usefulAmbiguityResponse = (text) =>
+  /\b(?:state|country|region|city|address|which springfield|multiple springfields|ambiguous|disambiguat\w*)\b/i.test(
+    text,
+  ) &&
+  /\?|\b(?:which|clarify|provide|share|specify|ambiguous|several|multiple|different|uncertain|disambiguat\w*)\b/i.test(
+    text,
+  )
 const asksDistance = (text) =>
   /(?:how (?:many|far)|what(?:'s| is)|share|provide|tell me|roughly|estimate).{0,55}(?:distance|miles|kilomet|\bkm\b)|(?:distance|miles|kilomet).{0,30}\?/i.test(
     text,
@@ -156,7 +199,8 @@ function semantics(id, state, replies, routeSeen, initialDestination) {
     output.push(
       check(
         'one_sided_correction',
-        hasAddress(state.moveDetails.from, ['10', 'herzl', 'haifa']) &&
+        addressMatches(state.moveDetails.from, 10, /(?:\bherzl\b|הרצל)/u, /(?:\bhaifa\b|חיפה)/u) &&
+          destinationPreserved(state.moveDetails.to) &&
           state.moveDetails.to === initialDestination &&
           state.moveDetails.distanceMiles === null,
       ),
@@ -166,14 +210,17 @@ function semantics(id, state, replies, routeSeen, initialDestination) {
   if (id === 'ambiguous-city')
     output.push(
       check(
+        'ambiguous_places_retained',
+        ['from', 'to'].every((field) => normalizedPlace(state.moveDetails[field]).split(' ').includes('springfield')),
+      ),
+      check('useful_ambiguity_response', usefulAmbiguityResponse(replies.at(-1) ?? '')),
+      check(
         'ambiguous_not_priced',
         state.moveDetails.distanceMiles === null && !state.route?.distanceMiles && state.moveDetails.date === null,
       ),
     )
   if (id === 'repeated-answer')
-    output.push(
-      check('no_progress_recovery', replies.at(-1) !== replies.at(-2) || state.nextAction === 'request_photos'),
-    )
+    output.push(check('no_progress_recovery', replies.length === 3 && !demandsOptionalDetail(replies.at(-1) ?? '')))
   if (id === 'route-tool') output.push(check('real_tool_result', routeSeen))
   return output
 }

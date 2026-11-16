@@ -4,6 +4,7 @@ import type { ConversationController } from '../../lib/useConversationController
 import { conversationAnalysis } from '../../lib/conversation-state'
 import { canonicalItemType } from '../../lib/item-aliases'
 import { formatMoney, titleCase } from '../estimate/format'
+import { photoRecoveryNeeded } from './conversation-presentation'
 
 export function ConversationPhotoCards({ controller }: { controller: ConversationController }) {
   const { session, uploads, readiness } = controller
@@ -19,18 +20,20 @@ export function ConversationPhotoCards({ controller }: { controller: Conversatio
   return (
     <Panel as="section" className="mv-stack" aria-label="Conversation photos">
       <Caption accent="sky">Photos of this move</Caption>
-      {session.needsPhotoReupload ? (
+      {photoRecoveryNeeded(session) ? (
         <p role="alert" className="est-error">
-          Re-upload your photos to continue, or remove each previous photo you no longer need. Old thumbnails are
-          reference only.
+          {session.needsPhotoReupload
+            ? 'Re-upload your photos to continue, or remove each previous photo you no longer need. Old thumbnails are reference only.'
+            : 'Re-upload failed or unavailable photos from the composer, or remove those you no longer need before retrying analysis.'}
         </p>
       ) : null}
       <ul className="est-photos" aria-label="Selected photos">
         {session.photos.map((photo, index) => {
           const filename = photo.url.split('/').pop() ?? 'photo'
-          const assessment =
-            assessments.find((entry) => entry.url === photo.url) ??
-            session.analysis?.photoLinkStatuses?.find((entry) => entry.url === photo.url && entry.status !== 'eligible')
+          const linkFailure = [...assessments, ...(session.analysis?.photoLinkStatuses ?? [])].find(
+            (entry) => entry.url === photo.url && (entry.status === 'unlinked' || entry.status === 'unavailable'),
+          )
+          const assessment = linkFailure ?? assessments.find((entry) => entry.url === photo.url)
           return (
             <li key={photo.id} className="est-photo">
               <img src={photo.url} alt={names[filename] ?? filename} loading="lazy" />

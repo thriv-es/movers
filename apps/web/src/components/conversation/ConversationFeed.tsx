@@ -1,6 +1,12 @@
 import { Bubble, Button, Caption, Panel } from '@movers/ui'
-import { type RefObject, useState } from 'react'
-import { conversationStage, displayFact, proposalSummary, type ConversationStage } from './conversation-presentation'
+import { type RefObject, useLayoutEffect, useRef, useState } from 'react'
+import {
+  conversationStage,
+  displayFact,
+  photoRecoveryNeeded,
+  proposalSummary,
+  type ConversationStage,
+} from './conversation-presentation'
 import type { ConversationController } from '../../lib/useConversationController'
 import {
   ConversationOperationCards,
@@ -29,7 +35,20 @@ export function ConversationFeed({
   const [reopened, setReopened] = useState<{ stage: ConversationStage; revision: number } | null>(null)
   const requiredStage = conversationStage(session, readiness)
   const stage = reopened?.revision === session.revision ? reopened.stage : requiredStage
-  const photosDurable = !!readiness.unresolvedPhotos || session.needsPhotoReupload || controller.uploads.length > 0
+  const photosDurable = !!readiness.unresolvedPhotos || photoRecoveryNeeded(session) || controller.uploads.length > 0
+  const summariesRef = useRef<HTMLDivElement>(null)
+  const focusedControl = useRef<{ stage: string; node: HTMLElement } | null>(null)
+  useLayoutEffect(() => {
+    const previous = focusedControl.current
+    if (previous && !previous.node.isConnected) {
+      focusedControl.current = null
+      // Only recover focus lost by a collapsing widget; never override a panel/composer focus target.
+      if (document.activeElement === document.body)
+        summariesRef.current
+          ?.querySelector<HTMLButtonElement>(`[data-stage-summary="${previous.stage}"]`)
+          ?.focus({ preventScroll: true })
+    }
+  })
   const reviewDurable =
     !!session.analysis &&
     (!!readiness.unresolvedDuplicates || !!readiness.unansweredFollowUps.length || !readiness.coverageAnswered)
@@ -43,6 +62,14 @@ export function ConversationFeed({
       aria-label="Move conversation"
       aria-live="polite"
       onClickCapture={onInteract}
+      onFocusCapture={(event) => {
+        const node = event.target as HTMLElement
+        const stage = node.closest('[data-conversation-stage]')?.getAttribute('data-conversation-stage')
+        focusedControl.current = stage ? { stage, node } : null
+      }}
+      onBlurCapture={(event) => {
+        if (event.relatedTarget) focusedControl.current = null
+      }}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access to the independently scrollable transcript.
       tabIndex={0}
     >
@@ -156,7 +183,7 @@ export function ConversationFeed({
               </div>
             </Panel>
           ))}
-        <div className="mv-actions" aria-label="Move stage summaries">
+        <div ref={summariesRef} className="mv-actions" aria-label="Move stage summaries">
           {readiness.canRequestPhotos || session.photos.length || session.analysis ? (
             <Button size="sm" variant="ghost" onClick={() => reopen('details')}>
               {session.detailsConfirmed ? 'Move details confirmed · Reopen details' : 'Review move details'}
@@ -164,11 +191,11 @@ export function ConversationFeed({
           ) : null}
           {session.analysis && stage !== 'photos' && !photosDurable ? (
             <Button size="sm" variant="ghost" onClick={() => reopen('photos')}>
-              {session.photos.length} photos analysed · Reopen photos
+              {session.photos.length} photo{session.photos.length === 1 ? '' : 's'} selected · Reopen photos
             </Button>
           ) : null}
           {session.analysis && stage !== 'review' && !reviewDurable ? (
-            <Button size="sm" variant="ghost" onClick={() => reopen('review')}>
+            <Button size="sm" variant="ghost" data-stage-summary="review" onClick={() => reopen('review')}>
               Inventory reviewed · Reopen review
             </Button>
           ) : null}
@@ -214,7 +241,11 @@ export function ConversationFeed({
           </Panel>
         ) : null}
         {stage === 'photos' || photosDurable ? <ConversationPhotoCards controller={controller} /> : null}
-        {stage === 'review' || reviewDurable ? <ConversationReviewCards controller={controller} /> : null}
+        {stage === 'review' || reviewDurable ? (
+          <div data-conversation-stage="review">
+            <ConversationReviewCards controller={controller} />
+          </div>
+        ) : null}
         {stage === 'price' ? <ConversationPriceCard controller={controller} /> : null}
         <ConversationRequestCards key={session.sessionId} controller={controller} visible={stage === 'requests'} />
         <ConversationOperationCards controller={controller} />

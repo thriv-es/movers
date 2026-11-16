@@ -265,7 +265,12 @@ for (const scenario of ['retry-once', 'malformed', 'provider-failure']) {
     if (scenario === 'retry-once') await expect(manifestPanel(page)).toContainText('desk')
     else {
       await expect(page.getByRole('region', { name: 'Conversation photos' })).toBeVisible()
-      await expect(page.getByRole('alert')).toBeVisible()
+      await expect(
+        page.getByRole('alert').filter({ hasText: 'Analysis failed. Your conversation is safe; retry explicitly.' }),
+      ).toBeVisible()
+      await expect(page.getByRole('region', { name: 'Conversation photos' }).getByRole('alert')).toContainText(
+        'Re-upload failed or unavailable photos',
+      )
       expect((await session(page)).analysis).toBeNull()
       expect(writes(data)).toEqual([])
       if (scenario === 'malformed') expect((await response.json()).code).toBe('ANALYSIS_FAILED')

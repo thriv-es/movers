@@ -3,6 +3,20 @@ import type { ConversationSession } from '../../lib/conversation-state'
 
 export type ConversationStage = 'details' | 'photos' | 'review' | 'price' | 'requests'
 
+/** Failed linkage is a durable recovery task even if another selected photo produced valid inventory. */
+export function photoRecoveryNeeded(session: ConversationSession): boolean {
+  const selected = new Set(session.photos.map((photo) => photo.url))
+  return (
+    session.needsPhotoReupload ||
+    session.photos.some((photo) => !session.sample && !photo.receipt) ||
+    [
+      ...session.failedPhotoAssessments,
+      ...(session.analysis?.photoAssessments ?? []),
+      ...(session.analysis?.photoLinkStatuses ?? []),
+    ].some((photo) => selected.has(photo.url) && (photo.status === 'unlinked' || photo.status === 'unavailable'))
+  )
+}
+
 /** Presentation only: never grants operation authority or changes domain readiness. */
 export function conversationStage(
   session: ConversationSession,

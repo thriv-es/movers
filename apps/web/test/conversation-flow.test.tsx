@@ -264,6 +264,84 @@ describe('contextual conversation stages', () => {
     fireEvent.click(screen.getByRole('button', { name: /Reopen photos/i }))
     expect(screen.getByRole('region', { name: 'Conversation photos' })).toBeInTheDocument()
   })
+  it.each([
+    ['photoAssessments', 'unlinked'],
+    ['photoAssessments', 'unavailable'],
+    ['photoLinkStatuses', 'unlinked'],
+    ['photoLinkStatuses', 'unavailable'],
+  ] as const)('keeps %s %s recovery visible after a real successful partial analysis', async (source, status) => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const photos = [
+      ready().photos[0],
+      { id: 'photo-2', url: 'https://example.test/failed.jpg', receipt: 'second-receipt' },
+    ]
+    const partial = {
+      ...analysis,
+      [source]:
+        source === 'photoAssessments'
+          ? [
+              { url: photos[0].url, status: 'relevant', reason: 'Room inventory found.' },
+              { url: photos[1].url, status, reason: 'Re-upload this photo.' },
+            ]
+          : [
+              { url: photos[0].url, status: 'eligible', reason: 'Linked.' },
+              { url: photos[1].url, status, reason: 'Re-upload this photo.' },
+            ],
+    }
+    api((path) => (path === '/api/analyze' ? Promise.resolve(Response.json(partial)) : undefined))
+    const view = mount(
+      ready({
+        photos,
+        photoUrls: photos.map((photo) => photo.url),
+        photoRefs: photos.map(({ url, receipt }) => ({ url, receipt })),
+        analysis: null,
+        items: [],
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Analyse 2 photos' }))
+    await waitFor(() => expect(draft().analysis).not.toBeNull())
+    expect(Object.values(draft().operations).at(-1)?.status).toBe('succeeded')
+    expect(screen.getByRole('region', { name: 'Inventory questions' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Conversation photos' })).toBeInTheDocument()
+    expect(screen.getByText('Re-upload required')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/re-upload|remove/i)
+    expect(screen.queryByRole('button', { name: /2 photos analysed/ })).not.toBeInTheDocument()
+    view.unmount()
+    mount()
+    expect(screen.getByText('Re-upload required')).toBeInTheDocument()
+    fireEvent.click(
+      within(screen.getByAltText('failed.jpg').closest('li') as HTMLElement).getByRole('button', { name: 'Remove' }),
+    )
+    expect(draft().photos).toHaveLength(1)
+    expect(draft().analysis).toBeNull()
+  })
+  it('describes completed photo count as selected rather than claiming every selected photo was analysed', () => {
+    api()
+    mount(ready())
+    expect(screen.getByRole('button', { name: /1 photo selected.*Reopen photos/ })).toBeInTheDocument()
+  })
+  it('returns focus to the completed review summary only when its focused control collapses', () => {
+    api()
+    mount(ready({ wholeMoveCovered: null }))
+    const answer = within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'Yes' })
+    answer.focus()
+    fireEvent.click(answer)
+    expect(screen.getByRole('button', { name: /Inventory reviewed.*Reopen review/ })).toHaveFocus()
+  })
+  it.each(['Message', 'Distance (miles)'])(
+    'does not steal focus from unrelated %s edits when review changes',
+    (label) => {
+      api()
+      mount(ready({ wholeMoveCovered: null }))
+      within(screen.getByRole('group', { name: /whole move/i }))
+        .getByRole('button', { name: 'Yes' })
+        .focus()
+      const field = screen.getByLabelText(label)
+      field.focus()
+      fireEvent.change(field, { target: { value: label === 'Message' ? 'Unsent draft' : '42' } })
+      expect(field).toHaveFocus()
+    },
+  )
   it('keeps incomplete review visible despite a model photo action', () => {
     api()
     mount(ready({ nextAction: 'request_photos', wholeMoveCovered: null }))
