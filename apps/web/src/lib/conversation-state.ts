@@ -517,7 +517,12 @@ function commandPatch(state: ConversationSession, command: ConversationCommand):
       )
         return null
       const items = canonicalItems(state.items)
-      const base = { ...clearPrice(), detailsConfirmed: false, photoDecisionsLocked: !!state.analysis }
+      const inventoryEdit = ['item.add', 'item.count', 'item.remove', 'duplicate.resolve'].includes(command.type)
+      const base = {
+        ...clearPrice(),
+        detailsConfirmed: false,
+        photoDecisionsLocked: state.photoDecisionsLocked || (!!state.analysis && inventoryEdit),
+      }
       const override = (type: string, count: number) => {
         const inventoryOverrides = [
           ...state.inventoryOverrides.filter((item) => !sameType(item.type, type)),

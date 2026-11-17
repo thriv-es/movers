@@ -2,7 +2,8 @@ import { expect, it } from 'vitest'
 import { conversationPrompt } from '../functions/api/_lib/conversation-prompts'
 import { parseConversationDecision } from '../functions/api/_lib/conversation-agent'
 import { runConversationAgent } from '../functions/api/_lib/conversation-runner'
-import { conversationSnapshot, createConversationSession } from '../src/lib/conversation-state'
+import { conversationSnapshot, createConversationSession, reduceConversation } from '../src/lib/conversation-state'
+import { groundedConversationProposal } from '../src/lib/conversation-authority'
 
 const messages = [
   {
@@ -19,6 +20,69 @@ const snapshot = conversationSnapshot({
 const example = (prompt: string) =>
   JSON.parse(prompt.split('\n').find((line) => line.startsWith('{') && line.endsWith('}')) ?? '{}')
 
+it.each([false, true])(
+  'complete non-detail descriptive inventory example passes parser, source grounding and transactional application (retry %s)',
+  (retry) => {
+    const state = createConversationSession()
+    state.revision = 7
+    state.items = [{ type: 'sofa', count: 2 }]
+    const captured = conversationSnapshot(state)
+    const prompt = conversationPrompt([], captured, retry)
+    const sourceText = prompt
+      .split('\nEXAMPLE_NON_DETAIL_SOURCE_MESSAGE_JSON\n')[1]
+      ?.split('\nEND_EXAMPLE_NON_DETAIL_SOURCE_MESSAGE_JSON')[0]
+    const decisionText = prompt
+      .split('\nEXAMPLE_NON_DETAIL_DECISION_JSON\n')[1]
+      ?.split('\nEND_EXAMPLE_NON_DETAIL_DECISION_JSON')[0]
+    expect(sourceText).toBeDefined()
+    expect(decisionText).toBeDefined()
+    const source = JSON.parse(sourceText ?? '{}')
+    const decision = JSON.parse(decisionText ?? '{}')
+    const parsed = parseConversationDecision(JSON.stringify(decision), captured, [source])
+    expect(parsed.response.proposals).toHaveLength(6)
+    expect(parsed.tools).toEqual([])
+    expect(parsed.response.proposals.every((proposal) => groundedConversationProposal(proposal, source))).toBe(true)
+    state.messages = [source]
+    const pending = reduceConversation(state, {
+      type: 'proposal.addBatch',
+      proposals: parsed.response.proposals,
+      id: 'example-pending',
+      source: 'agent',
+      expectedRevision: 7,
+    })
+    const applied = reduceConversation(pending, {
+      type: 'proposal.applyBatch',
+      proposalIds: parsed.response.proposals.map((proposal) => proposal.id),
+      id: 'example-authorized-send',
+      source: 'chat',
+      expectedRevision: 7,
+    })
+    expect(applied.items).toEqual([
+      { type: 'sofa', count: 2 },
+      { type: 'refrigerator', count: 1 },
+      { type: 'oven', count: 1 },
+    ])
+    expect(applied.followUps).toEqual({ garage: false, closets: false, appliances: false })
+    expect(applied.wholeMoveCovered).toBe(true)
+    expect(applied.pendingProposals).toEqual([])
+    expect(applied.operations).toEqual({})
+    const legacy = {
+      ...decision,
+      proposals: decision.proposals.map((proposal: { evidence?: unknown }) => ({ ...proposal, evidence: undefined })),
+    }
+    const omitted = parseConversationDecision(JSON.stringify(legacy), captured, [source])
+    expect(omitted.response.proposals.every((proposal) => !groundedConversationProposal(proposal, source))).toBe(true)
+    const legacyPending = reduceConversation(state, {
+      type: 'proposal.addBatch',
+      proposals: omitted.response.proposals,
+      id: 'legacy-pending',
+      source: 'agent',
+      expectedRevision: 7,
+    })
+    expect(legacyPending.items).toEqual([{ type: 'sofa', count: 2 }])
+    expect(legacyPending.pendingProposals).toHaveLength(6)
+  },
+)
 it('provides a closed tool-selection interpretation example and a frozen continuation example through the actual runner', async () => {
   const phases: string[] = []
   const result = await runConversationAgent({

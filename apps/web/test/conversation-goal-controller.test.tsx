@@ -268,6 +268,158 @@ it('incomplete summary clears cached commercial evidence without discarding phot
   expect(hook.result.current.session.items).toEqual(state.items)
   expect(paths).toEqual([])
 })
+it.each(['save', 'schedule', 'quotes'] as const)(
+  'generic %s retry only recovers the current callback form, never posts stored commercial input',
+  async (kind) => {
+    const state = ready()
+    state.price = price
+    state.detailsConfirmed = true
+    state.estimateId = kind === 'save' ? null : 'saved-id'
+    state.contact = kind === 'quotes' ? contact : null
+    const request =
+      kind === 'schedule'
+        ? { kind, contact }
+        : kind === 'quotes'
+          ? { kind, moverIds: ['mover-1'], note: 'old stored note' }
+          : { kind }
+    state.operations = {
+      failed: { id: 'failed', revision: state.revision, request, status: 'failed', errorCode: 'request_failed' },
+    }
+    const paths = api()
+    const hook = renderHook(() => useConversationController(() => state))
+    await act(async () => {
+      await hook.result.current.retry('failed')
+    })
+    expect(paths.filter((path) => path !== '/api/ai-status')).toEqual([])
+    expect(hook.result.current.view).toBe('booking')
+    expect(hook.result.current.session.scheduleResult).toBeNull()
+    // Even after recovery, retry is not consent to resubmit an old contact/note.
+    await act(async () => {
+      await hook.result.current.retry('failed')
+    })
+    expect(paths.filter((path) => path !== '/api/ai-status')).toEqual([])
+  },
+)
+it.each(['schedule', 'quotes'] as const)('retained %s API requires current displayed booking scope', async (kind) => {
+  const state = ready()
+  state.price = price
+  state.estimateId = 'saved-id'
+  state.detailsConfirmed = true
+  state.contact = kind === 'quotes' ? contact : null
+  const paths = api()
+  const hook = renderHook(() => useConversationController(() => state))
+  await act(async () => {
+    if (kind === 'schedule') await hook.result.current.submitContact(contact)
+    else await hook.result.current.submitQuotes(['mover-1'], '')
+  })
+  expect(paths).toEqual([])
+  expect(hook.result.current.session.scheduleResult).toBeNull()
+})
+it.each(['photo', 'duplicate'] as const)(
+  'last explicit inline %s decision automatically opens read-only summary without replaying old Send authority',
+  async (kind) => {
+    const state = ready()
+    state.messages = [{ id: 'old-customer', role: 'user', content: 'set sofa count to 99' }]
+    if (kind === 'photo') {
+      state.items = []
+      state.analysis = {
+        ...analysis,
+        items: [],
+        totalVolumeCubicFeet: 0,
+        estimatedBoxes: { min: 0, max: 0 },
+        photoAssessments: [
+          {
+            url: state.photos[0].url,
+            status: 'uncertain',
+            reason: 'Please check',
+            candidates: { items: [{ type: 'sofa', count: 2 }], total_volume_cubic_feet: 160 },
+          },
+        ],
+      }
+    } else state.analysis = { ...analysis, possibleDuplicates: [{ item: 'sofa', count: 2 }] }
+    const paths = api()
+    const original = globalThis.fetch
+    vi.stubGlobal('fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) !== '/api/conversation') return original(url, init)
+      paths.push('/api/conversation')
+      const request = JSON.parse(String(init?.body))
+      return Response.json({
+        reply: 'The inventory is ready to review.',
+        basedOnRevision: request.snapshot.revision,
+        proposals: [
+          {
+            id: 'old-count',
+            expectedRevision: request.snapshot.revision,
+            command: { type: 'item.count', itemType: 'sofa', count: 99 },
+            evidence: { sourceMessageId: 'old-customer', wording: 'set sofa count to 99' },
+          },
+        ],
+      })
+    })
+    const hook = renderHook(() => useConversationController(() => state))
+    await act(async () => {
+      hook.result.current.apply(
+        kind === 'photo'
+          ? { type: 'photo.decide', photoId: 'photo-1', decision: 'keep' }
+          : { type: 'duplicate.resolve', itemType: 'sofa', resolution: 'different' },
+        'inline',
+      )
+    })
+    expect(hook.result.current.completeness).toEqual({ percent: 95, missing: [], ready: true })
+    expect(hook.result.current.view).toBe('summary')
+    expect(hook.result.current.session.price).toEqual(price)
+    expect(hook.result.current.session.items).toEqual([{ type: 'sofa', count: 2 }])
+    expect(hook.result.current.session.pendingProposals).toHaveLength(1)
+    expect(paths).toEqual(['/api/conversation', '/api/ai-status', '/api/price'])
+    hook.unmount()
+    renderHook(() => useConversationController(loadConversationSession))
+    expect(paths).toEqual(['/api/conversation', '/api/ai-status', '/api/price'])
+  },
+)
+it.each(['single', 'batch'] as const)(
+  'explicit inline acceptance of final factual proposal (%s) opens read-only summary',
+  async (kind) => {
+    const state = ready()
+    state.wholeMoveCovered = null
+    state.pendingProposals = [
+      { id: 'coverage-proposal', expectedRevision: state.revision, command: { type: 'coverage.answer', answer: true } },
+    ]
+    if (kind === 'batch') {
+      state.followUps.garage = null
+      state.pendingProposals.push({
+        id: 'garage-proposal',
+        expectedRevision: state.revision,
+        command: { type: 'followUp.answer', key: 'garage', answer: false },
+      })
+    }
+    const paths = api()
+    const original = globalThis.fetch
+    vi.stubGlobal('fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) !== '/api/conversation') return original(url, init)
+      paths.push('/api/conversation')
+      const request = JSON.parse(String(init?.body))
+      return Response.json({
+        reply: 'The inventory is ready to review.',
+        basedOnRevision: request.snapshot.revision,
+        proposals: [],
+      })
+    })
+    const hook = renderHook(() => useConversationController(() => state))
+    await act(async () => {
+      hook.result.current.apply(
+        kind === 'single'
+          ? { type: 'proposal.apply', proposalId: 'coverage-proposal' }
+          : { type: 'proposal.applyBatch', proposalIds: ['garage-proposal', 'coverage-proposal'] },
+        'inline',
+      )
+    })
+    expect(hook.result.current.completeness).toEqual({ percent: 95, missing: [], ready: true })
+    expect(hook.result.current.chatFailed).toBe(false)
+    expect(hook.result.current.view).toBe('summary')
+    expect(hook.result.current.session.price).toEqual(price)
+    expect(paths).toEqual(['/api/conversation', '/api/ai-status', '/api/price'])
+  },
+)
 it('opens early summary with precise missing essentials and zero pricing or writes', async () => {
   const paths = api()
   const hook = renderHook(() => useConversationController(createConversationSession))

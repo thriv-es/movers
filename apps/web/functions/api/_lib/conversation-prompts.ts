@@ -121,12 +121,39 @@ export function conversationPrompt(
       nextAction: 'request_photos',
     },
   }))
+  const inventorySource = {
+    id: 'example-inventory-source',
+    role: 'user',
+    content:
+      'I have one refrigerator and one oven in the move. No extra garage or closet items; those are all the appliances. This inventory covers the whole move.',
+  }
+  const inventoryCommands = [
+    { command: { type: 'item.add', item: { type: 'refrigerator', count: 1 } }, wording: 'one refrigerator' },
+    { command: { type: 'item.add', item: { type: 'oven', count: 1 } }, wording: 'one oven' },
+    { command: { type: 'followUp.answer', key: 'garage', answer: false }, wording: 'No extra garage or closet items' },
+    { command: { type: 'followUp.answer', key: 'closets', answer: false }, wording: 'No extra garage or closet items' },
+    { command: { type: 'followUp.answer', key: 'appliances', answer: false }, wording: 'those are all the appliances' },
+    { command: { type: 'coverage.answer', answer: true }, wording: 'This inventory covers the whole move' },
+  ]
+  const inventoryExample = {
+    reply: 'Are any named items or counts missing or incorrect?',
+    basedOnRevision: snapshot.revision,
+    proposals: inventoryCommands.map(({ command, wording }, index) => ({
+      id: `inventory-${index + 1}`,
+      expectedRevision: snapshot.revision,
+      command,
+      evidence: { sourceMessageId: inventorySource.id, wording },
+    })),
+    facts: [],
+    tools: [],
+    nextAction: 'inventory',
+  }
   return `You are a moving-estimate intake interpreter. Understand the latest customer message using the current facts and recent conversation; do not use a scripted slot loop. Return ONLY a JSON object.
 ${phase === 'interpret' ? 'INTERPRET EXAMPLE: assume both useful endpoints are already accepted, the customer explicitly asks you to calculate driving distance, and no matching ready route or already-attempted unconfigured/unavailable result exists. Select the closed read-only tool, not an invented distance. This hypothetical example does not authorize tools when endpoints are missing or genuinely ambiguous.' : 'CONTINUATION EXAMPLE: actual route results are already supplied below. Facts are frozen; output no fact updates, no proposals and no further tools. Missing routing still allows photos.'}
 ${JSON.stringify(example)}
 ${
   phase === 'interpret'
-    ? `INTERPRET EXACT ENVELOPES: every proposals[] entry MUST have exactly id, expectedRevision, command. For details it is {"id":"unique-local-id","expectedRevision":${snapshot.revision},"command":{"type":"details.patch","patch":{"from":"supported endpoint"}}}. expectedRevision and basedOnRevision MUST equal the captured revision ${snapshot.revision}. For every other allowed command, put type and its fields INSIDE command, never directly on the proposal. Non-detail factual proposals additionally include optional evidence:{sourceMessageId,wording}, quoting the exact latest user message. Only server-validated latest-message evidence can be applied automatically; otherwise proposals require explicit review. Do not use facts[] for inventory/review commands. Never omit the proposal envelope or replace it with a patch/field/value object.
+    ? `INTERPRET EXACT ENVELOPES: details.patch and request.action proposal envelopes have exactly id, expectedRevision, command. Every non-detail FACTUAL proposal (item.add/item.count/item.remove/photo.decide/duplicate.resolve/followUp.answer/coverage.answer) MUST have exactly FOUR envelope keys: id, expectedRevision, command, evidence. evidence is REQUIRED from the active model in INTERPRET, even for descriptive answers or a multi-command turn; it contains exactly sourceMessageId and wording, quoting an exact substring of the actual latest user message. The legacy wire schema permits omission only for compatibility, in which case the proposal remains pending and cannot auto-apply. For details it is {"id":"unique-local-id","expectedRevision":${snapshot.revision},"command":{"type":"details.patch","patch":{"from":"supported endpoint"}}}. expectedRevision and basedOnRevision MUST equal the captured revision ${snapshot.revision}. For every other allowed command, put type and its fields INSIDE command, never directly on the proposal. Non-detail factual proposals MUST include evidence:{sourceMessageId,wording}, quoting the exact latest user message; never omit it. Only server-validated latest-message evidence can be applied automatically; otherwise proposals require explicit review. Do not use facts[] for inventory/review commands. Never omit the proposal envelope or replace it with a patch/field/value object.
 Every facts[] entry MUST contain ALL SIX keys with these exact names: {"field":"from","sourceMessageId":"actual latest user message id","wording":"exact substring of that message","uncertainty":"certain","precision":"address","correction":false}. field is from|to|date|dateWindow|distanceMiles|originFloor|destinationFloor|originElevator|destinationElevator. uncertainty is certain|uncertain; precision is city|address|exact|window|unknown; correction is a boolean and MUST be present. sourceMessageId MUST be the actual latest user id; wording MUST be an exact quote from that user's content. Do not substitute value/text/quote/source fields or add unknown keys.
 HYPOTHETICAL EXTRACTION EXAMPLE ONLY: the source below is invented public-location test data, not the current customer. Learn its envelope shapes; NEVER copy its addresses, date, source id or wording into the actual turn. Use only CURRENT_STATE_AND_MESSAGES_JSON for actual values and evidence. Extraction alone does not require a tool.
 EXAMPLE_SOURCE_MESSAGE_JSON
@@ -135,6 +162,13 @@ END_EXAMPLE_SOURCE_MESSAGE_JSON
 EXAMPLE_EXTRACTION_DECISION_JSON
 ${JSON.stringify(extractionExample)}
 END_EXAMPLE_EXTRACTION_DECISION_JSON
+NON-DETAIL MULTI-COMMAND EXAMPLE (hypothetical, never current-customer facts): assume the accepted photo inventory contains a sofa but no refrigerator or oven. The descriptive named counts below are explicit inventory scope, not an imperative add command. Extract ALL six supported facts together; EVERY factual proposal carries its OWN evidence with the exact source id and exact quote. facts[] remains for detail fields only. If a named type already exists in the actual snapshot, use item.count for its absolute total instead of adding the photographed item again. Never copy this invented source into current facts.
+EXAMPLE_NON_DETAIL_SOURCE_MESSAGE_JSON
+${JSON.stringify(inventorySource)}
+END_EXAMPLE_NON_DETAIL_SOURCE_MESSAGE_JSON
+EXAMPLE_NON_DETAIL_DECISION_JSON
+${JSON.stringify(inventoryExample)}
+END_EXAMPLE_NON_DETAIL_DECISION_JSON
 AMBIGUOUS LABEL EXAMPLE (hypothetical, never current-customer facts): uncertainty is NOT absence. Retain BOTH supplied endpoint labels in one patch with uncertain, exactly quoted facts even when identical. Ask one geographic-identity question without inventing a state, country, coordinates or distance. Do not omit known labels while clarifying which place they identify.
 EXAMPLE_SOURCE_MESSAGE_JSON
 ${JSON.stringify(ambiguousSource)}
@@ -150,7 +184,7 @@ ${singleFieldExamples.map(({ source, decision }) => `EXAMPLE_SOURCE_MESSAGE_JSON
 Allowed commands:
 - details.patch command shape is EXACTLY {"type":"details.patch","patch":{...}}. patch is a required, nonempty partial object containing only {from,to,date,distanceMiles,originFloor,destinationFloor,originElevator,destinationElevator}. EVERY detail field belongs inside patch, even when there is only ONE field or its value is null; never flatten it onto command. Null inside patch clears, omission retains. Floors are nonnegative integers: ground floor is 0. Unknown date stays null. Optional date-window wording is a dateWindow fact with precision window and date:null, NEVER an invented exact date. Exact dates YYYY-MM-DD only; clarify genuinely ambiguous numeric dates.
 - For a volunteered distance, select distanceMiles with a numeric placeholder; the SERVER reads the customer's explicitly stated km/mile/miles/meters and normalizes units. Never calculate, invent, zero-fill or REQUEST distance. Do not infer it from place names.
-- item.add {item:{type,count}}, item.count {itemType,count}, item.remove {itemType}; integer counts 1-10000, references must name current inventory. Explicit named intent only.
+- item.add {item:{type,count}}, item.count {itemType,count}, item.remove {itemType}; integer counts 1-10000, references must name current inventory. Explicit descriptive named counts (such as 'I have one refrigerator and one oven') are inventory facts; do not require imperative 'add' grammar. For an already known canonical type use item.count with the absolute scoped total, never double-count the same photographed object. Use item.add only for a newly named type. Include required quoted evidence for every factual proposal.
 - photo.decide {photoId,decision:keep|exclude}: existing uncertain photos only.
 - duplicate.resolve {itemType,resolution:same|different}: current pending duplicate only.
 - followUp.answer {key:garage|closets|appliances,answer:boolean}, coverage.answer {answer:boolean}: explicit customer answers only.

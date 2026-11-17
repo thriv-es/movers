@@ -139,7 +139,40 @@ export function useConversationController(initial: () => ConversationSession = l
     input: ConversationInput,
     source: ConversationAction['source'] = 'inline',
     revision = current.current.revision,
-  ) => dispatch({ ...input, id: id(), source, expectedRevision: revision } as ConversationAction)
+  ) => {
+    const previous = current.current
+    const accepted = dispatch({ ...input, id: id(), source, expectedRevision: revision } as ConversationAction)
+    const factualTypes = [
+      'details.patch',
+      'photo.decide',
+      'duplicate.resolve',
+      'item.add',
+      'item.count',
+      'item.remove',
+      'followUp.answer',
+      'coverage.answer',
+    ]
+    const factual =
+      factualTypes.includes(input.type) ||
+      previous.pendingProposals.some(
+        (proposal) =>
+          factualTypes.includes(proposal.command.type) &&
+          ((input.type === 'proposal.apply' && input.proposalId === proposal.id) ||
+            (input.type === 'proposal.applyBatch' && input.proposalIds.includes(proposal.id))),
+      )
+    if (accepted && source === 'inline' && factual && accepted.revision !== previous.revision) {
+      const before = conversationCompleteness(previous)
+      const after = conversationCompleteness(accepted)
+      if ((!before.ready || before.percent < 90) && after.ready && after.percent >= 90) {
+        // Explicit current inline decisions may advance read-only work. No mount, agent/system
+        // result, intent-only proposal, or superseded revision gains this continuation authority.
+        queueMicrotask(() => {
+          void continueInline(accepted)
+        })
+      }
+    }
+    return accepted
+  }
 
   const withLock = async (work: () => Promise<void>) => {
     if (
@@ -329,6 +362,23 @@ export function useConversationController(initial: () => ConversationSession = l
     if (insideLock) await showSummary()
     else await openSummary()
   }
+  const continueInline = async (snapshot: ConversationSession) => {
+    const currentDecision = () =>
+      active.current &&
+      !leaving.current &&
+      current.current.sessionId === snapshot.sessionId &&
+      current.current.revision === snapshot.revision &&
+      uploadRef.current.length === 0
+    if (!currentDecision()) return
+    await withLock(async () => {
+      if (!currentDecision()) return
+      submittedTurn.current = null
+      chatRequest.current?.abort()
+      chatRequest.current = null
+      await turn() // accepted facts only: never inherit an old Send or authorize commercial work
+      if (currentDecision()) await maybeOpenSummary(true)
+    })
+  }
   const confirmPrice = openSummary // compatibility: pricing is now strictly read-only
   const updateSession = () => {
     summaryGeneration.current++
@@ -404,27 +454,24 @@ export function useConversationController(initial: () => ConversationSession = l
       })
       if (accepted) scope.revision = accepted.revision
     })
-  const submitContact = (contact: Contact) =>
-    withLock(async () => {
-      const parsed = zContact.safeParse(contact)
-      if (!parsed.success || !parsed.data.phone.trim()) {
-        setError('Enter a name, valid email, phone and requested date.')
-        return
-      }
-      if (current.current.scheduleResult || unknown('schedule')) return
-      const snapshot = await verify(current.current)
-      if (!snapshot?.detailsConfirmed || !conversationReadiness(snapshot).canSchedule) return
-      await execute({ kind: 'schedule', contact: parsed.data }, async (state) => {
-        if (!state.estimateId) throw new Error('Saved estimate required')
-        const result = await attachContact(state.estimateId, parsed.data)
-        return { kind: 'schedule', reference: result.reference, requestedDate: result.requestedDate }
-      })
-    })
+  // Compatibility must retain the same displayed-scope authorization as the callback form.
+  const submitContact = bookContact
   const submitQuotes = (moverIds: string[], note: string) =>
     withLock(async () => {
+      const scope = displayedScope.current
+      const matches = () =>
+        !!scope &&
+        view === 'booking' &&
+        displayedScope.current === scope &&
+        current.current.sessionId === scope.sessionId &&
+        current.current.revision === scope.revision
+      if (!matches()) {
+        setError('Review the current summary and booking scope before submitting quote requests.')
+        return
+      }
       if (current.current.quoteResult || unknown('quotes')) return
       const snapshot = await verify(current.current)
-      if (!snapshot?.detailsConfirmed || !conversationReadiness(snapshot).canQuote) return
+      if (!snapshot?.detailsConfirmed || !matches() || !conversationReadiness(snapshot).canQuote) return
       await execute({ kind: 'quotes', moverIds, note }, async (state) => {
         if (!state.estimateId) throw new Error('Saved estimate required')
         return { kind: 'quotes', requests: (await requestQuotes(state.estimateId, moverIds, note)).requests }
@@ -742,12 +789,14 @@ export function useConversationController(initial: () => ConversationSession = l
       case 'analyze':
         return analyzePhotos()
       case 'price':
-      case 'save':
         return confirmPrice()
+      case 'save':
       case 'schedule':
-        return submitContact(op.request.contact)
       case 'quotes':
-        return submitQuotes(op.request.moverIds, op.request.note)
+        // A generic retry is recovery navigation, not new consent to stored commercial input.
+        return openSummary().then(() => {
+          if (active.current && !leaving.current) setView('booking')
+        })
     }
   }
   return {

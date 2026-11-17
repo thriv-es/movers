@@ -144,6 +144,12 @@ const writeCases = [
   { kind: 'schedule', path: '/api/estimates/saved-id/contact' },
   { kind: 'quotes', path: '/api/quote-requests' },
 ] as const
+async function displayBooking(result: { current: ConversationController }) {
+  await act(async () => {
+    await result.current.openSummary()
+  })
+  act(() => result.current.bookMove())
+}
 async function beginWrite(result: { current: ConversationController }, kind: (typeof writeCases)[number]['kind']) {
   // No reconstructed customer UI: retained quote/date capabilities invoke the real controller directly.
   if (kind === 'save') return result.current.bookContact(contact)
@@ -506,13 +512,8 @@ describe('actual controller revision and write orchestration (no replacement UI)
       const fetch = api((endpoint) => (endpoint === path ? pending.promise : undefined))
       const view = hook(ready({ price, estimateId: kind === 'save' ? null : 'saved-id', contact }))
       let work: Promise<void> | undefined
-      // Open displayed scope before starting the held callback save.
-      if (kind === 'save') {
-        await act(async () => {
-          await view.result.current.openSummary()
-        })
-        act(() => view.result.current.bookMove())
-      }
+      // Every retained commercial entry point requires fresh displayed booking scope.
+      await displayBooking(view.result)
       act(() => {
         work =
           kind === 'save'
@@ -560,6 +561,7 @@ describe('actual controller revision and write orchestration (no replacement UI)
       if (boundary !== 'unmount abort') view.unmount()
       const restored = renderHook(() => useConversationController())
       expect(restored.result.current.session.operations[operation.id].status).toBe('interrupted')
+      await displayBooking(restored.result)
       await act(async () => {
         await beginWrite(restored.result, kind)
       })
@@ -679,12 +681,7 @@ describe('actual controller revision and write orchestration (no replacement UI)
           : undefined,
       )
       const { result } = hook(ready({ price, estimateId: kind === 'save' ? null : 'saved-id', contact }))
-      if (kind === 'save') {
-        await act(async () => {
-          await result.current.openSummary()
-        })
-        act(() => result.current.bookMove())
-      }
+      await displayBooking(result)
       await act(async () => {
         await beginWrite(result, kind)
       })
@@ -735,10 +732,11 @@ describe('actual controller revision and write orchestration (no replacement UI)
     expect(result.current.error).toMatch(/changed|again/i)
   })
   it.each(['success', 'failure', 'stale'])(
-    'revalidates restored saved estimate only on explicit contact (%s)',
+    'revalidates restored saved estimate on summary review and fresh explicit contact (%s)',
     async (outcome) => {
+      let submitting = false
       const fetch = api((path) =>
-        path === '/api/ai-status'
+        path === '/api/ai-status' && submitting
           ? Promise.resolve(
               outcome === 'failure'
                 ? Response.json({}, { status: 503 })
@@ -751,10 +749,13 @@ describe('actual controller revision and write orchestration (no replacement UI)
       )
       const { result } = hook(ready({ price, estimateId: 'saved-id' }))
       expect(fetch).not.toHaveBeenCalled()
+      await displayBooking(result)
+      expect(calls(fetch, '/api/ai-status')).toHaveLength(1)
+      submitting = true
       await act(async () => {
         await result.current.submitContact(contact)
       })
-      expect(calls(fetch, '/api/ai-status')).toHaveLength(1)
+      expect(calls(fetch, '/api/ai-status')).toHaveLength(outcome === 'success' ? 3 : 2)
       expect(calls(fetch, '/api/estimates/saved-id/contact')).toHaveLength(outcome === 'success' ? 1 : 0)
     },
   )
@@ -1644,12 +1645,7 @@ describe('remaining legacy guards through actual controller entry points', () =>
       const pending = deferred<Response>()
       const fetch = api((endpoint) => (endpoint === path ? pending.promise : undefined))
       const { result } = hook(ready({ price, estimateId: kind === 'save' ? null : 'saved-id', contact }))
-      if (kind === 'save') {
-        await act(async () => {
-          await result.current.openSummary()
-        })
-        act(() => result.current.bookMove())
-      }
+      await displayBooking(result)
       let work: Promise<void>
       act(() => {
         work = beginWrite(result, kind)

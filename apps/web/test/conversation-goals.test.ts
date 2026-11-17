@@ -206,6 +206,42 @@ describe('goal-led domain evidence', () => {
     expect(state.pendingProposals).toEqual([])
     expect(state.items).toEqual([{ type: 'sofa', count: 2 }])
   })
+  it.each(['garage', 'closets', 'appliances', 'coverage'] as const)(
+    'independent %s answers do not lock unresolved photo decisions or relax inventory gates',
+    (key) => {
+      const original = goalReady()
+      if (!original.analysis) throw new Error('Expected analysis')
+      const state = {
+        ...original,
+        analysis: {
+          ...original.analysis,
+          photoAssessments: [
+            {
+              url: original.photos[0].url,
+              status: 'uncertain' as const,
+              reason: 'Please check',
+              candidates: { items: [{ type: 'sofa', count: 2 }], total_volume_cubic_feet: 160 },
+            },
+          ],
+        },
+        photoDecisionsLocked: false,
+        followUps: { garage: null, closets: null, appliances: null },
+        wholeMoveCovered: null,
+      }
+      const answered = change(
+        state,
+        key === 'coverage'
+          ? { type: 'coverage.answer', answer: true }
+          : { type: 'followUp.answer', key, answer: false },
+      )
+      expect(answered.photoDecisionsLocked).toBe(false)
+      expect(change(answered, { type: 'item.count', itemType: 'sofa', count: 3 })).toBe(answered)
+      const kept = change(answered, { type: 'photo.decide', photoId: state.photos[0].id, decision: 'keep' })
+      expect(kept.photoDecisions[state.photos[0].url]).toBe('keep')
+      if (key === 'coverage') expect(kept.wholeMoveCovered).toBe(true)
+      else expect(kept.followUps[key]).toBe(false)
+    },
+  )
   it('named pre-photo inventory survives photos and analysis without alias double counting or invented volume', () => {
     let state = change(createConversationSession(), { type: 'item.add', item: { type: 'couch', count: 3 } })
     expect(state.items).toEqual([{ type: 'sofa', count: 3 }])
