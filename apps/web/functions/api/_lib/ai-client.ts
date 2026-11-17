@@ -19,8 +19,12 @@ export interface AiResult {
 
 type Backend = Exclude<AiMode, 'mock'>
 
-/** The binding defaults to 256 output tokens, which truncates the JSON the prompts ask for. */
-const BINDING_MAX_TOKENS = 2048
+/**
+ * Output cap for every real backend. Workers AI defaults to 256 output tokens on both the binding and the
+ * AI Gateway, which truncates the JSON session block the prompts ask for and leaves a half-written block in
+ * the reply.
+ */
+const MAX_OUTPUT_TOKENS = 2048
 
 function requireBinding(env: Bindings): Ai {
   if (!env.AI) {
@@ -78,13 +82,13 @@ export async function runText(
     {
       gateway: async () => {
         const ai = createWorkersAI(env.CF_AIG_TOKEN)
-        const { text } = await generateText({ model: ai(model), prompt })
+        const { text } = await generateText({ model: ai(model), prompt, maxOutputTokens: MAX_OUTPUT_TOKENS })
         return text
       },
       binding: async () => {
         const output = await requireBinding(env).run(model, {
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: BINDING_MAX_TOKENS,
+          max_tokens: MAX_OUTPUT_TOKENS,
         })
         return readBindingText(output)
       },
@@ -128,6 +132,7 @@ export async function runVision(
                   ],
                 },
               ],
+              maxOutputTokens: MAX_OUTPUT_TOKENS,
             })
             return text
           }),
@@ -145,7 +150,7 @@ export async function runVision(
                   ],
                 },
               ],
-              max_tokens: BINDING_MAX_TOKENS,
+              max_tokens: MAX_OUTPUT_TOKENS,
             })
             return readBindingText(output)
           }),
