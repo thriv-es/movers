@@ -68,6 +68,7 @@ let conversationFailure = false
 let conversationMode = 'normal'
 let conversationCalls = 0
 let conversationContinuations = 0
+let conversationContexts = []
 let conversationCommands = null
 let saveFailures = 0
 let emailLogsSuppressed = 0
@@ -188,6 +189,10 @@ const env = {
         )
         // Provider-level script, not API fulfillment: the real parser/authorship/revision checks still run.
         conversationCalls++
+        conversationContexts.push({
+          hasAnalysis: snapshot.analysis !== null,
+          inventoryCount: snapshot.inventory.length,
+        })
         await hold('conversation')
         if (chatDelay) await new Promise((done) => setTimeout(done, chatDelay))
         if (conversationFailure) throw new Error('Scripted conversation outage')
@@ -198,9 +203,25 @@ const env = {
         const continuation = content.includes('PHASE: continue')
         if (continuation) conversationContinuations++
         let commands = conversationCommands ?? []
+        const goalFixture = [
+          'From 12 Main Street, Boston, MA to 9 Oak Street, Hartford, CT.',
+          'Pickup is ground floor. Delivery is floor 1 with an elevator.',
+          'No garage extras, no closet extras, no appliance extras. This covers the whole move.',
+          'Actually pickup is floor 2, no elevator.',
+          'Please show my price summary.',
+          '120 miles',
+          '120 miles',
+        ].includes(answer)
         if (conversationCommands === null && !continuation) {
           let patch
-          if (answer === 'from Tel Aviv to Raanana on 1.1.2027')
+          if (answer === 'From 12 Main Street, Boston, MA to 9 Oak Street, Hartford, CT.')
+            patch = { from: '12 Main Street, Boston, MA', to: '9 Oak Street, Hartford, CT' }
+          else if (answer === 'Pickup is ground floor. Delivery is floor 1 with an elevator.')
+            patch = { originFloor: 0, destinationFloor: 1, destinationElevator: true }
+          else if (answer === 'Actually pickup is floor 2, no elevator.')
+            patch = { originFloor: 2, originElevator: false }
+          else if (answer === '120 miles') patch = { distanceMiles: 120 }
+          else if (answer === 'from Tel Aviv to Raanana on 1.1.2027')
             patch = { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' }
           else if (answer === 'origin street: 12 Main Street')
             patch = { from: `12 Main Street, ${snapshot.moveDetails.from}` }
@@ -216,7 +237,50 @@ const env = {
           else if (answer === 'Moving from Springfield to Springfield')
             patch = { from: 'Springfield', to: 'Springfield' }
           commands = patch ? [{ type: 'details.patch', patch }] : []
+          if (answer === 'No garage extras, no closet extras, no appliance extras. This covers the whole move.')
+            commands = [
+              ...['garage', 'closets', 'appliances'].map((key) => ({ type: 'followUp.answer', key, answer: false })),
+              { type: 'coverage.answer', answer: true },
+            ]
+          if (answer === 'Please show my price summary.') commands = [{ type: 'request.action', action: 'price' }]
         }
+        if (goalFixture)
+          commands = commands.flatMap((command) => {
+            if (command.type === 'details.patch') {
+              const patch = Object.fromEntries(
+                Object.entries(command.patch).filter(([key, value]) => snapshot.moveDetails[key] !== value),
+              )
+              return Object.keys(patch).length ? [{ ...command, patch }] : []
+            }
+            if (command.type === 'followUp.answer' && snapshot.review.followUps[command.key] === command.answer)
+              return []
+            if (command.type === 'coverage.answer' && snapshot.review.wholeMoveCovered === command.answer) return []
+            return [command]
+          })
+        const latestUser = messages.findLast((message) => message.role === 'user')
+        const goalFacts = goalFixture
+          ? commands
+              .filter((command) => command.type === 'details.patch')
+              .flatMap((command) =>
+                Object.entries(command.patch).map(([field]) => ({
+                  field,
+                  sourceMessageId: latestUser.id,
+                  wording: answer,
+                  uncertainty: 'certain',
+                  precision: field === 'from' || field === 'to' ? 'address' : 'exact',
+                  correction: answer.startsWith('Actually'),
+                })),
+              )
+          : []
+        const nextGoal = !snapshot.analysis
+          ? 'request_photos'
+          : snapshot.moveDetails.originFloor === null || snapshot.moveDetails.destinationFloor === null
+            ? 'access'
+            : Object.values(snapshot.review.followUps).some((value) => value === null)
+              ? 'followups'
+              : snapshot.review.wholeMoveCovered === null
+                ? 'coverage'
+                : 'summary'
         const repeatedOptional = answer === 'I do not know the date or any more street details.'
         return {
           response: JSON.stringify({
@@ -227,16 +291,21 @@ const env = {
                 : 'Scripted provider envelope, never displayed.',
             ...(repeatedOptional ? { clarification: 'date' } : {}),
             basedOnRevision: snapshot.revision,
-            nextAction:
-              (snapshot.moveDetails.from && snapshot.moveDetails.to) || commands.some((command) => command.patch?.to)
+            nextAction: goalFixture
+              ? nextGoal
+              : (snapshot.moveDetails.from && snapshot.moveDetails.to) || commands.some((command) => command.patch?.to)
                 ? 'request_photos'
                 : 'clarify_destination',
+            ...(!continuation && goalFixture ? { facts: goalFacts } : {}),
             tools:
               !continuation && answer.includes('calculate the driving distance') ? [{ type: 'resolve_route' }] : [],
             proposals: (continuation ? [] : commands).map((command, index) => ({
               id: `script-${index}`,
               expectedRevision: snapshot.revision,
               command,
+              ...(goalFixture && command.type !== 'details.patch'
+                ? { evidence: { sourceMessageId: latestUser.id, wording: answer } }
+                : {}),
             })),
           }),
         }
@@ -315,6 +384,7 @@ app.post('/__e2e/reset', async (c) => {
   conversationMode = 'normal'
   conversationCalls = 0
   conversationContinuations = 0
+  conversationContexts = []
   conversationCommands = null
   saveFailures = 0
   emailLogsSuppressed = 0
@@ -353,6 +423,7 @@ app.get('/__e2e/state', async (c) =>
     requests,
     conversationCalls,
     conversationContinuations,
+    conversationContexts,
     entered,
     emailLogsSuppressed,
     movers: await db.prepare('SELECT COUNT(*) AS count FROM movers').first('count'),

@@ -11,6 +11,7 @@ export function ConversationComposer({
   const select = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files ?? [])
     event.currentTarget.value = ''
+    onSend()
     void controller.uploadFiles(files)
   }
   return (
@@ -40,19 +41,8 @@ export function ConversationComposer({
       </form>
       <div className="mv-actions conv-attachments">
         <input
-          ref={camera}
-          className="mv-sr-only"
-          tabIndex={-1}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          aria-label="Take photo"
-          onChange={select}
-          disabled={controller.session.sample}
-        />
-        <input
           ref={library}
-          className="mv-sr-only"
+          hidden
           tabIndex={-1}
           type="file"
           accept="image/jpeg,image/png,image/webp"
@@ -61,12 +51,40 @@ export function ConversationComposer({
           onChange={select}
           disabled={controller.session.sample}
         />
-        <Button size="sm" onClick={() => camera.current?.click()} disabled={controller.session.sample}>
-          Take photo
-        </Button>
-        <Button size="sm" onClick={() => library.current?.click()} disabled={controller.session.sample}>
-          Choose from library
-        </Button>
+        <input
+          ref={camera}
+          hidden
+          tabIndex={-1}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          aria-label="Take photo"
+          onChange={select}
+          disabled={controller.session.sample}
+        />
+        {controller.session.sample ? (
+          <Button size="sm" variant="ghost" onClick={() => controller.reset('own')}>
+            Use my own photos
+          </Button>
+        ) : (
+          <Button size="sm" onClick={() => library.current?.click()}>
+            Add photos
+          </Button>
+        )}
+        <span className="est-small mv-muted">Up to 10 room or item photos</span>
+        <details className="conv-photo-options">
+          <summary className="est-small">Photo options</summary>
+          <div className="mv-actions">
+            <Button size="sm" disabled={controller.session.sample} onClick={() => camera.current?.click()}>
+              Take photo
+            </Button>
+            {!controller.session.sample && !controller.session.photos.length ? (
+              <Button size="sm" variant="ghost" onClick={() => controller.reset('sample')}>
+                Try demo photos
+              </Button>
+            ) : null}
+          </div>
+        </details>
         {controller.chatBusy ? (
           <Button size="sm" variant="ghost" onClick={controller.cancel}>
             Cancel reply
