@@ -70,6 +70,204 @@ afterEach(() => {
   vi.restoreAllMocks()
   window.sessionStorage.clear()
 })
+it('an automatic upload supersedes older Chat and continues with real inventory without inheriting old Send authority', async () => {
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL() {
+        return 'blob:review-upload'
+      }
+      static revokeObjectURL() {}
+    },
+  )
+  const file = new File(['synthetic'], 'room.jpg', { type: 'image/jpeg' })
+  vi.spyOn(images, 'downscaleImage').mockResolvedValue(file)
+  vi.spyOn(apiClient, 'uploadImage').mockResolvedValue({ url: 'https://example.test/room.jpg', receipt: 'private' })
+  vi.spyOn(apiClient, 'analyzeApi').mockResolvedValue(analysis)
+  const state = ready()
+  state.analysis = null
+  state.items = []
+  state.photos = []
+  state.photoUrls = []
+  state.photoRefs = []
+  state.followUps = { garage: null, closets: null, appliances: null }
+  state.wholeMoveCovered = null
+  const contexts: {
+    snapshot: { revision: number; inventory: unknown }
+    messages: { id: string; role: string; content: string }[]
+  }[] = []
+  const paths: string[] = []
+  let releaseOld!: (response: Response) => void
+  const older = new Promise<Response>((resolve) => {
+    releaseOld = resolve
+  })
+  let oldSignal: AbortSignal | null | undefined
+  vi.stubGlobal('fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
+    paths.push(String(url))
+    if (String(url) !== '/api/conversation') throw new Error('Unexpected operation')
+    const request = JSON.parse(String(init?.body))
+    contexts.push(request)
+    if (contexts.length === 1) {
+      oldSignal = init?.signal
+      return older
+    }
+    const latest = request.messages.filter((message: { role: string }) => message.role === 'user').at(-1)
+    return Response.json({
+      reply: 'The current inventory lists 2 sofa. Which count should be used?',
+      basedOnRevision: request.snapshot.revision,
+      proposals: [
+        {
+          id: `count-${contexts.length}`,
+          expectedRevision: request.snapshot.revision,
+          command: { type: 'item.count', itemType: 'sofa', count: contexts.length === 2 ? 3 : 4 },
+          evidence: { sourceMessageId: latest.id, wording: latest.content },
+        },
+        ...(contexts.length === 2
+          ? [
+              {
+                id: 'old-schedule-intent',
+                expectedRevision: request.snapshot.revision,
+                command: { type: 'request.action', action: 'schedule' },
+              },
+            ]
+          : []),
+      ],
+    })
+  })
+  const hook = renderHook(() => useConversationController(() => state))
+  let oldSend!: Promise<void> | undefined
+  act(() => {
+    oldSend = hook.result.current.sendMessage('set sofa count to 3')
+  })
+  await act(async () => {
+    await hook.result.current.uploadFiles([file])
+  })
+  expect(contexts).toHaveLength(2)
+  expect(contexts[1].snapshot.inventory).toEqual([{ type: 'sofa', count: 2 }])
+  expect(oldSignal?.aborted).toBe(true)
+  expect(hook.result.current.session.items).toEqual([{ type: 'sofa', count: 2 }])
+  expect(hook.result.current.session.pendingProposals).toHaveLength(2)
+  await act(async () => {
+    releaseOld(Response.json({ reply: 'Old reply must never be applied', basedOnRevision: 0, proposals: [] }))
+    await oldSend
+  })
+  expect(hook.result.current.chatFailed).toBe(false)
+  expect(
+    hook.result.current.session.messages.some((message) => message.content === 'Old reply must never be applied'),
+  ).toBe(false)
+  await act(async () => {
+    await hook.result.current.sendMessage('set sofa count to 4')
+  })
+  expect(hook.result.current.session.items).toEqual([{ type: 'sofa', count: 4 }])
+  expect(paths).toEqual(['/api/conversation', '/api/conversation', '/api/conversation'])
+})
+it.each([false, true])(
+  'validates dependent photo/count batches transactionally with original authority only (panel edit: %s)',
+  async (edit) => {
+    const state = ready()
+    state.followUps.garage = null
+    state.photos.push({ id: 'photo-2', url: 'https://example.test/uncertain.jpg', receipt: 'private-2' })
+    state.photoUrls.push('https://example.test/uncertain.jpg')
+    state.photoRefs.push({ url: 'https://example.test/uncertain.jpg', receipt: 'private-2' })
+    state.analysis = {
+      ...analysis,
+      photoAssessments: [
+        ...analysis.photoAssessments,
+        {
+          url: 'https://example.test/uncertain.jpg',
+          status: 'uncertain',
+          reason: 'Check this item',
+          candidates: {
+            items: [{ type: 'sofa', count: 1 }],
+            total_volume_cubic_feet: 80,
+            estimated_boxes_min: 1,
+            estimated_boxes_max: 2,
+          },
+        },
+      ],
+    }
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    vi.stubGlobal('fetch', async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body))
+      const latest = request.messages.filter((message: { role: string }) => message.role === 'user').at(-1)
+      if (++calls === 1 && edit) await pending
+      return Response.json({
+        reply: 'Any other items?',
+        basedOnRevision: request.snapshot.revision,
+        proposals: [
+          {
+            id: 'keep-2',
+            expectedRevision: request.snapshot.revision,
+            command: { type: 'photo.decide', photoId: 'photo-2', decision: 'keep' },
+            evidence: { sourceMessageId: latest.id, wording: latest.content },
+          },
+          {
+            id: 'count-3',
+            expectedRevision: request.snapshot.revision,
+            command: { type: 'item.count', itemType: 'sofa', count: 3 },
+            evidence: { sourceMessageId: latest.id, wording: latest.content },
+          },
+        ],
+      })
+    })
+    const hook = renderHook(() => useConversationController(() => state))
+    let sent!: Promise<void> | undefined
+    act(() => {
+      sent = hook.result.current.sendMessage('Keep photo 2 and set sofa count to 3')
+    })
+    if (edit) {
+      act(() => hook.result.current.apply({ type: 'details.patch', patch: { destinationFloor: 2 } }, 'panel'))
+      await act(async () => {
+        release()
+        await sent
+      })
+      expect(hook.result.current.chatFailed).toBe(true)
+      await act(async () => {
+        await hook.result.current.retryChat()
+      })
+    } else
+      await act(async () => {
+        await sent
+      })
+    expect(hook.result.current.chatFailed).toBe(false)
+    expect(hook.result.current.session.photoDecisions['https://example.test/uncertain.jpg']).toBe(
+      edit ? undefined : 'keep',
+    )
+    expect(hook.result.current.session.items).toEqual([{ type: 'sofa', count: edit ? 2 : 3 }])
+    expect(hook.result.current.session.pendingProposals).toHaveLength(edit ? 2 : 0)
+    expect(hook.result.current.session.operations).toEqual({})
+  },
+)
+it('incomplete summary clears cached commercial evidence without discarding photo inventory', async () => {
+  const state = ready()
+  state.price = price
+  state.estimateId = 'stale-saved'
+  state.facts = [
+    {
+      field: 'from',
+      sourceMessageId: 'legacy-uncertainty',
+      wording: '10 Main Street, Boston',
+      uncertainty: 'uncertain',
+      precision: 'address',
+      correction: true,
+    },
+  ]
+  const paths = api()
+  const hook = renderHook(() => useConversationController(() => state))
+  await act(async () => {
+    await hook.result.current.openSummary()
+  })
+  expect(hook.result.current.completeness.ready).toBe(false)
+  expect(hook.result.current.session.price).toBeNull()
+  expect(hook.result.current.session.estimateId).toBeNull()
+  expect(hook.result.current.session.analysis).toEqual(state.analysis)
+  expect(hook.result.current.session.items).toEqual(state.items)
+  expect(paths).toEqual([])
+})
 it('opens early summary with precise missing essentials and zero pricing or writes', async () => {
   const paths = api()
   const hook = renderHook(() => useConversationController(createConversationSession))

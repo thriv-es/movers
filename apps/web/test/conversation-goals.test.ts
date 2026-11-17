@@ -68,6 +68,144 @@ describe('goal-led domain evidence', () => {
       expect(next.detailsConfirmed).toBe(false)
     },
   )
+  it('same-wording uncertainty corrections invalidate commercial evidence but retain accepted photos and transcript', () => {
+    let state = goalReady()
+    state = change(
+      state,
+      {
+        type: 'message.append',
+        message: {
+          id: 'uncertain-origin',
+          role: 'user',
+          content: 'I am not sure whether 10 Main Street, Boston is the pickup',
+        },
+      },
+      'chat',
+    )
+    state = {
+      ...state,
+      detailsConfirmed: true,
+      price: { currency: 'USD', total: 100, low: 90, high: 110, breakdown: {} },
+      estimateId: 'saved-before-correction',
+      contact: { name: 'Synthetic', email: 'synthetic@example.test', phone: '5550100', requestedDate: '2027-01-01' },
+      scheduleResult: { reference: 'saved-before-correction', requestedDate: '2027-01-01', status: 'requested' },
+      quoteResult: { requests: [] },
+    }
+    const next = change(state, {
+      type: 'details.patch',
+      patch: { from: state.moveDetails.from },
+      facts: [
+        {
+          field: 'from',
+          sourceMessageId: 'uncertain-origin',
+          wording: '10 Main Street, Boston',
+          uncertainty: 'uncertain',
+          precision: 'address',
+          correction: true,
+        },
+      ],
+    })
+    expect(next.moveDetails).toEqual(state.moveDetails)
+    expect(conversationCompleteness(next).ready).toBe(false)
+    expect(next).toMatchObject({
+      detailsConfirmed: false,
+      price: null,
+      estimateId: null,
+      contact: null,
+      scheduleResult: null,
+      quoteResult: null,
+    })
+    expect(next.analysis).toEqual(state.analysis)
+    expect(next.items).toEqual(state.items)
+    expect(next.messages).toEqual(state.messages)
+    expect(next.timeline.slice(0, state.timeline.length)).toEqual(state.timeline)
+  })
+  it('fact-only uncertainty corrections supersede in-flight price results', () => {
+    let state = goalReady()
+    state = change(
+      state,
+      {
+        type: 'message.append',
+        message: { id: 'uncertain-price', role: 'user', content: 'I am unsure about 10 Main Street, Boston' },
+      },
+      'chat',
+    )
+    state = change(
+      state,
+      {
+        type: 'operation.started',
+        operationId: 'pending-price',
+        request: { kind: 'price', visionFingerprint: 'vision-one' },
+      },
+      'system',
+    )
+    expect(state.operations['pending-price'].status).toBe('pending')
+    state = change(state, {
+      type: 'details.patch',
+      patch: { from: state.moveDetails.from },
+      facts: [
+        {
+          field: 'from',
+          sourceMessageId: 'uncertain-price',
+          wording: '10 Main Street, Boston',
+          uncertainty: 'uncertain',
+          precision: 'address',
+          correction: true,
+        },
+      ],
+    })
+    expect(state.operations['pending-price'].status).toBe('superseded')
+    expect(
+      change(
+        state,
+        {
+          type: 'operation.succeeded',
+          operationId: 'pending-price',
+          result: { kind: 'price', price: { currency: 'USD', total: 100, low: 90, high: 110, breakdown: {} } },
+        },
+        'system',
+      ),
+    ).toBe(state)
+  })
+  it('rejects invalid dependent proposal batches without publishing any projected changes', () => {
+    let state = goalReady()
+    const uncertain = { id: 'photo-2', url: 'https://example.test/uncertain.jpg', receipt: 'private-2' }
+    if (!state.analysis) throw new Error('Expected analyzed fixture')
+    state = {
+      ...state,
+      photos: [...state.photos, uncertain],
+      photoUrls: [...state.photoUrls, uncertain.url],
+      photoRefs: [...state.photoRefs, { url: uncertain.url, receipt: uncertain.receipt }],
+      analysis: {
+        ...state.analysis,
+        photoAssessments: [
+          ...(state.analysis.photoAssessments ?? []),
+          {
+            url: uncertain.url,
+            status: 'uncertain',
+            reason: 'Check',
+            candidates: { items: [{ type: 'sofa', count: 1 }], total_volume_cubic_feet: 80 },
+          },
+        ],
+      },
+    }
+    const proposals = [
+      {
+        id: 'keep-2',
+        expectedRevision: state.revision,
+        command: { type: 'photo.decide', photoId: 'photo-2', decision: 'keep' },
+      },
+      {
+        id: 'count-missing',
+        expectedRevision: state.revision,
+        command: { type: 'item.count', itemType: 'not-in-inventory', count: 3 },
+      },
+    ]
+    expect(change(state, { type: 'proposal.addBatch', proposals }, 'agent')).toBe(state)
+    expect(state.photoDecisions).toEqual({})
+    expect(state.pendingProposals).toEqual([])
+    expect(state.items).toEqual([{ type: 'sofa', count: 2 }])
+  })
   it('named pre-photo inventory survives photos and analysis without alias double counting or invented volume', () => {
     let state = change(createConversationSession(), { type: 'item.add', item: { type: 'couch', count: 3 } })
     expect(state.items).toEqual([{ type: 'sofa', count: 3 }])

@@ -271,6 +271,10 @@ export function useConversationController(initial: () => ConversationSession = l
       if (accepted) {
         // Feed real, accepted structured inventory to Chat; no old Send authority is inherited.
         submittedTurn.current = null
+        // The accepted analysis supersedes any Chat snapshot from before these photos. Abort
+        // without waiting for a transport that may ignore abort, then start one fresh unauthorized turn.
+        chatRequest.current?.abort()
+        chatRequest.current = null
         await turn()
         await maybeOpenSummary(true)
       }
@@ -488,15 +492,17 @@ export function useConversationController(initial: () => ConversationSession = l
           source: 'agent',
           expectedRevision: snapshot.revision,
         },
-        ...reply.proposals.map(
-          (proposal): ConversationAction => ({
-            type: 'proposal.add',
-            proposal,
-            id: id(),
-            source: 'agent',
-            expectedRevision: snapshot.revision,
-          }),
-        ),
+        ...(reply.proposals.length
+          ? [
+              {
+                type: 'proposal.addBatch' as const,
+                proposals: reply.proposals,
+                id: id(),
+                source: 'agent' as const,
+                expectedRevision: snapshot.revision,
+              },
+            ]
+          : []),
       ]
       let checked = current.current
       for (const action of actions) {

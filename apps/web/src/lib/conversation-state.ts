@@ -249,6 +249,13 @@ export const zConversationAction = z.union([
     .object({ ...envelope, type: z.literal('agent.guidance'), nextAction: zConversationAgentMetadata.shape.nextAction })
     .strict(),
   z.object({ ...envelope, type: z.literal('proposal.add'), proposal: zConversationProposal }).strict(),
+  z
+    .object({
+      ...envelope,
+      type: z.literal('proposal.addBatch'),
+      proposals: z.array(zConversationProposal).min(1).max(12),
+    })
+    .strict(),
   z.object({ ...envelope, type: z.literal('proposal.apply'), proposalId: zConversationId }).strict(),
   z
     .object({
@@ -467,9 +474,11 @@ function commandPatch(state: ConversationSession, command: ConversationCommand):
         ...('date' in command.patch ? ['date', 'dateWindow'] : []),
       ])
       const nextFacts = [...state.facts.filter((fact) => !replaced.has(fact.field)), ...facts]
+      const factsChanged = JSON.stringify(nextFacts) !== JSON.stringify(state.facts)
       return {
-        ...(changed ? { ...clearPrice(), moveDetails, detailsConfirmed: false } : {}),
-        ...(JSON.stringify(nextFacts) !== JSON.stringify(state.facts) ? { facts: nextFacts } : {}),
+        ...(changed || factsChanged ? { ...clearPrice(), detailsConfirmed: false } : {}),
+        ...(changed ? { moveDetails } : {}),
+        ...(factsChanged ? { facts: nextFacts } : {}),
         ...(route !== state.route ? { route } : {}),
       }
     }
@@ -641,7 +650,10 @@ export function reduceConversation(state: ConversationSession, input: Conversati
   if (!parsed.success || !zConversationSession.safeParse(state).success) return state
   const action = parsed.data
   if (action.expectedRevision !== state.revision || state.appliedActionIds.includes(action.id)) return state
-  if (action.source === 'agent' && !['proposal.add', 'message.append', 'agent.guidance'].includes(action.type))
+  if (
+    action.source === 'agent' &&
+    !['proposal.add', 'proposal.addBatch', 'message.append', 'agent.guidance'].includes(action.type)
+  )
     return state
   if ((action.type.startsWith('operation.') || action.type === 'vision.verified') && action.source !== 'system')
     return state
@@ -700,12 +712,22 @@ export function reduceConversation(state: ConversationSession, input: Conversati
     dataChanged = command.data.type !== 'request.action' && Object.keys(change).length > 0
   } else {
     switch (action.type) {
-      case 'summary.attempt':
+      case 'summary.attempt': {
         if (action.source !== 'system') return state
-        patch = { summaryAttemptRevision: state.revision }
+        // Restored/legacy drafts may carry commercial results whose factual readiness changed.
+        // Early summary must withhold those results in the domain, not only in the UI.
+        const ineligible =
+          !conversationCompleteness(state).ready &&
+          !!(state.price || state.estimateId || state.contact || state.scheduleResult || state.quoteResult)
+        dataChanged = ineligible
+        patch = {
+          ...(ineligible ? { ...clearPrice(), detailsConfirmed: false } : {}),
+          summaryAttemptRevision: state.revision + (ineligible ? 1 : 0),
+        }
         event = 'action.requested'
         area = 'price'
         break
+      }
       case 'details.confirm':
         if (!hasDetails(state)) return state
         patch = { detailsConfirmed: true }
@@ -751,6 +773,41 @@ export function reduceConversation(state: ConversationSession, input: Conversati
         message = action.message
         patch = { messages: [...state.messages, message] }
         break
+      case 'proposal.addBatch': {
+        const proposals = action.proposals
+        const first = proposals[0]
+        if (!first) return state
+        if (
+          new Set(proposals.map((proposal) => proposal.id)).size !== proposals.length ||
+          proposals.some(
+            (proposal) =>
+              proposal.expectedRevision !== state.revision ||
+              state.pendingProposals.some((pending) => pending.id === proposal.id),
+          )
+        )
+          return state
+        // Validate the complete batch against sequentially projected facts. A photo decision may
+        // unlock a later inventory edit. This projection grants no authority and is never published.
+        let projected = state
+        for (const [index, proposal] of proposals.entries()) {
+          const command =
+            proposal.command.type === 'details.patch' && proposal.command.route
+              ? { ...proposal.command, route: { ...proposal.command.route, endpointRevision: projected.revision } }
+              : proposal.command
+          const next = reduceConversation(projected, {
+            ...command,
+            id: `${action.id.slice(0, 100)}-check-${index}`,
+            source: 'chat',
+            expectedRevision: projected.revision,
+          })
+          if (next === projected) return state
+          projected = next
+        }
+        patch = { pendingProposals: [...state.pendingProposals, ...proposals] }
+        event = 'proposal.added'
+        area = areaFor(first.command)
+        break
+      }
       case 'proposal.add': {
         if (
           action.proposal.expectedRevision !== state.revision ||
