@@ -67,7 +67,18 @@ export async function runConversationAgent(input: AgentInput): Promise<Conversat
   let final = initial
   const proposals = initial.response.proposals
   let toolResult: ConversationToolResult | undefined
-  if (initial.tools.length) {
+  const projectedCommand = proposals.find((proposal) => proposal.command.type === 'details.patch')?.command
+  const projectedDetails = {
+    ...input.snapshot.moveDetails,
+    ...(projectedCommand?.type === 'details.patch' ? projectedCommand.patch : {}),
+  }
+  const priorRoute = input.snapshot.route
+  const alreadyResolved =
+    priorRoute &&
+    priorRoute.from === projectedDetails.from &&
+    priorRoute.to === projectedDetails.to &&
+    ['ready', 'unconfigured', 'unavailable', 'ambiguous'].includes(priorRoute.status)
+  if (initial.tools.length && !alreadyResolved) {
     let detail = proposals.find((proposal) => proposal.command.type === 'details.patch')
     const command = detail?.command.type === 'details.patch' ? detail.command : undefined
     const details = { ...input.snapshot.moveDetails, ...command?.patch }
@@ -127,7 +138,7 @@ export async function runConversationAgent(input: AgentInput): Promise<Conversat
             ? 'request_photos'
             : 'review'
     }
-    if (nextAction !== 'review') {
+    if (['clarify_origin', 'clarify_destination', 'request_photos'].includes(nextAction)) {
       reply =
         final.clarification === 'geo_identity'
           ? `Could a postcode or nearby landmark identify the ${nextAction === 'clarify_destination' ? 'delivery' : 'pickup'} city? Please include the state or country if known.`

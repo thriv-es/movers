@@ -126,7 +126,7 @@ describe('conversation session persistence and migration', () => {
       const label = `Custom inventory ${'x'.repeat(201)}`
       const old = {
         ...newSession(),
-        moveDetails: SAMPLE_MOVE_DETAILS,
+        moveDetails: { ...SAMPLE_MOVE_DETAILS, from: '10 Main Street, Boston', to: '20 Oak Street, Hartford' },
         photoUrls: ['https://example.test/room.jpg'],
         photoRefs: [{ url: 'https://example.test/room.jpg', receipt: 'private-receipt' }],
         analysis: {

@@ -15,7 +15,7 @@ import {
   createConversationSession,
 } from './conversation-state'
 import { loadConversationSession, saveConversationSession } from './conversation-session'
-import { newSession, sampleSession } from './estimate-session'
+import { type newSession, sampleSession } from './estimate-session'
 import {
   analyzeApi,
   attachContact,
@@ -30,6 +30,8 @@ import {
 } from './api-client'
 import { downscaleImage, HEIC_MESSAGE, isAcceptedType, isHeic } from './image-downscale'
 import { photoEvidence } from './review-photos'
+import { conversationCompleteness } from './conversation-completeness'
+import { groundedConversationProposal } from './conversation-authority'
 import { CONVERSATION_MESSAGE_LIMIT, ConversationContextError, conversationContext } from './conversation-context'
 
 type WithoutEnvelope<T> = T extends unknown ? Omit<T, 'id' | 'source' | 'expectedRevision'> : never
@@ -57,6 +59,9 @@ function migrate(legacy: ReturnType<typeof newSession>) {
 export function useConversationController(initial: () => ConversationSession = loadConversationSession) {
   const [session, setSession] = useState(initial)
   const current = useRef(session)
+  const [view, setView] = useState<'chat' | 'summary' | 'booking'>('chat')
+  const displayedScope = useRef<{ sessionId: string; revision: number } | null>(null)
+  const summaryGeneration = useRef(0)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -115,13 +120,17 @@ export function useConversationController(initial: () => ConversationSession = l
     }
     if (
       next.revision !== previous.revision &&
+      action.type !== 'proposal.applyBatch' &&
       previous.pendingProposals.some(
-        (proposal) => action.type !== 'proposal.apply' || proposal.id !== action.proposalId,
+        (proposal) =>
+          (action.type !== 'proposal.apply' || proposal.id !== action.proposalId) &&
+          !next.pendingProposals.some((entry) => entry.id === proposal.id),
       )
     )
       setSuggestionsExpired(true)
     // Ref and storage update synchronously: repeat clicks and same-tick actions see the accepted revision.
     current.current = next
+    if (next.revision !== previous.revision && !next.price) displayedScope.current = null
     setSession(next)
     saveConversationSession(next)
     return next
@@ -255,62 +264,141 @@ export function useConversationController(initial: () => ConversationSession = l
         setError('Finish or remove pending uploads before analysis.')
         return
       }
-      await execute({ kind: 'analyze' }, async (snapshot) => ({
+      const accepted = await execute({ kind: 'analyze' }, async (snapshot) => ({
         kind: 'analyze',
         analysis: await analyzeApi(snapshot.sessionId, snapshot.photoRefs, snapshot.moveDetails, snapshot.sample),
       }))
+      if (accepted) {
+        // Feed real, accepted structured inventory to Chat; no old Send authority is inherited.
+        submittedTurn.current = null
+        await turn()
+        await maybeOpenSummary(true)
+      }
     })
-  const confirmPrice = () =>
+  const showSummary = async () => {
+    const generation = ++summaryGeneration.current
+    setView('summary')
+    displayedScope.current = null
+    apply({ type: 'summary.attempt' }, 'system')
+    if (uploadRef.current.length) {
+      setError('Finish or remove pending uploads before pricing.')
+      return
+    }
+    // Early summary is useful even when essentials are missing; do not ask the customer for distance.
+    if (!conversationCompleteness(current.current).ready) return
+    let snapshot = await verify(current.current)
+    if (!snapshot || generation !== summaryGeneration.current || !conversationReadiness(snapshot).canPrice) return
+    if (!snapshot.price) {
+      snapshot = await execute(
+        { kind: 'price', visionFingerprint: snapshot.analysis?.visionFingerprint ?? '' },
+        async (state) => {
+          const analysis = conversationAnalysis(state)
+          if (!analysis) throw new Error('Analysis required')
+          const result = await priceApi(
+            analysis,
+            state.moveDetails,
+            {
+              followUps: state.followUps,
+              wholeMoveCovered: state.wholeMoveCovered,
+              photoEvidence: photoEvidence(state.analysis, state.photoDecisions),
+            },
+            state.sample,
+          )
+          return { kind: 'price', price: result.price }
+        },
+      )
+    }
+    if (snapshot?.price) {
+      apply({ type: 'summary.attempt' }, 'system', snapshot.revision)
+      if (generation === summaryGeneration.current)
+        displayedScope.current = { sessionId: snapshot.sessionId, revision: snapshot.revision }
+    }
+  }
+  const openSummary = async () => {
+    setView('summary')
+    await withLock(showSummary)
+  }
+  const maybeOpenSummary = async (insideLock = false) => {
+    const state = current.current
+    const completeness = conversationCompleteness(state)
+    if (state.summaryAttemptRevision === state.revision || completeness.percent < 90 || !completeness.ready) return
+    if (insideLock) await showSummary()
+    else await openSummary()
+  }
+  const confirmPrice = openSummary // compatibility: pricing is now strictly read-only
+  const updateSession = () => {
+    summaryGeneration.current++
+    setView('chat')
+    displayedScope.current = null
+  }
+  const bookMove = () => {
+    setView('booking')
+  } // view intent only, never a write
+  const bookContact = (contact: Contact) =>
     withLock(async () => {
-      if (uploadRef.current.length) {
-        setError('Finish or remove pending uploads before pricing.')
+      const parsed = zContact.safeParse(contact)
+      if (!parsed.success || !parsed.data.phone.trim()) {
+        setError('Enter a name, valid email, phone and requested date.')
         return
       }
-      if (unknown('save')) {
-        setError('Save has an unknown outcome. Check the existing request before starting another estimate.')
-        return
-      }
-      if (current.current.estimateId) return
-      let snapshot = await verify(current.current)
-      if (!snapshot) return
-      if (!conversationReadiness(snapshot).canPrice) {
-        setError('Confirm the details, accepted inventory and all review questions first.')
-        return
-      }
-      if (!snapshot.price) {
-        snapshot = await execute(
-          { kind: 'price', visionFingerprint: snapshot.analysis?.visionFingerprint ?? '' },
-          async (state) => {
-            const analysis = conversationAnalysis(state)
-            if (!analysis) throw new Error('Analysis required')
-            const result = await priceApi(
-              analysis,
-              state.moveDetails,
-              {
-                followUps: state.followUps,
-                wholeMoveCovered: state.wholeMoveCovered,
-                photoEvidence: photoEvidence(state.analysis, state.photoDecisions),
-              },
-              state.sample,
-            )
-            return { kind: 'price', price: result.price }
-          },
+      const scope = displayedScope.current
+      const matches = () =>
+        !!scope &&
+        displayedScope.current === scope &&
+        current.current.sessionId === scope.sessionId &&
+        current.current.revision === scope.revision
+      if (
+        !scope ||
+        view !== 'booking' ||
+        !matches() ||
+        !current.current.price ||
+        !conversationCompleteness(current.current).ready
+      ) {
+        setError(
+          'The displayed move changed. Open the summary and review the current scope before requesting a callback.',
         )
+        return
       }
-      if (!snapshot || !conversationReadiness(snapshot).canSave) return
-      await execute({ kind: 'save' }, async (state) => {
-        const analysis = conversationAnalysis(state)
-        if (!analysis || !state.price) throw new Error('Priced inventory required')
-        const created = await createEstimate({
-          source: state.sample ? 'sample' : 'own',
-          moveDetails: state.moveDetails,
-          analysis,
-          items: state.items,
-          price: state.price,
-          photoKeys: state.photoUrls,
+      if (unknown('save') || unknown('schedule')) {
+        setError(unknownWriteMessage)
+        return
+      }
+      if (current.current.scheduleResult) return
+      let snapshot = await verify(current.current)
+      if (!snapshot || !matches()) return
+      // This explicit callback submission is the customer's confirmation of the displayed scope.
+      if (!snapshot.detailsConfirmed) {
+        snapshot = apply({ type: 'details.confirm' }, 'inline', snapshot.revision)
+        if (!snapshot) return
+        scope.revision = snapshot.revision
+      }
+      if (!snapshot.estimateId) {
+        snapshot = await verify(snapshot)
+        if (!snapshot || !matches() || !conversationReadiness(snapshot).canSave) return
+        snapshot = await execute({ kind: 'save' }, async (state) => {
+          const analysis = conversationAnalysis(state)
+          if (!analysis || !state.price) throw new Error('Priced inventory required')
+          const created = await createEstimate({
+            source: state.sample ? 'sample' : 'own',
+            moveDetails: state.moveDetails,
+            analysis,
+            items: state.items,
+            price: state.price,
+            photoKeys: state.photoUrls,
+          })
+          return { kind: 'save', estimateId: created.id }
         })
-        return { kind: 'save', estimateId: created.id }
+        if (!snapshot) return
+        scope.revision = snapshot.revision
+      }
+      snapshot = await verify(snapshot)
+      if (!snapshot || !matches() || !conversationReadiness(snapshot).canSchedule) return
+      const accepted = await execute({ kind: 'schedule', contact: parsed.data }, async (state) => {
+        if (!state.estimateId) throw new Error('Saved estimate required')
+        const result = await attachContact(state.estimateId, parsed.data)
+        return { kind: 'schedule', reference: result.reference, requestedDate: result.requestedDate }
       })
+      if (accepted) scope.revision = accepted.revision
     })
   const submitContact = (contact: Contact) =>
     withLock(async () => {
@@ -419,16 +507,39 @@ export function useConversationController(initial: () => ConversationSession = l
       for (const action of actions) dispatch(action)
       setSuggestionsExpired(false)
       submittedTurn.current = null // A successful turn consumes authorization; errors may retry at the same revision.
-      const detail = reply.proposals.length === 1 ? reply.proposals[0] : undefined
-      if (
-        detail?.command.type === 'details.patch' &&
-        !snapshot.detailsConfirmed &&
-        !snapshot.price &&
+      const authorized =
         authorization?.sessionId === snapshot.sessionId &&
         authorization.revision === snapshot.revision &&
         authorization.messageId === snapshot.messages.at(-1)?.id
-      )
-        apply({ type: 'proposal.apply', proposalId: detail.id }, 'chat', detail.expectedRevision)
+      if (authorized) {
+        const grounded = reply.proposals.filter((proposal) =>
+          groundedConversationProposal(proposal, snapshot.messages.at(-1)),
+        )
+        if (
+          grounded.length &&
+          !apply(
+            { type: 'proposal.applyBatch', proposalIds: grounded.map((proposal) => proposal.id) },
+            'chat',
+            snapshot.revision,
+          )
+        )
+          return
+        const analyzeIntent = grounded.some(
+          (proposal) => proposal.command.type === 'request.action' && proposal.command.action === 'analyze',
+        )
+        if (analyzeIntent) {
+          // Release this finished Chat request before the accepted analysis asks its next question.
+          chatRequest.current = null
+          setChatBusy(false)
+          await analyzePhotos()
+        } else {
+          const priceIntent = grounded.some(
+            (proposal) => proposal.command.type === 'request.action' && proposal.command.action === 'price',
+          )
+          if (priceIntent) await openSummary()
+          else await maybeOpenSummary()
+        }
+      }
     } catch (caught) {
       if (active.current && !request.signal.aborted && chatRequest.current === request) {
         setChatFailed(true)
@@ -462,6 +573,10 @@ export function useConversationController(initial: () => ConversationSession = l
     const accepted = apply({ type: 'message.append', message }, 'chat')
     if (!accepted) return
     submittedTurn.current = { sessionId: accepted.sessionId, messageId, revision: accepted.revision }
+    // A new answer may correct priced scope. Hide the obsolete overlay before waiting for Chat.
+    summaryGeneration.current++
+    setView('chat')
+    displayedScope.current = null
     setDraft('')
     return turn()
   }
@@ -532,6 +647,16 @@ export function useConversationController(initial: () => ConversationSession = l
         }
       }),
     )
+    if (
+      active.current &&
+      !leaving.current &&
+      current.current.sessionId === snapshot.sessionId &&
+      current.current.revision === cohort.revision &&
+      uploadRef.current.length === 0 &&
+      batch.length > 0
+    ) {
+      await analyzePhotos()
+    }
   }
   const uploadFiles = (files: File[]) => {
     if (!files.length) return
@@ -580,21 +705,29 @@ export function useConversationController(initial: () => ConversationSession = l
     cancel()
     for (const card of uploadRef.current) URL.revokeObjectURL(card.src)
     patchUploads([])
-    const legacy = mode === 'sample' ? sampleSession(window.location.origin) : newSession()
     const next =
       mode === 'new'
         ? createConversationSession()
-        : migrate({
-            ...legacy,
-            messages: current.current.messages,
-            ...(mode === 'own' ? { moveDetails: current.current.moveDetails } : {}),
+        : apply({
+            type: 'photos.replace',
+            sample: mode === 'sample',
+            photos:
+              mode === 'sample'
+                ? sampleSession(window.location.origin).photoUrls.map((url) => ({ id: id(), url, receipt: null }))
+                : [],
           })
+    if (!next) return
+    summaryGeneration.current++
+    setView('chat')
+    displayedScope.current = null
     current.current = next
     setSession(next)
     saveConversationSession(next)
     setError(null)
     setSuggestionsExpired(false)
     setMovers([])
+    if (mode === 'sample') return analyzePhotos()
+    return undefined
   }
   const retry = (operationId: string) => {
     const op = current.current.operations[operationId]
@@ -613,6 +746,12 @@ export function useConversationController(initial: () => ConversationSession = l
   }
   return {
     session,
+    view,
+    openSummary,
+    updateSession,
+    bookMove,
+    bookContact,
+    completeness: conversationCompleteness(session),
     dispatch,
     apply,
     draft,

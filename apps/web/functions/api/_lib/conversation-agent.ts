@@ -13,7 +13,7 @@ import { zChatMessage } from '../../../src/data/z-common/z-move-demo'
 import type { ChatMessage, MoveDetails } from '../../../src/data/types/move-demo.types'
 import { canonicalItemType } from '../../../src/lib/item-aliases'
 import { validateDetailFacts, volunteeredDistance } from './conversation-facts'
-import { safePhotoRequest } from './conversation-guidance'
+import { safePhotoRequest, goalConversationQuestion } from './conversation-guidance'
 import { type ConversationToolIntent, zConversationToolIntent } from './conversation-decisions'
 
 // Task 1's schema is the protocol. Tighten nested stripping objects at this ingress:
@@ -152,6 +152,15 @@ export function parseConversationDecision(
   if (turn.basedOnRevision !== snapshot.revision) throw new Error('Invalid conversation revision')
   for (const proposal of turn.proposals) {
     const command = proposal.command
+    if (proposal.evidence) {
+      const latest = messages.filter((message) => message.role === 'user').at(-1)
+      if (
+        !latest ||
+        proposal.evidence.sourceMessageId !== latest.id ||
+        !latest.content.includes(proposal.evidence.wording)
+      )
+        throw new Error('Invalid conversation evidence')
+    }
     const target =
       command.type === 'details.patch'
         ? 'details'
@@ -227,7 +236,17 @@ export function parseConversationDecision(
   return {
     response: zConversationResponse.parse({
       // A photo request must not displace a model-selected targeted clarification.
-      reply: safePhotoQuestion ? turn.reply : interpret ? actionReply : fallback,
+      reply: safePhotoQuestion
+        ? turn.reply
+        : interpret
+          ? turn.clarification
+            ? actionReply
+            : (goalConversationQuestion(
+                nextAction,
+                snapshot,
+                turn.proposals.map((proposal) => proposal.command),
+              ) ?? actionReply)
+          : fallback,
       basedOnRevision: turn.basedOnRevision,
       proposals: turn.proposals.map((proposal) => ({ ...proposal, id: `proposal-${crypto.randomUUID()}` })),
       ...(interpret ? { agent: { nextAction } } : {}),
@@ -394,7 +413,7 @@ function nextQuestion(state: ConversationSnapshot): string {
   if (state.photos.some((photo) => ['reupload', 'unlinked', 'unavailable'].includes(photo.status))) {
     return 'Please re-upload or remove photos that are not linked before analysis.'
   }
-  if (!state.analysis) return 'Use the Analyze photos control when you are ready; it requires your explicit action.'
+  if (!state.analysis) return 'Your selected photos need analysis. If analysis failed, retry it explicitly.'
   const uncertain = state.photos.find((photo) => photo.status === 'uncertain' && photo.decision === null)
   if (uncertain) return `For photo ${uncertain.id}, choose Keep or Exclude using its review controls.`
   if (!state.inventory.length)
@@ -408,17 +427,14 @@ function nextQuestion(state: ConversationSnapshot): string {
   }
   if (state.review.wholeMoveCovered === null)
     return 'Does this inventory cover the whole move? Please explicitly answer yes or no.'
-  if (!state.detailsConfirmed) return 'Please review and confirm the move details using the details control.'
-  if (!state.price)
-    return state.readiness.canPrice
-      ? 'Review the inventory, then use Confirm inventory and get estimate when ready.'
-      : 'Review the inventory and outstanding checks before using the estimate control.'
-  if (!state.status.estimateSaved) return 'Use the explicit estimate save/retry control before requesting a date.'
-  if (!state.status.dateRequested)
-    return 'Use the contact and date request control; a date request is not a confirmed booking.'
-  if (!state.status.quoteRequestCount)
-    return 'You can choose mover recipients and explicitly send quote requests using the quote control.'
-  return 'Your current results are available in the data panel. What would you like to review or change?'
+  if (
+    state.moveDetails.originFloor === null ||
+    state.moveDetails.destinationFloor === null ||
+    (state.moveDetails.originFloor > 0 && state.moveDetails.originElevator === null) ||
+    (state.moveDetails.destinationFloor > 0 && state.moveDetails.destinationElevator === null)
+  )
+    return goalConversationQuestion('access', state) ?? 'What building access details should be included?'
+  return goalConversationQuestion('summary', state) ?? 'Would you like to review the move summary?'
 }
 
 function reviewCommands(text: string, state: ConversationSnapshot, question: string): ConversationCommand[] {
@@ -554,6 +570,9 @@ export function mockConversationTurn(messages: ChatMessage[], snapshot: Conversa
       id: `mock-${index}`,
       expectedRevision: snapshot.revision,
       command,
+      ...(command.type !== 'details.patch' && latest?.role === 'user'
+        ? { evidence: { sourceMessageId: latest.id, wording: latest.content.slice(0, 1000) } }
+        : {}),
     })),
   }
 }

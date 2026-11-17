@@ -272,13 +272,14 @@ describe('state-aware offline conversation', () => {
     })
     state.review.wholeMoveCovered = true
     state.readiness.canPrice = true
-    expect(turn('hello', state).reply).toMatch(/estimate/i)
+    expect(turn('hello', state).reply).toMatch(/summary/i)
     expect(turn('get estimate', state).proposals[0].command).toEqual({ type: 'request.action', action: 'price' })
     state.price = { currency: 'USD', total: 100, low: 90, high: 110 }
     state.status.estimateSaved = true
-    expect(turn('hello', state).reply).toMatch(/contact.*date/i)
+    expect(turn('hello', state).reply).toMatch(/summary/i)
     state.status.dateRequested = true
-    expect(turn('hello', state).reply).toMatch(/quote/i)
+    expect(turn('hello', state).reply).toMatch(/summary/i)
+    expect(turn('hello', state).reply).not.toMatch(/send.*quote/i)
   })
 
   it('selects the next question after proposed item edits and invalidates the projected old price', () => {
@@ -302,7 +303,7 @@ describe('state-aware offline conversation', () => {
     state.review.wholeMoveCovered = true
     state.price = { currency: 'USD', total: 100, low: 90, high: 110 }
     state.status.estimateSaved = true
-    expect(turn('set sofa count to 3', state).reply).toMatch(/estimate/i)
+    expect(turn('set sofa count to 3', state).reply).toMatch(/summary/i)
     expect(state.inventory).toEqual([{ type: 'sofa', count: 1 }])
     expect(state.price.total).toBe(100)
   })

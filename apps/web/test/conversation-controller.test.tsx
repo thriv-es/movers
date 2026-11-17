@@ -76,7 +76,7 @@ it.each([false, true])(
     expect(paths).toEqual(['/api/conversation', '/api/conversation'])
   },
 )
-it('applies source-bound facts with sole initial Send but keeps confirmed corrections explicit', async () => {
+it('applies latest source-bound corrections with original Send even after explicit confirmation', async () => {
   for (const confirmed of [false, true]) {
     const state = createConversationSession()
     state.moveDetails.from = 'Tel Aviv'
@@ -116,9 +116,10 @@ it('applies source-bound facts with sole initial Send but keeps confirmed correc
       await hook.result.current.sendMessage('actually from Haifa')
     })
     expect(hook.result.current.session.nextAction).toBe('request_photos')
-    expect(hook.result.current.session.moveDetails.from).toBe(confirmed ? 'Tel Aviv' : 'Haifa')
-    expect(hook.result.current.session.pendingProposals).toHaveLength(confirmed ? 1 : 0)
-    expect(hook.result.current.session.facts).toHaveLength(confirmed ? 0 : 1)
+    expect(hook.result.current.session.moveDetails.from).toBe('Haifa')
+    expect(hook.result.current.session.pendingProposals).toHaveLength(0)
+    expect(hook.result.current.session.facts).toHaveLength(1)
+    expect(hook.result.current.session.detailsConfirmed).toBe(false)
     hook.unmount()
     vi.restoreAllMocks()
   }

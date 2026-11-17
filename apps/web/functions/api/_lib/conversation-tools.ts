@@ -51,7 +51,7 @@ async function request(
       (async () => {
         const url = new URL(path, 'https://api.geoapify.com')
         url.search = new URLSearchParams({ ...params, apiKey: key }).toString()
-        const response = await fetcher(url, { method: 'GET', redirect: 'error', signal: controller.signal })
+        const response = await fetcher(url, { method: 'GET', redirect: 'manual', signal: controller.signal })
         if (!response.ok || !response.body || Number(response.headers.get('content-length')) > 65536)
           throw new Error('Tool unavailable')
         const reader = response.body.getReader()

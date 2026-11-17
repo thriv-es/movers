@@ -41,7 +41,10 @@ const analysis: AnalysisResult = {
 }
 function analyzed(value = analysis) {
   let state = createConversationSession()
-  state = send(state, { type: 'details.patch', patch: SAMPLE_MOVE_DETAILS })
+  state = send(state, {
+    type: 'details.patch',
+    patch: { ...SAMPLE_MOVE_DETAILS, from: '10 Main Street, Boston, MA', to: '20 Oak Street, Hartford, CT' },
+  })
   state = send(state, { type: 'details.confirm' })
   state = send(state, {
     type: 'photo.add',
@@ -64,6 +67,7 @@ function ready() {
   for (const key of ['garage', 'closets', 'appliances'] as const)
     state = send(state, { type: 'followUp.answer', key, answer: false })
   state = send(state, { type: 'coverage.answer', answer: true })
+  state = send(state, { type: 'details.confirm' })
   return send(state, { type: 'vision.verified', fingerprint: 'vision-one' }, 'system')
 }
 const price = { currency: 'USD', total: 100, low: 90, high: 110, breakdown: { labor: 100 } }
@@ -109,7 +113,7 @@ describe('revisioned conversation controller', () => {
     }
   })
 
-  it('clears explicit null details and all dependent evidence while preserving prose', () => {
+  it('clears explicit null details and commercial evidence while preserving photo evidence and prose', () => {
     let state = ready()
     state = send(
       state,
@@ -120,17 +124,17 @@ describe('revisioned conversation controller', () => {
     expect(changed.moveDetails.from).toBeNull()
     expect(changed).toMatchObject({
       detailsConfirmed: false,
-      analysis: null,
-      items: [],
-      duplicateResolutions: {},
+      analysis: state.analysis,
+      items: state.items,
+      duplicateResolutions: state.duplicateResolutions,
       price: null,
       estimateId: null,
       contact: null,
-      followUps: { garage: null, closets: null, appliances: null },
-      wholeMoveCovered: null,
+      followUps: state.followUps,
+      wholeMoveCovered: true,
     })
     expect(changed.messages).toEqual([{ id: 'hello', role: 'user', content: 'Keep chatting' }])
-    expect(conversationReadiness(changed).canAnalyze).toBe(false)
+    expect(conversationReadiness(changed).canAnalyze).toBe(true) // photos can be analyzed independently of addresses
   })
 
   it('invalidates analysis when a photo is added or removed and rejects missing references', () => {
@@ -143,7 +147,7 @@ describe('revisioned conversation controller', () => {
       photo: { id: 'photo-two', url: 'https://example.test/second.jpg', receipt: 'second-receipt' },
     })
     expect(added.analysis).toBeNull()
-    expect(added.detailsConfirmed).toBe(true)
+    expect(added.detailsConfirmed).toBe(false)
     expect(send(state, { type: 'photo.add', photo: state.photos[0] })).toBe(state)
   })
 
@@ -244,7 +248,10 @@ describe('revisioned conversation controller', () => {
 
   it('gates analysis on explicit confirmation and receipt-backed photos', () => {
     let state = createConversationSession()
-    state = send(state, { type: 'details.patch', patch: SAMPLE_MOVE_DETAILS })
+    state = send(state, {
+      type: 'details.patch',
+      patch: { ...SAMPLE_MOVE_DETAILS, from: '10 Main Street, Boston, MA', to: '20 Oak Street, Hartford, CT' },
+    })
     expect(conversationReadiness(state).canAnalyze).toBe(false)
     state = send(state, { type: 'details.confirm' })
     expect(
@@ -341,7 +348,9 @@ describe('revisioned conversation controller', () => {
     expect(send(state, { type: 'duplicate.resolve', itemType: 'missing', resolution: 'same' })).toBe(state)
     state = send(state, { type: 'followUp.answer', key: 'closets', answer: true })
     state = send(state, { type: 'followUp.answer', key: 'closets', answer: true })
-    expect(state.items).toContainEqual({ type: 'boxes (full closets)', count: 4 })
+    // A yes answer records coverage, not an invented item/count or manual volume constant.
+    expect(state.items).toEqual([{ type: 'sofa', count: 1 }])
+    expect(state.followUps.closets).toBe(true)
     state = send(state, { type: 'followUp.answer', key: 'closets', answer: false })
     expect(state.items).toEqual([{ type: 'sofa', count: 1 }])
     expect(send(state, { type: 'item.count', itemType: 'missing', count: 1 })).toBe(state)
@@ -455,7 +464,7 @@ describe('revisioned conversation controller', () => {
     expect(send(state, { type: 'item.add', item: { type: 'couch', count: 1 } })).toBe(state)
   })
 
-  it('invalidates prior analysis, review and dependent results when explicit reanalysis starts', () => {
+  it('invalidates prior photo analysis and commercial results but preserves customer answers when reanalysis starts', () => {
     const state = {
       ...ready(),
       price,
@@ -476,8 +485,8 @@ describe('revisioned conversation controller', () => {
       photoDecisions: {},
       photoDecisionsLocked: false,
       duplicateResolutions: {},
-      followUps: { garage: null, closets: null, appliances: null },
-      wholeMoveCovered: null,
+      followUps: { garage: false, closets: false, appliances: false },
+      wholeMoveCovered: true,
       verifiedVisionFingerprint: null,
       price: null,
       estimateId: null,
@@ -489,7 +498,7 @@ describe('revisioned conversation controller', () => {
     expect(started.operations.reanalysis).toMatchObject({ status: 'pending', revision: started.revision })
     expect(started.moveDetails).toEqual(state.moveDetails)
     expect(started.photos).toEqual(state.photos)
-    expect(started.detailsConfirmed).toBe(true)
+    expect(started.detailsConfirmed).toBe(false)
   })
 
   it.each(['photo_link_failed', 'request_failed', 'reanalyze_required'] as const)(

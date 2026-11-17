@@ -22,7 +22,8 @@ import {
   zQuoteRequestRecord,
   zReviewCoverage,
 } from '../data/z-common/z-move-demo'
-import { FOLLOW_UP_ITEMS } from '../components/estimate/ReviewStep'
+import { conversationCompleteness } from './conversation-completeness'
+import { aggregateConversationInventory } from './conversation-inventory'
 import { ESTIMATE_STEPS, isBundledSampleUrl, newSession } from './estimate-session'
 import { canonicalItemType } from './item-aliases'
 import { clearedAnalysis, photoEvidence, reviewedAnalysis } from './review-photos'
@@ -143,7 +144,14 @@ export const zConversationSession = zConversationDomain
     revision: zConversationRevision,
     photos: z.array(zConversationPhoto).max(10),
     detailsConfirmed: z.boolean(),
+    /** Deduplicates automatic read-only summary attempts, including across reload after failure. */
+    summaryAttemptRevision: zConversationRevision.nullable().default(null),
     facts: z.array(zConversationFact).max(12).default([]),
+    /** Customer-stated absolute inventory counts; independent of any photo analysis. */
+    inventoryOverrides: z
+      .array(z.object({ type: zDetectedItem.shape.type, count: z.number().int().nonnegative().max(10000) }).strict())
+      .max(200)
+      .default([]),
     nextAction: zConversationAgentMetadata.shape.nextAction.nullable().default(null),
     route: zConversationRoute.nullable().default(null),
     timeline: z.array(zConversationTimelineEntry),
@@ -224,7 +232,16 @@ const commandActions = zConversationCommand.options.map((command) => command.ext
 // The mapped union retains each command's discriminant and payload type.
 export const zConversationAction = z.union([
   z.object({ ...envelope, type: z.literal('details.confirm') }).strict(),
+  z.object({ ...envelope, type: z.literal('summary.attempt') }).strict(),
   z.object({ ...envelope, type: z.literal('photo.add'), photo: zConversationPhoto }).strict(),
+  z
+    .object({
+      ...envelope,
+      type: z.literal('photos.replace'),
+      photos: z.array(zConversationPhoto).max(10),
+      sample: z.boolean(),
+    })
+    .strict(),
   ...commandActions,
   z.object({ ...envelope, type: z.literal('photo.remove'), photoId: zConversationId }).strict(),
   z.object({ ...envelope, type: z.literal('message.append'), message: zChatMessage }).strict(),
@@ -233,6 +250,13 @@ export const zConversationAction = z.union([
     .strict(),
   z.object({ ...envelope, type: z.literal('proposal.add'), proposal: zConversationProposal }).strict(),
   z.object({ ...envelope, type: z.literal('proposal.apply'), proposalId: zConversationId }).strict(),
+  z
+    .object({
+      ...envelope,
+      type: z.literal('proposal.applyBatch'),
+      proposalIds: z.array(zConversationId).min(1).max(12),
+    })
+    .strict(),
   z.object({ ...envelope, type: z.literal('proposal.dismiss'), proposalId: zConversationId }).strict(),
   z.object({ ...envelope, type: z.literal('vision.verified'), fingerprint: z.string().min(1) }).strict(),
   z
@@ -334,8 +358,8 @@ export function conversationReadiness(state: ConversationSession): ConversationR
   const visionCurrent =
     !!state.analysis?.visionFingerprint && state.verifiedVisionFingerprint === state.analysis.visionFingerprint
   const evidenceReady =
+    conversationCompleteness(state).ready &&
     detailsComplete &&
-    state.detailsConfirmed &&
     photosReady &&
     !!state.analysis &&
     !unresolvedPhotos &&
@@ -347,9 +371,9 @@ export function conversationReadiness(state: ConversationSession): ConversationR
   return {
     detailsComplete,
     canRequestPhotos,
-    canAnalyze: canRequestPhotos && photosReady && !pending(state),
+    canAnalyze: photosReady && !pending(state),
     canPrice: evidenceReady && !pending(state),
-    canSave: evidenceReady && !!state.price && !state.estimateId && !pending(state),
+    canSave: evidenceReady && state.detailsConfirmed && !!state.price && !state.estimateId && !pending(state),
     canSchedule: !!state.price && !!state.estimateId && !pending(state),
     canQuote: !!state.price && !!state.estimateId && !!state.contact && !pending(state),
     unresolvedPhotos,
@@ -373,17 +397,23 @@ const clearEvidence = (): DomainPatch => ({
   scheduleResult: null,
   quoteResult: null,
 })
+function clearPhotoEvidence(state: ConversationSession): DomainPatch {
+  return {
+    ...clearEvidence(),
+    detailsConfirmed: false,
+    items: aggregateConversationInventory([], state.inventoryOverrides),
+    followUps: state.followUps,
+    wholeMoveCovered: state.wholeMoveCovered,
+  }
+}
 function photoPatch(state: ConversationSession, photos: ConversationPhoto[]): DomainPatch {
   return {
     photos,
     photoUrls: photos.map((photo) => photo.url),
     photoRefs: photos.filter((photo) => linked(state, photo)).map(({ url, receipt }) => ({ url, receipt })),
     needsPhotoReupload: photos.some((photo) => !linked(state, photo)),
-    ...clearEvidence(),
+    ...clearPhotoEvidence(state),
   }
-}
-function reviewEditable(state: ConversationSession) {
-  return !!state.analysis && photoEvidence(state.analysis, state.photoDecisions).unresolvedCount === 0
 }
 function commandPatch(state: ConversationSession, command: ConversationCommand): DomainPatch | null {
   switch (command.type) {
@@ -438,7 +468,7 @@ function commandPatch(state: ConversationSession, command: ConversationCommand):
       ])
       const nextFacts = [...state.facts.filter((fact) => !replaced.has(fact.field)), ...facts]
       return {
-        ...(changed ? { ...clearEvidence(), moveDetails, detailsConfirmed: false } : {}),
+        ...(changed ? { ...clearPrice(), moveDetails, detailsConfirmed: false } : {}),
         ...(JSON.stringify(nextFacts) !== JSON.stringify(state.facts) ? { facts: nextFacts } : {}),
         ...(route !== state.route ? { route } : {}),
       }
@@ -461,38 +491,44 @@ function commandPatch(state: ConversationSession, command: ConversationCommand):
       return {
         ...clearPrice(),
         photoDecisions,
-        items: canonicalItems(
+        items: aggregateConversationInventory(
           photoEvidence(state.analysis, photoDecisions).unresolvedCount === 0
             ? reviewedAnalysis(state.analysis, photoDecisions).items
             : state.analysis.items,
+          state.inventoryOverrides,
         ),
         duplicateResolutions: {},
-        followUps: { garage: null, closets: null, appliances: null },
-        wholeMoveCovered: null,
       }
     }
     default: {
-      if (!reviewEditable(state)) return null
+      if (
+        state.analysis &&
+        photoEvidence(state.analysis, state.photoDecisions).unresolvedCount > 0 &&
+        ['item.add', 'item.count', 'item.remove', 'duplicate.resolve'].includes(command.type)
+      )
+        return null
       const items = canonicalItems(state.items)
-      const base = { ...clearPrice(), photoDecisionsLocked: true }
+      const base = { ...clearPrice(), detailsConfirmed: false, photoDecisionsLocked: !!state.analysis }
+      const override = (type: string, count: number) => {
+        const inventoryOverrides = [
+          ...state.inventoryOverrides.filter((item) => !sameType(item.type, type)),
+          { type: canonicalItemType(type), count },
+        ]
+        return { inventoryOverrides, items: aggregateConversationInventory(items, inventoryOverrides) }
+      }
       switch (command.type) {
         case 'item.add': {
           const combined = canonicalItems([...items, command.item])
           const added = combined.find((item) => sameType(item.type, command.item.type))
-          if (!zConversationCommand.safeParse({ type: 'item.add', item: added }).success) return null
-          return { ...base, items: combined }
+          if (!added || !zConversationCommand.safeParse({ type: 'item.add', item: added }).success) return null
+          return { ...base, ...override(command.item.type, added.count) }
         }
         case 'item.count':
         case 'item.remove': {
           if (!items.some((item) => sameType(item.type, command.itemType))) return null
           return {
             ...base,
-            items:
-              command.type === 'item.remove'
-                ? items.filter((item) => !sameType(item.type, command.itemType))
-                : items.map((item) =>
-                    sameType(item.type, command.itemType) ? { ...item, count: command.count } : item,
-                  ),
+            ...override(command.itemType, command.type === 'item.remove' ? 0 : command.count),
           }
         }
         case 'duplicate.resolve': {
@@ -504,20 +540,14 @@ function commandPatch(state: ConversationSession, command: ConversationCommand):
           return {
             ...base,
             duplicateResolutions: { ...state.duplicateResolutions, [type]: command.resolution },
-            items:
-              command.resolution === 'same'
-                ? items.map((item) => (sameType(item.type, type) ? { ...item, count: 1 } : item))
-                : items,
+            ...(command.resolution === 'same' ? override(type, 1) : { items }),
           }
         }
         case 'followUp.answer': {
           if (state.followUps[command.key] === command.answer) return {}
-          const extra = FOLLOW_UP_ITEMS[command.key]
-          const without = items.filter((item) => !sameType(item.type, extra.type))
           return {
             ...base,
             followUps: { ...state.followUps, [command.key]: command.answer },
-            items: command.answer ? canonicalItems([...without, extra]) : without,
           }
         }
         case 'coverage.answer':
@@ -569,7 +599,11 @@ function resultPatch(
         result.analysis.photoLinkStatuses?.some((photo) => !urls.has(photo.url))
       )
         return null
-      return { ...clearEvidence(), analysis: result.analysis, items: canonicalItems(result.analysis.items) }
+      return {
+        ...clearPhotoEvidence(state),
+        analysis: result.analysis,
+        items: aggregateConversationInventory(result.analysis.items, state.inventoryOverrides),
+      }
     }
     case 'price':
       return { ...clearPrice(), price: result.price }
@@ -611,6 +645,38 @@ export function reduceConversation(state: ConversationSession, input: Conversati
     return state
   if ((action.type.startsWith('operation.') || action.type === 'vision.verified') && action.source !== 'system')
     return state
+  if (action.type === 'proposal.applyBatch') {
+    if (
+      !['panel', 'inline', 'chat'].includes(action.source) ||
+      new Set(action.proposalIds).size !== action.proposalIds.length
+    )
+      return state
+    const proposals = action.proposalIds.map((id) => state.pendingProposals.find((proposal) => proposal.id === id))
+    if (proposals.some((proposal) => !proposal || proposal.expectedRevision !== state.revision)) return state
+    let cursor = state
+    for (const [index, proposal] of proposals.entries()) {
+      if (!proposal) return state
+      const command =
+        proposal.command.type === 'details.patch' && proposal.command.route
+          ? { ...proposal.command, route: { ...proposal.command.route, endpointRevision: cursor.revision } }
+          : proposal.command
+      const rebased = { ...proposal, command, expectedRevision: cursor.revision }
+      const before = { ...cursor, pendingProposals: [rebased] }
+      const next = reduceConversation(before, {
+        type: 'proposal.apply',
+        proposalId: proposal.id,
+        id: `${action.id.slice(0, 110)}-${index}`,
+        source: action.source,
+        expectedRevision: cursor.revision,
+      })
+      if (next === before) return state // transaction: never publish a partial batch
+      cursor = next
+    }
+    const remaining = state.pendingProposals
+      .filter((proposal) => !action.proposalIds.includes(proposal.id))
+      .map((proposal) => ({ ...proposal, expectedRevision: cursor.revision }))
+    return { ...cursor, pendingProposals: remaining, appliedActionIds: [...cursor.appliedActionIds, action.id] }
+  }
   let patch: DomainPatch = {}
   let event: Event = 'review.updated'
   let area: Area = 'inventory'
@@ -634,12 +700,24 @@ export function reduceConversation(state: ConversationSession, input: Conversati
     dataChanged = command.data.type !== 'request.action' && Object.keys(change).length > 0
   } else {
     switch (action.type) {
+      case 'summary.attempt':
+        if (action.source !== 'system') return state
+        patch = { summaryAttemptRevision: state.revision }
+        event = 'action.requested'
+        area = 'price'
+        break
       case 'details.confirm':
         if (!hasDetails(state)) return state
         patch = { detailsConfirmed: true }
         dataChanged = !state.detailsConfirmed
         event = 'details.confirmed'
         area = 'details'
+        break
+      case 'photos.replace':
+        patch = { ...photoPatch({ ...state, sample: action.sample }, action.photos), sample: action.sample }
+        dataChanged = true
+        event = 'photos.updated'
+        area = 'photos'
         break
       case 'photo.add':
         if (
@@ -714,7 +792,9 @@ export function reduceConversation(state: ConversationSession, input: Conversati
         // Explicit analysis supersedes prior evidence, even if the new request later fails.
         dataChanged = action.request.kind === 'analyze'
         patch = {
-          ...(dataChanged ? { ...clearEvidence(), failedPhotoAssessments: state.failedPhotoAssessments } : {}),
+          ...(dataChanged
+            ? { ...clearPhotoEvidence(state), failedPhotoAssessments: state.failedPhotoAssessments }
+            : {}),
           operations: {
             ...state.operations,
             [operationId]: {
@@ -758,7 +838,7 @@ export function reduceConversation(state: ConversationSession, input: Conversati
               [operationId]: { ...operation, status: 'failed', errorCode: action.errorCode },
             },
             ...(operation.request.kind === 'analyze' ? { failedPhotoAssessments: assessments } : {}),
-            ...(action.errorCode === 'reanalyze_required' ? clearEvidence() : {}),
+            ...(action.errorCode === 'reanalyze_required' ? clearPhotoEvidence(state) : {}),
           }
           dataChanged = action.errorCode === 'reanalyze_required'
           event = 'operation.failed'
@@ -780,7 +860,19 @@ export function reduceConversation(state: ConversationSession, input: Conversati
           : operation,
       ]),
     )
-    patch.pendingProposals = []
+    // Read-only pricing and acknowledged commercial results change no factual scope. Keep
+    // unresolved suggestions pending, rebased only across this known scope-preserving result.
+    patch.pendingProposals =
+      action.type === 'operation.succeeded' && action.result.kind !== 'analyze'
+        ? state.pendingProposals.map((proposal) => ({
+            ...proposal,
+            expectedRevision: revision,
+            command:
+              proposal.command.type === 'details.patch' && proposal.command.route
+                ? { ...proposal.command, route: { ...proposal.command.route, endpointRevision: revision } }
+                : proposal.command,
+          }))
+        : []
     patch.requestedAction = null
   }
   const entry: ConversationTimelineEntry = message

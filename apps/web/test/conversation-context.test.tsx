@@ -135,7 +135,20 @@ describe('bounded conversation transport without timeline loss', () => {
             {
               id: `proposal-${bodies.length}`,
               expectedRevision: body.snapshot.revision,
-              command: { type: 'details.patch', patch: { from: 'Tel Aviv' } },
+              command: {
+                type: 'details.patch',
+                patch: { from: 'Tel Aviv' },
+                facts: [
+                  {
+                    field: 'from',
+                    sourceMessageId: body.messages.filter((entry: { role: string }) => entry.role === 'user').at(-1).id,
+                    wording: 'Tel Aviv',
+                    uncertainty: 'certain',
+                    precision: 'city',
+                    correction: false,
+                  },
+                ],
+              },
             },
           ],
         })

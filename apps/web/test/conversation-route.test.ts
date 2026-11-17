@@ -346,13 +346,10 @@ describe('POST conversation', () => {
     state.review.followUps = { garage: false, closets: false, appliances: false }
     state.review.wholeMoveCovered = true
     state.readiness.canPrice = true
-    const replies = [
-      'Review the inventory, then use Confirm inventory and get estimate when ready.',
-      'Use the explicit estimate save/retry control before requesting a date.',
-      'Use the contact and date request control; a date request is not a confirmed booking.',
-      'You can choose mover recipients and explicitly send quote requests using the quote control.',
-      'Your current results are available in the data panel. What would you like to review or change?',
-    ]
+    // Commercial status does not become a scripted save/quote funnel in the read-only flow.
+    const replies = Array(5).fill(
+      'You can review the move summary and any missing essentials. Is there anything you would like to correct?',
+    )
     for (const [index, reply] of replies.entries()) {
       if (index === 1) state.price = { currency: 'USD', total: 1234, low: 1200, high: 1300 }
       if (index === 2) state.status.estimateSaved = true

@@ -50,7 +50,17 @@ export const zConversationRoute = z
 export type ConversationRoute = z.infer<typeof zConversationRoute>
 export const zConversationAgentMetadata = z
   .object({
-    nextAction: z.enum(['clarify_origin', 'clarify_destination', 'request_photos', 'review']),
+    nextAction: z.enum([
+      'clarify_origin',
+      'clarify_destination',
+      'request_photos',
+      'review',
+      'access',
+      'inventory',
+      'followups',
+      'coverage',
+      'summary',
+    ]),
     route: zConversationRoute.optional(),
   })
   .strict()
@@ -108,6 +118,11 @@ export const zConversationProposal = z
     id: zConversationId,
     expectedRevision: zConversationRevision,
     command: zConversationCommand,
+    /** Exact latest-user quote, validated by the server; never a model success assertion. */
+    evidence: z
+      .object({ sourceMessageId: z.string().min(1).max(128), wording: z.string().trim().min(1).max(1000) })
+      .strict()
+      .optional(),
   })
   .strict()
 export type ConversationProposal = z.infer<typeof zConversationProposal>

@@ -44,7 +44,16 @@ describe('bounded read-only Geoapify tools', () => {
     expect(urls[0].searchParams.get('limit')).toBe('3')
     expect(urls[2].searchParams.get('waypoints')).toBe('32,34|33,35')
     expect(urls[2].searchParams.get('units')).toBe('metric')
-    expect(fetch.mock.calls.every((call) => call[1]?.method === 'GET' && call[1]?.redirect === 'error')).toBe(true)
+    expect(fetch.mock.calls.every((call) => call[1]?.method === 'GET' && call[1]?.redirect === 'manual')).toBe(true)
+  })
+  it('rejects redirect responses without following them (Worker-compatible manual mode)', async () => {
+    const fetch = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      if (init?.redirect !== 'manual') throw new Error('Worker unsupported redirect mode')
+      return new Response(null, { status: 302, headers: { location: 'https://other.test/' } })
+    })
+    expect(await resolveConversationRoute(endpoints, 'key', fetch)).toMatchObject({ status: 'unavailable' })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0][1]?.redirect).toBe('manual')
   })
   it('does not pick the first of competing plausible Springfields', async () => {
     const fetch = provider([candidate(32, 34, 'Springfield'), candidate(40, 42, 'Springfield')])
