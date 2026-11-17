@@ -6,6 +6,7 @@ import type { Bindings } from '../functions/api/_lib/types'
 import { EMPTY_MOVE_DETAILS } from '../src/data'
 import * as aiMode from '../functions/api/_lib/ai-mode'
 import { sampleCacheKey, writeSampleCache } from '../functions/api/_lib/sample-cache'
+import { photoAssessmentPrompt } from '../functions/api/_lib/prompts'
 
 const inventory = (type = 'sofa') => ({ items: [{ type, count: 1 }], total_volume_cubic_feet: 80 })
 const reply = (verdict = 'relevant', type = 'sofa') =>
@@ -26,6 +27,27 @@ afterEach(() => {
 })
 
 describe('request-aware photo assessment with fake Workers AI', () => {
+  it('accepts the prompt response example through the unchanged assessment pipeline', async () => {
+    const details = { ...EMPTY_MOVE_DETAILS, from: 'Boston, MA', to: 'Hartford, CT' }
+    const prompt = photoAssessmentPrompt(details)
+    // Consume the actual response example, not a separately maintained valid reply fixture.
+    const example = prompt.match(/\{\s*"verdict"[\s\S]*\}/)?.[0] ?? ''
+    const run = vi.fn(async () => ({ response: example }))
+    const result = await assessPhotos(bindings(run), photos(1), details, false)
+    expect(result.photos[0]?.status).toBe('relevant')
+    expect(result.analysis).toMatchObject({
+      items: [{ type: 'sofa', count: 1 }],
+      total_volume_cubic_feet: 80,
+      estimated_boxes_min: 1,
+      estimated_boxes_max: 3,
+      special_handling: [],
+      possible_duplicates: [],
+      unseen_areas: ['closets'],
+    })
+    expect(result.visionFingerprint).toEqual(expect.any(String))
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
   it('preserves mixed ordering, merges relevant only, keeps uncertain candidates and excludes unlinked bytes', async () => {
     const linked = photos(3)
     linked.splice(1, 0, { url: 'private-url', status: 'unlinked', reason: 'Re-upload' })
