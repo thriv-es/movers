@@ -38,17 +38,26 @@ export function ConversationPhotos({ controller }: { controller: ConversationCon
       </p>
       {photoRecoveryNeeded(session) ? (
         <p role="alert" className="est-error">
-          Some photos need re-uploading. Add them again below, or remove the unavailable ones.
+          Some photos could not be reviewed. Retry analysis; re-upload or remove an attachment only if it is marked
+          Re-upload required.
         </p>
       ) : null}
       <ul className="conv-photo-strip" aria-label="Selected photos">
         {session.photos.map((photo, index) => {
           const linkageFailure = [...assessments, ...(session.analysis?.photoLinkStatuses ?? [])].find(
-            (entry) => entry.url === photo.url && ['unlinked', 'unavailable'].includes(entry.status),
+            (entry) =>
+              entry.url === photo.url &&
+              ['unlinked', 'unavailable'].includes(entry.status) &&
+              entry.reason !== 'Photo assessment could not be completed. Please try again.',
           )
           const assessment = linkageFailure ?? assessments.find((entry) => entry.url === photo.url)
+          const providerUnavailable =
+            !linkageFailure &&
+            assessment?.status === 'unavailable' &&
+            assessment.reason === 'Photo assessment could not be completed. Please try again.'
           const unavailable =
-            (!session.sample && !photo.receipt) || ['unlinked', 'unavailable'].includes(assessment?.status ?? '')
+            (!session.sample && !photo.receipt) ||
+            (!providerUnavailable && ['unlinked', 'unavailable'].includes(assessment?.status ?? ''))
           return (
             <li key={photo.id} className="conv-photo">
               <img src={photo.url} alt={`Room or item attachment ${index + 1}`} loading="lazy" />
@@ -56,17 +65,19 @@ export function ConversationPhotos({ controller }: { controller: ConversationCon
                 Photo {index + 1} ·{' '}
                 {unavailable
                   ? 'Re-upload required'
-                  : session.photoDecisions[photo.url] === 'exclude'
-                    ? 'Excluded'
-                    : session.photoDecisions[photo.url] === 'keep'
-                      ? 'Included after review'
-                      : assessment?.status === 'relevant'
-                        ? 'Reviewed'
-                        : assessment?.status === 'unrelated'
-                          ? 'Not move inventory'
-                          : assessment?.status === 'uncertain'
-                            ? 'Needs your input'
-                            : 'Attached'}
+                  : providerUnavailable
+                    ? 'Review unavailable — retry analysis'
+                    : session.photoDecisions[photo.url] === 'exclude'
+                      ? 'Excluded'
+                      : session.photoDecisions[photo.url] === 'keep'
+                        ? 'Included after review'
+                        : assessment?.status === 'relevant'
+                          ? 'Reviewed'
+                          : assessment?.status === 'unrelated'
+                            ? 'Not move inventory'
+                            : assessment?.status === 'uncertain'
+                              ? 'Needs your input'
+                              : 'Attached'}
               </span>
               {assessment?.reason ? <p className="est-small">{assessment.reason}</p> : null}
               {assessment?.status === 'uncertain' && !session.photoDecisions[photo.url] ? (

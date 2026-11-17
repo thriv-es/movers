@@ -215,6 +215,20 @@ it('identifies each unavailable photo even when only legacy linkage evidence rec
   expect(screen.getByText('Photo 1 · Re-upload required')).toBeVisible()
   expect(screen.queryByText('Photo 1 · Attached')).not.toBeInTheDocument()
 })
+it('does not blame valid photo bytes when only the provider assessment failed', () => {
+  const c = controller()
+  c.session.photos = [{ id: 'provider-failure', url: 'https://example.invalid/room.jpg', receipt: 'synthetic-receipt' }]
+  c.session.failedPhotoAssessments = [
+    {
+      url: c.session.photos[0].url,
+      status: 'unavailable',
+      reason: 'Photo assessment could not be completed. Please try again.',
+    },
+  ]
+  render(<ConversationPhotos controller={c} />)
+  expect(screen.getByText('Photo 1 · Review unavailable — retry analysis')).toBeVisible()
+  expect(screen.queryByText('Photo 1 · Re-upload required')).not.toBeInTheDocument()
+})
 it('moves keyboard focus to stable photo management when a resolved decision disappears', () => {
   const c = controller()
   c.session.photos = [{ id: 'uncertain-photo', url: 'https://example.invalid/room.jpg', receipt: 'synthetic-receipt' }]
