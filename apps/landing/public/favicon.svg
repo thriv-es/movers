@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>Movers</title>
+  <path d="M4 12h24v16H4z" fill="#d8a866" stroke="#12121a" stroke-width="2.5" stroke-linejoin="round" />
+  <path d="M2 12 6.5 5h19L30 12z" fill="#fff6e0" stroke="#12121a" stroke-width="2.5" stroke-linejoin="round" />
+  <path d="M13 5h6v13h-6z" fill="#e4572e" stroke="#12121a" stroke-width="2" stroke-linejoin="round" />
+</svg>

@@ -1,0 +1,15 @@
+# Copy this file to .dev.vars and fill in your values.
+# .dev.vars is gitignored - these secrets are only used during local development.
+
+# Production path: Cloudflare AI Gateway. Leave as is (or remove) to use local AI instead.
+CF_AIG_TOKEN=your_cloudflare_ai_gateway_token_here
+
+# Which backend answers the AI routes: auto (default) | gateway | binding | mock
+#   auto    - gateway when CF_AIG_TOKEN is set; else Workers AI through `wrangler login`
+#             (pnpm dev:api adds the binding); else the offline mock
+#   mock    - offline, deterministic, labelled "Demo data" in the app
+#   binding - force Workers AI through your Wrangler login (billed to that Cloudflare account)
+# AI_MODE=auto
+
+# With several Cloudflare accounts, choose the one Workers AI is billed to (thriv.es):
+# CLOUDFLARE_ACCOUNT_ID=7a07e0c68a7370f303987cfa95cfcaa6

@@ -1,0 +1,114 @@
+/* Admin pages: tab strip, detail grid and clickable table rows. Tokens come from @movers/ui/tokens.css. */
+
+.adm-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.adm-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.adm-tabs a {
+  display: inline-block;
+  padding: 0.4rem 0.9rem;
+  font-family: var(--mv-display);
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mv-ink);
+  text-decoration: none;
+  background: var(--mv-paper);
+  border: var(--mv-border);
+  box-shadow: var(--mv-shadow-sm);
+}
+
+.adm-tabs a:hover {
+  background: var(--mv-kraft-lt);
+}
+
+.adm-tabs a.is-active {
+  color: var(--mv-paper);
+  background: var(--mv-ink);
+}
+
+.adm-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (min-width: 1100px) {
+  .adm-split--open {
+    grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+  }
+}
+
+.adm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.adm-grid dt {
+  font-family: var(--mv-caption);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mv-ink-soft);
+}
+
+.adm-grid dd {
+  margin: 0 0 0.5rem;
+  font-family: var(--mv-body);
+}
+
+.adm-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-family: var(--mv-body);
+}
+
+.adm-row--click {
+  cursor: pointer;
+}
+
+.adm-row--click:focus-visible td {
+  outline: 3px solid var(--mv-sky);
+  outline-offset: -3px;
+}
+
+.adm-row--selected td {
+  background: var(--mv-kraft-lt);
+}
+
+.adm-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem 1rem;
+}
+
+.adm-form--full {
+  grid-column: 1 / -1;
+}
+
+.adm-section {
+  margin: 0;
+  font-family: var(--mv-display);
+  font-size: 1rem;
+  text-transform: uppercase;
+}
+
+.adm-nowrap {
+  white-space: nowrap;
+}

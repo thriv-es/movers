@@ -1,0 +1,131 @@
+# =============================================================================
+# Wrangler configuration for the thriv.es movers Cloudflare Pages app
+#
+# GETTING STARTED
+# ---------------
+# 1. For local dev: copy .dev.vars.example to .dev.vars and fill in secrets
+# 2. Run the stack: pnpm dev  (Vite on 4610 is the entry point, wrangler pages dev on 4611)
+# 3. Deploy: push a branch. The Pages project "movers" is connected to GitHub and
+#    builds the `dev` branch as a preview (root dir apps/web, `pnpm build`, output
+#    dist); `main` is production. `pnpm deploy` is the manual fallback.
+#
+# PRODUCTION SETUP
+# ----------------
+# The production resources exist and are bound in [env.production] below:
+# R2 bucket `movers-prod`, D1 database `movers-prod`.
+# Apply D1 migrations with:
+#   wrangler d1 migrations apply movers-prod --remote --env production
+# Deploy with: wrangler pages deploy dist --project-name=movers --branch=main
+# =============================================================================
+
+name = "movers"
+compatibility_date = "2025-05-01"
+pages_build_output_dir = "dist"
+
+# ---------------------------------------------------------------------------
+# Environment variables
+# Secrets (CF_AIG_TOKEN) go in .dev.vars for local dev.
+# For production: `wrangler pages secret put CF_AIG_TOKEN`
+# ---------------------------------------------------------------------------
+[vars]
+ENV = "development"
+PRICE_PER_BOX = "50"
+
+# ---------------------------------------------------------------------------
+# Cloudflare R2 - object storage for uploaded move photos.
+# The top-level and [env.preview] blocks use the dev bucket "movers";
+# production uses its own bucket "movers-prod" (see [env.production] below).
+# Docs: https://developers.cloudflare.com/r2/
+# ---------------------------------------------------------------------------
+[[r2_buckets]]
+binding = "MOVERS_BUCKET"
+bucket_name = "movers"
+
+# ---------------------------------------------------------------------------
+# Cloudflare D1 - saved estimates (leads), movers and quote requests.
+# Migrations live in ./migrations; `pnpm dev:api` applies them to the local
+# database before starting. Without this binding the API keeps records in
+# memory (unit tests).
+# The top-level and [env.preview] blocks use the dev database "movers";
+# production uses its own database "movers-prod" (see [env.production] below).
+# Docs: https://developers.cloudflare.com/d1/
+# ---------------------------------------------------------------------------
+[[d1_databases]]
+binding = "MOVERS_DB"
+database_name = "movers"
+database_id = "348b7021-674d-4437-9ad0-faa96fd0fc31"
+migrations_dir = "migrations"
+
+# ---------------------------------------------------------------------------
+# Workers AI - used by the AI routes when CF_AIG_TOKEN is not set (local dev).
+#
+# The `AI` binding is deliberately NOT declared here. An AI binding is always
+# remote, and Wrangler refuses to start `pages dev` at all when it cannot open
+# the remote session (not logged in, offline, or several accounts and none
+# chosen). That would also break AI_MODE=mock, which must work offline.
+#
+# Instead `pnpm dev:api` (scripts/dev-api.mjs) adds the binding with `--ai AI`
+# when it is needed, and restarts without it when Workers AI is unreachable, so
+# the API falls back to the offline mock. See .dev.vars.example.
+#
+# To bind it unconditionally (a deployed environment), uncomment:
+# [ai]
+# binding = "AI"
+# Docs: https://developers.cloudflare.com/workers-ai/configuration/bindings/
+# ---------------------------------------------------------------------------
+
+# =============================================================================
+# PREVIEW ENVIRONMENT
+# =============================================================================
+# Preview deployments (every non-production branch, e.g. https://dev.movers-ee0.pages.dev).
+# Once Pages reads this file it replaces the dashboard's preview config: plain-text
+# dashboard vars are dropped, only dashboard secrets (CF_AIG_TOKEN) survive. Put
+# every non-secret preview var here. Vars are also exposed to the build, so the
+# VITE_* ones work. The admin UI and API stay open on previews (ENV != production)
+# and there is no auth, so previews are for testing.
+# CHAT_MODEL/PRICE_MODEL: Workers AI models for the chat and pricing calls; empty
+# means TEXT_MODEL in functions/api/_lib/ai.ts (llama-3.3-70b). The cheaper
+# llama-3.1-8b-instruct-fp8-fast was tried for the chat and could not follow the
+# session-block prompt (it hallucinated the whole script), so both stay on 70B.
+[env.preview]
+vars = { ENV = "preview", PRICE_PER_BOX = "50", CHAT_MODEL = "", PRICE_MODEL = "", VITE_LANDING_URL = "https://movers-landing.pages.dev/" }
+
+[[env.preview.r2_buckets]]
+binding = "MOVERS_BUCKET"
+bucket_name = "movers"
+
+[[env.preview.d1_databases]]
+binding = "MOVERS_DB"
+database_name = "movers"
+database_id = "348b7021-674d-4437-9ad0-faa96fd0fc31"
+migrations_dir = "migrations"
+
+[env.preview.ai]
+binding = "AI"
+
+# =============================================================================
+# PRODUCTION ENVIRONMENT
+# Uncomment and fill in after creating resources in Cloudflare.
+# =============================================================================
+[env.production]
+vars = { ENV = "production", PRICE_PER_BOX = "50" }
+
+# ---------------------------------------------------------------------------
+# Production Cloudflare R2 - object storage for uploaded move photos.
+# Separate from the preview bucket "movers" so previews can never read or
+# write production photos.
+# ---------------------------------------------------------------------------
+[[env.production.r2_buckets]]
+binding = "MOVERS_BUCKET"
+bucket_name = "movers-prod"
+
+# ---------------------------------------------------------------------------
+# Production Cloudflare D1 - saved estimates (leads), movers and quote requests.
+# Separate from the preview database "movers" for the same reason.
+# Migrations: `wrangler d1 migrations apply movers-prod --remote --env production`
+# ---------------------------------------------------------------------------
+[[env.production.d1_databases]]
+binding = "MOVERS_DB"
+database_name = "movers-prod"
+database_id = "4b7ca9e1-ce6e-47bf-a0d0-186361d75035"
+migrations_dir = "migrations"
