@@ -2,7 +2,7 @@
  * Continuous page operation/review regressions live in conversation-flow.test.tsx.
  */
 import { createElement } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { HelmetProvider } from 'react-helmet-async'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,6 +11,8 @@ import { EstimateStep } from '../src/components/estimate/EstimateStep'
 import EstimatePage from '../src/pages/estimate.page'
 import { analyzeApi, priceApi, uploadImage } from '../src/lib/api-client'
 import { photoEvidence, reviewedAnalysis } from '../src/lib/review-photos'
+import { useConversationController } from '../src/lib/useConversationController'
+import { conversationReadiness } from '../src/lib/conversation-state'
 import {
   EMPTY_SESSION,
   type EstimateSession,
@@ -59,6 +61,19 @@ function mountLegacy(patch: Record<string, unknown>) {
   return render(createElement(HelmetProvider, null, createElement(MemoryRouter, null, createElement(EstimatePage))))
 }
 const draft = () => JSON.parse(window.sessionStorage.getItem(SESSION_KEY) ?? '{}')
+async function expectAnalysisBlocked() {
+  // The goal-driven UI has no Analyze button for invalid references. Invoke the actual controller guard.
+  const fetch = vi.fn()
+  vi.stubGlobal('fetch', fetch)
+  const { result, unmount } = renderHook(() => useConversationController())
+  expect(result.current.readiness.canAnalyze).toBe(false)
+  await act(async () => {
+    await result.current.analyzePhotos()
+  })
+  expect(result.current.session.analysis).toBeNull()
+  expect(fetch).not.toHaveBeenCalled()
+  unmount()
+}
 beforeEach(() => {
   vi.stubGlobal(
     'ResizeObserver',
@@ -236,35 +251,40 @@ describe('estimate session', () => {
       needsPhotoReupload: true,
     })
   })
-  it('shows legacy thumbnails but cannot analyze them without a new receipt', () => {
+  it('shows legacy thumbnails but cannot analyze them without a new receipt', async () => {
     mountLegacy({ version: 4, step: 'estimate', photoUrls: ['https://example.test/room.jpg'], analysis })
-    expect(screen.getByAltText('room.jpg')).toHaveAttribute('src', 'https://example.test/room.jpg')
-    expect(screen.getByText(/re-upload your photos to continue/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
+    expect(screen.getByAltText('Room or item attachment 1')).toHaveAttribute('src', 'https://example.test/room.jpg')
+    expect(screen.getByText('Photo 1 · Re-upload required')).toBeInTheDocument()
+    expect(draft()).toMatchObject({ version: 6, photoRefs: [], needsPhotoReupload: true })
+    await expectAnalysisBlocked()
   })
   it.each([
     'http://localhost:3000/sample/lookalike.jpg',
     'https://other.example/sample/living-room.jpg',
     'http://localhost:3000/sample/living-room.jpg?x=1',
-  ])('does not trust sample mode for a non-bundled ref: %s', (url) => {
+  ])('does not trust sample mode for a non-bundled ref: %s', async (url) => {
     mountLegacy({ sample: true, step: 'upload', photoUrls: [url], photoRefs: [{ url, receipt: null }] })
-    expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
+    expect(draft()).toMatchObject({ sample: false, needsPhotoReupload: true, photos: [{ url, receipt: null }] })
+    await expectAnalysisBlocked()
   })
-  it('does not treat a null-receipt own-photo ref as an upload', () => {
+  it('does not treat a null-receipt own-photo ref as an upload', async () => {
     mountLegacy({
       step: 'upload',
       photoUrls: ['https://example.test/room.jpg'],
       photoRefs: [{ url: 'https://example.test/room.jpg', receipt: null }],
       sample: false,
     })
-    expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
+    expect(draft().photos[0].receipt).toBeNull()
+    expect(draft().needsPhotoReupload).toBe(true)
+    await expectAnalysisBlocked()
   })
   it('removing a legacy thumbnail removes its visible URL from the draft', async () => {
     mountLegacy({ version: 4, step: 'estimate', photoUrls: ['https://example.test/room.jpg'], analysis })
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    fireEvent.click(screen.getByText('Manage photo 1'))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove photo 1' }))
     await waitFor(() => expect(draft().photoUrls).toEqual([]))
   })
-  it('preserves migrated thumbnails after a new upload, requires their explicit removal and details confirmation', async () => {
+  it('preserves migrated thumbnails after upload and analyzes only receipt-backed replacements after explicit removal', async () => {
     vi.stubGlobal(
       'URL',
       class extends URL {
@@ -301,8 +321,8 @@ describe('estimate session', () => {
     await waitFor(() =>
       expect(draft().photoRefs).toEqual([{ url: 'https://example.test/new-room.jpg', receipt: 'opaque-test-receipt' }]),
     )
-    expect(screen.getByAltText('room-a.jpg')).toBeInTheDocument()
-    expect(screen.getByAltText('room-b.jpg')).toBeInTheDocument()
+    expect(screen.getByAltText('Room or item attachment 1')).toHaveAttribute('src', 'https://example.test/room-a.jpg')
+    expect(screen.getByAltText('Room or item attachment 2')).toHaveAttribute('src', 'https://example.test/room-b.jpg')
     expect(draft()).toMatchObject({
       photoUrls: [
         'https://example.test/room-a.jpg',
@@ -311,34 +331,66 @@ describe('estimate session', () => {
       ],
       needsPhotoReupload: true,
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Review move details' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm move details' }))
-    expect(screen.getByRole('button', { name: 'Analyse 1 photo' })).toBeDisabled()
-    for (const name of ['room-a.jpg', 'room-b.jpg'])
-      fireEvent.click(
-        within(screen.getByAltText(name).closest('li') as HTMLElement).getByRole('button', { name: 'Remove' }),
-      )
+    await expectAnalysisBlocked()
+    for (const url of ['https://example.test/room-a.jpg', 'https://example.test/room-b.jpg']) {
+      const image = screen.getAllByRole('img').find((image) => image.getAttribute('src') === url)
+      expect(image).toBeInTheDocument()
+      const row = within(image?.closest('li') as HTMLElement)
+      fireEvent.click(row.getByText(/^Manage photo /))
+      fireEvent.click(row.getByRole('button', { name: /^Remove photo / }))
+    }
     expect(draft().needsPhotoReupload).toBe(false)
-    expect(screen.getByRole('button', { name: 'Analyse 1 photo' })).toBeEnabled()
-    const fetch = vi.fn(async (_path: string, _request: RequestInit) => Response.json(analysis))
+    expect(conversationReadiness(draft()).canAnalyze).toBe(true)
+    expect(draft().detailsConfirmed).toBe(false) // Analysis no longer requires the removed details-confirmation card.
+    let chatCalls = 0
+    const fetch = vi.fn(async (path: string, request: RequestInit) => {
+      if (path === '/api/analyze') return Response.json(analysis)
+      if (path === '/api/conversation') {
+        const revision = JSON.parse(request.body as string).snapshot.revision
+        return Response.json({
+          reply: 'Synthetic local analysis request.',
+          basedOnRevision: revision,
+          proposals:
+            ++chatCalls === 1
+              ? [
+                  {
+                    id: 'analyze-replacement',
+                    expectedRevision: revision,
+                    command: { type: 'request.action', action: 'analyze' },
+                  },
+                ]
+              : [],
+        })
+      }
+      throw new Error('Unexpected synthetic endpoint')
+    })
     vi.stubGlobal('fetch', fetch)
-    fireEvent.click(screen.getByRole('button', { name: 'Analyse 1 photo' }))
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
-    expect(JSON.parse(fetch.mock.calls[0]?.[1].body as string)).toEqual({
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'Analyze the uploaded replacement photo now.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }))
+    await waitFor(() => expect(draft().analysis).toEqual(analysis))
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3))
+    expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation', '/api/analyze', '/api/conversation'])
+    expect(JSON.parse(fetch.mock.calls.find(([path]) => path === '/api/analyze')?.[1].body as string)).toEqual({
       sessionId: draft().sessionId,
       photoRefs: [{ url: 'https://example.test/new-room.jpg', receipt: 'opaque-test-receipt' }],
       moveDetails: sampleSession(window.location.origin).moveDetails,
       sample: false,
     })
   })
-  it('switching from sample to own photos removes sample cards and cannot analyze them', () => {
+  it('switching from sample to own photos removes sample attachments and cannot analyze them', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     mountLegacy(sampleSession(window.location.origin))
-    expect(screen.getByAltText('Living room')).toBeInTheDocument()
+    expect(within(screen.getByRole('list', { name: 'Selected photos' })).getAllByRole('img')).toHaveLength(3)
+    expect(screen.getByAltText('Room or item attachment 1')).toHaveAttribute(
+      'src',
+      `${window.location.origin}/sample/living-room.jpg`,
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Use my own photos' }))
-    expect(screen.queryByAltText('Living room')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /analyse/i })).toBeDisabled()
+    expect(screen.queryByRole('list', { name: 'Selected photos' })).not.toBeInTheDocument()
     expect(draft()).toMatchObject({ sample: false, photoUrls: [], photoRefs: [] })
+    await expectAnalysisBlocked()
   })
   it('discards unknown steps and malformed JSON', () => {
     const store = new FakeStorage()
