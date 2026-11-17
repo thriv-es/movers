@@ -7,6 +7,8 @@
 import type { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Bindings } from '../functions/api/_lib/types'
+import { VISION_MODEL } from '../functions/api/_lib/ai'
+import { photoAssessmentPrompt } from '../functions/api/_lib/prompts'
 import { EMPTY_MOVE_DETAILS } from '../src/data'
 
 const sessionId = '11111111-1111-4111-8111-111111111111'
@@ -429,11 +431,10 @@ describe('photo linkage route boundary', () => {
   it.each(truncatedContainers)(
     'excludes malformed $name from a mixed batch without aborting valid inventory',
     async ({ bytes, mimeType }) => {
-      const validDataUrl = `data:image/png;base64,${btoa(String.fromCharCode(...png))}`
-      const run = vi.fn(async (_model: string, input: unknown) => {
-        const url = (input as { messages: { content: { image_url?: { url: string } }[] }[] }).messages[0]?.content[1]
-          ?.image_url?.url
-        if (url !== validDataUrl) throw new Error('Malformed image reached provider')
+      const run = vi.fn(async (model: string, input: { prompt: string; image: number[] }) => {
+        expect(model).toBe(VISION_MODEL)
+        expect(input.prompt).toBe(photoAssessmentPrompt(EMPTY_MOVE_DETAILS))
+        expect(input.image).toEqual(Array.from(png))
         return {
           response: JSON.stringify({
             verdict: 'relevant',

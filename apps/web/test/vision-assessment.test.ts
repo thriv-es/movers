@@ -7,6 +7,7 @@ import { EMPTY_MOVE_DETAILS } from '../src/data'
 import * as aiMode from '../functions/api/_lib/ai-mode'
 import { sampleCacheKey, writeSampleCache } from '../functions/api/_lib/sample-cache'
 import { photoAssessmentPrompt } from '../functions/api/_lib/prompts'
+import { VISION_MODEL } from '../functions/api/_lib/ai'
 
 const inventory = (type = 'sofa') => ({ items: [{ type, count: 1 }], total_volume_cubic_feet: 80 })
 const reply = (verdict = 'relevant', type = 'sofa') =>
@@ -500,17 +501,21 @@ describe('request-aware photo assessment with fake Workers AI', () => {
   it('never exceeds three simultaneous single-image calls and preserves order despite completion order', async () => {
     let active = 0
     let peak = 0
-    const run = vi.fn(async (_model: string, input: { messages: { content: unknown[] }[] }) => {
-      expect(input.messages[0]?.content).toHaveLength(2)
+    const linked = photos(7)
+    const run = vi.fn(async (model: string, input: { prompt: string; image: number[] }) => {
       const index = run.mock.calls.length - 1
+      expect(model).toBe(VISION_MODEL)
+      expect(input.prompt).toBe(photoAssessmentPrompt(EMPTY_MOVE_DETAILS))
+      expect(input.image).toEqual(Array.from(linked[index]?.image?.data ?? []))
       active++
       peak = Math.max(peak, active)
       await new Promise((resolve) => setTimeout(resolve, index === 0 ? 20 : 1))
       active--
       return { response: reply('relevant', `item ${index}`) }
     })
-    const result = await assessPhotos(bindings(run), photos(7), EMPTY_MOVE_DETAILS, false)
+    const result = await assessPhotos(bindings(run), linked, EMPTY_MOVE_DETAILS, false)
     expect(peak).toBe(3)
+    expect(run).toHaveBeenCalledTimes(linked.length)
     expect(result.analysis.items.map((item) => item.type)).toEqual([
       'item 0',
       'item 1',
