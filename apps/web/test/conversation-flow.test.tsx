@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { HelmetProvider } from 'react-helmet-async'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,22 +9,12 @@ import {
   createConversationSession,
   type ConversationSession,
 } from '../src/lib/conversation-state'
-import { SESSION_KEY, sampleSession } from '../src/lib/estimate-session'
+import { useConversationController, type ConversationController } from '../src/lib/useConversationController'
+import { SESSION_KEY } from '../src/lib/estimate-session'
 import type { ConversationCommand } from '../src/data/z-common/z-conversation'
 import { conversationChatApi, chatApi } from '../src/lib/api-client'
 
-function packet(commands: ConversationCommand[] = [], revision = 0, reply = 'Check the suggested updates.') {
-  return {
-    reply,
-    basedOnRevision: revision,
-    proposals: commands.map((command, index) => ({ id: `suggestion-${index}`, expectedRevision: revision, command })),
-  }
-}
-function send(text: string) {
-  fireEvent.change(screen.getByLabelText('Message'), { target: { value: text } })
-  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-}
-
+// Fake API responses test controller orchestration, not AI accuracy. Browser tests cover actual routes.
 const analysis = {
   visionRevision: 1,
   visionFingerprint: 'current-vision',
@@ -44,18 +34,38 @@ const price = {
   breakdown: { labor: 100 },
   confidence: 'high' as const,
 }
+const contact = {
+  name: 'Synthetic Customer',
+  email: 'synthetic@example.invalid',
+  phone: '5550101',
+  requestedDate: '2027-01-20',
+}
 const mover = { id: 'mover-1', name: 'Synthetic Mover', slug: 'synthetic', serviceArea: 'Boston' }
+const quote = {
+  id: 'quote-1',
+  estimateId: 'saved-id',
+  moverId: mover.id,
+  moverName: mover.name,
+  note: '',
+  status: 'logged',
+  createdAt: '2026-11-16T12:00:00Z',
+}
 function ready(patch: Partial<ConversationSession> = {}): ConversationSession {
+  const messages = patch.messages ?? []
   return {
     ...createConversationSession(),
-    moveDetails: sampleSession(window.location.origin).moveDetails,
+    moveDetails: {
+      from: '12 Main Street, Boston, MA',
+      to: '9 Oak Street, Hartford, CT',
+      date: null,
+      distanceMiles: 120,
+      originFloor: 0,
+      destinationFloor: 1,
+      originElevator: null,
+      destinationElevator: true,
+    },
     detailsConfirmed: true,
-    timeline: (patch.messages ?? []).map((message, index) => ({
-      kind: 'message',
-      id: `entry-${index}`,
-      revision: 0,
-      message,
-    })),
+    timeline: messages.map((message, index) => ({ kind: 'message', id: `entry-${index}`, revision: 0, message })),
     photos: [{ id: 'photo-1', url: 'https://example.test/room.jpg', receipt: 'test-receipt' }],
     photoUrls: ['https://example.test/room.jpg'],
     photoRefs: [{ url: 'https://example.test/room.jpg', receipt: 'test-receipt' }],
@@ -66,54 +76,11 @@ function ready(patch: Partial<ConversationSession> = {}): ConversationSession {
     ...patch,
   }
 }
-function mount(state?: ConversationSession) {
-  if (state) window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(state))
-  return render(
-    <StrictMode>
-      <HelmetProvider>
-        <MemoryRouter>
-          <EstimatePage />
-        </MemoryRouter>
-      </HelmetProvider>
-    </StrictMode>,
-  )
-}
-const draft = (): ConversationSession => JSON.parse(window.sessionStorage.getItem(SESSION_KEY) ?? '{}')
-function reopenStage(name: RegExp) {
-  const button = screen.queryByRole('button', { name })
-  if (button) fireEvent.click(button)
-}
-const confirmPrice = () => {
-  if (!screen.queryByRole('button', { name: 'Confirm inventory and get estimate' }))
-    reopenStage(/Review estimate requirements/)
-  return screen.getByRole('button', { name: 'Confirm inventory and get estimate' })
-}
-const contact = {
-  name: 'Synthetic Customer',
-  email: 'synthetic@example.test',
-  phone: '555-0101',
-  requestedDate: '2027-01-20',
-}
-const writeCases = [
-  { kind: 'save', path: '/api/estimates' },
-  { kind: 'schedule', path: '/api/estimates/saved-id/contact' },
-  { kind: 'quotes', path: '/api/quote-requests' },
-] as const
-async function beginWrite(kind: (typeof writeCases)[number]['kind']) {
-  if (kind === 'save') fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
-  else if (kind === 'schedule') {
-    for (const [label, value] of [
-      ['Your name', contact.name],
-      ['Email', contact.email],
-      ['Phone', contact.phone],
-      ['Preferred move date', contact.requestedDate],
-    ])
-      fireEvent.change(screen.getByLabelText(label), { target: { value } })
-    fireEvent.click(screen.getByRole('button', { name: 'Request this date' }))
-  } else {
-    fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Synthetic Mover/i }))
-    fireEvent.click(screen.getByRole('button', { name: 'Send quote requests' }))
+function packet(commands: ConversationCommand[] = [], revision = 0, reply = 'Check the suggested updates.') {
+  return {
+    reply,
+    basedOnRevision: revision,
+    proposals: commands.map((command, index) => ({ id: `suggestion-${index}`, expectedRevision: revision, command })),
   }
 }
 function deferred<T>() {
@@ -126,43 +93,63 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 function api(handler?: (path: string, request?: RequestInit) => Promise<Response> | undefined) {
-  const fetch = vi.fn(async (path: string, request?: RequestInit) => {
+  const fetch = vi.fn(async (path: string, request?: RequestInit): Promise<Response> => {
     const custom = handler?.(path, request)
     if (custom) return custom
     if (path === '/api/ai-status') return Response.json({ visionRevision: 99, visionFingerprint: 'current-vision' })
     if (path === '/api/price') return Response.json({ price })
     if (path === '/api/estimates') return Response.json({ id: 'saved-id', storage: 'memory' })
     if (path.endsWith('/contact'))
-      return Response.json({ reference: 'saved-id', requestedDate: '2027-01-20', note: 'Requested' })
+      return Response.json({ reference: 'saved-id', requestedDate: contact.requestedDate, note: 'Requested' })
     if (path === '/api/movers') return Response.json({ movers: [mover] })
-    if (path === '/api/quote-requests')
-      return Response.json({
-        requests: [
-          {
-            id: 'quote-1',
-            estimateId: 'saved-id',
-            moverId: 'mover-1',
-            moverName: mover.name,
-            note: '',
-            status: 'logged',
-            createdAt: '2026-11-16T12:00:00Z',
-          },
-        ],
-        delivery: { 'mover-1': 'logged' },
-      })
+    if (path === '/api/quote-requests') return Response.json({ requests: [quote], delivery: { [mover.id]: 'logged' } })
     if (path === '/api/analyze') return Response.json(analysis)
     if (path === '/api/conversation')
-      return Response.json({
-        reply: 'Thanks. Check the move manifest.',
-        basedOnRevision: JSON.parse(request?.body as string).snapshot.revision,
-        proposals: [],
-      })
+      return Response.json(packet([], JSON.parse(request?.body as string).snapshot.revision))
     throw new Error('Unexpected synthetic endpoint')
   })
   vi.stubGlobal('fetch', fetch)
   return fetch
 }
-function controlledUploads() {
+type Fetch = ReturnType<typeof api>
+const calls = (fetch: Fetch, path: string) => fetch.mock.calls.filter(([endpoint]) => endpoint === path)
+const writes = (fetch: Fetch) =>
+  fetch.mock.calls.filter(
+    ([path, request]) =>
+      ['POST', 'PATCH'].includes(request?.method ?? '') &&
+      ['/api/estimates', '/api/quote-requests'].some((prefix) => path.startsWith(prefix)),
+  )
+const stored = (): ConversationSession => JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? '{}')
+function hook(state = ready()) {
+  return renderHook(() => useConversationController(() => state), { wrapper: StrictMode })
+}
+function mount(state?: ConversationSession) {
+  if (state) sessionStorage.setItem(SESSION_KEY, JSON.stringify(state))
+  return render(
+    <StrictMode>
+      <HelmetProvider>
+        <MemoryRouter>
+          <EstimatePage />
+        </MemoryRouter>
+      </HelmetProvider>
+    </StrictMode>,
+  )
+}
+function send(text: string) {
+  fireEvent.change(screen.getByLabelText('Message'), { target: { value: text } })
+  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }))
+}
+const writeCases = [
+  { kind: 'save', path: '/api/estimates' },
+  { kind: 'schedule', path: '/api/estimates/saved-id/contact' },
+  { kind: 'quotes', path: '/api/quote-requests' },
+] as const
+async function beginWrite(result: { current: ConversationController }, kind: (typeof writeCases)[number]['kind']) {
+  // No reconstructed customer UI: retained quote/date capabilities invoke the real controller directly.
+  if (kind === 'save') return result.current.bookContact(contact)
+  return kind === 'schedule' ? result.current.submitContact(contact) : result.current.submitQuotes([mover.id], '')
+}
+function uploads() {
   vi.stubGlobal(
     'URL',
     class extends URL {
@@ -173,8 +160,7 @@ function controlledUploads() {
     },
   )
   vi.stubGlobal('createImageBitmap', undefined)
-  const pending: (() => void)[] = []
-  let number = 0
+  const pending: { done: () => void; fail: () => void }[] = []
   class XHR {
     upload = { onprogress: null }
     status = 200
@@ -183,33 +169,20 @@ function controlledUploads() {
     onerror: (() => void) | null = null
     open() {}
     send() {
-      const index = ++number
+      const index = pending.length + 1
       this.responseText = JSON.stringify({
         uploads: [{ url: `https://example.test/selection-${index}.jpg`, receipt: `selection-receipt-${index}` }],
       })
-      pending.push(() => this.onload?.())
+      pending.push({ done: () => this.onload?.(), fail: () => this.onerror?.() })
     }
   }
   vi.stubGlobal('XMLHttpRequest', XHR)
-  const select = () =>
-    fireEvent.change(screen.getByLabelText('Choose from library'), {
-      target: { files: [new File(['synthetic'], 'room.jpg', { type: 'image/jpeg' })] },
-    })
-  return { pending, select }
+  const file = () => new File(['synthetic'], 'room.jpg', { type: 'image/jpeg' })
+  return { pending, file }
 }
-async function rebuildEstimate() {
-  reopenStage(/Review move details/)
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm move details' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Analyse 1 photo' }))
-  await waitFor(() => expect(draft().analysis).not.toBeNull())
-  for (const label of ['Garage', 'Closets', 'Appliances'])
-    fireEvent.click(within(screen.getByRole('group', { name: label })).getByRole('button', { name: 'No' }))
-  fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'Yes' }))
-  fireEvent.click(confirmPrice())
-  await waitFor(() => expect(draft().estimateId).toBe('saved-id'))
-}
-
 beforeEach(() => {
+  sessionStorage.clear()
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
     matches: true,
     media: query,
@@ -224,6 +197,7 @@ beforeEach(() => {
     'ResizeObserver',
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   )
@@ -231,362 +205,326 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
-  window.sessionStorage.clear()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
-describe('contextual conversation stages', () => {
-  it('starts with a direct greeting and no bottom-of-feed card stack', () => {
-    api()
+describe('goal-driven actual customer UI', () => {
+  it('starts with one AI question, persistent composer, native photo inputs and a read-only manifest', () => {
+    const fetch = api()
     mount()
+    expect(screen.getByRole('log')).toHaveTextContent('Where are you moving from and to?')
     expect(screen.queryByText(/roughly how far/i)).not.toBeInTheDocument()
-    for (const name of ['Confirm move details', 'Conversation photos', 'Estimate confirmation', 'Date request'])
-      expect(screen.queryByRole('region', { name })).not.toBeInTheDocument()
+    const panel = screen.getByRole('region', { name: 'Move manifest', exact: true })
+    expect(panel.querySelectorAll('input, select, textarea, button')).toHaveLength(0)
+    expect(document.querySelectorAll('input[type=file]')).toHaveLength(2)
+    expect(screen.getByLabelText('Choose from library')).toHaveAttribute('type', 'file')
+    expect(screen.getByLabelText('Take photo')).toHaveAttribute('capture', 'environment')
+    expect(fetch).not.toHaveBeenCalled()
   })
-  it('requests photos with accepted endpoints alone and does not enable pricing', () => {
-    api()
-    const state = createConversationSession()
-    mount({
-      ...state,
-      moveDetails: { ...state.moveDetails, from: 'Tel Aviv', to: 'Raanana' },
-      nextAction: 'request_photos',
-    })
-    expect(screen.getByRole('region', { name: 'Conversation photos' })).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: 'Confirm move details' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: 'Estimate confirmation' })).not.toBeInTheDocument()
-  })
-  it('collapses completed photos and review into reachable summaries', () => {
+  it('keeps attachments inline and describes attachment count without claiming all are analysed', () => {
     api()
     mount(ready())
-    expect(screen.queryByRole('region', { name: 'Conversation photos' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: 'Inventory questions' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Reopen photos/i }))
-    expect(screen.getByRole('region', { name: 'Conversation photos' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Conversation photos' })).toHaveTextContent('1 photo attached')
+    expect(
+      screen.queryByRole('button', { name: /Reopen photos|Reopen review|Confirm move details/ }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Move manifest', exact: true })).toHaveTextContent('sofa')
   })
-  it.each([
-    ['photoAssessments', 'unlinked'],
-    ['photoAssessments', 'unavailable'],
-    ['photoLinkStatuses', 'unlinked'],
-    ['photoLinkStatuses', 'unavailable'],
-  ] as const)('keeps %s %s recovery visible after a real successful partial analysis', async (source, status) => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    const photos = [
-      ready().photos[0],
-      { id: 'photo-2', url: 'https://example.test/failed.jpg', receipt: 'second-receipt' },
-    ]
-    const partial = {
-      ...analysis,
-      [source]:
-        source === 'photoAssessments'
-          ? [
-              { url: photos[0].url, status: 'relevant', reason: 'Room inventory found.' },
-              { url: photos[1].url, status, reason: 'Re-upload this photo.' },
-            ]
-          : [
-              { url: photos[0].url, status: 'eligible', reason: 'Linked.' },
-              { url: photos[1].url, status, reason: 'Re-upload this photo.' },
-            ],
-    }
-    api((path) => (path === '/api/analyze' ? Promise.resolve(Response.json(partial)) : undefined))
-    const view = mount(
-      ready({
-        photos,
-        photoUrls: photos.map((photo) => photo.url),
-        photoRefs: photos.map(({ url, receipt }) => ({ url, receipt })),
-        analysis: null,
-        items: [],
-      }),
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Analyse 2 photos' }))
-    await waitFor(() => expect(draft().analysis).not.toBeNull())
-    expect(Object.values(draft().operations).at(-1)?.status).toBe('succeeded')
-    expect(screen.getByRole('region', { name: 'Inventory questions' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Conversation photos' })).toBeInTheDocument()
-    expect(screen.getByText('Re-upload required')).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toHaveTextContent(/re-upload|remove/i)
-    expect(screen.queryByRole('button', { name: /2 photos analysed/ })).not.toBeInTheDocument()
-    view.unmount()
-    mount()
-    expect(screen.getByText('Re-upload required')).toBeInTheDocument()
-    fireEvent.click(
-      within(screen.getByAltText('failed.jpg').closest('li') as HTMLElement).getByRole('button', { name: 'Remove' }),
-    )
-    expect(draft().photos).toHaveLength(1)
-    expect(draft().analysis).toBeNull()
-  })
-  it('describes completed photo count as selected rather than claiming every selected photo was analysed', () => {
-    api()
-    mount(ready())
-    expect(screen.getByRole('button', { name: /1 photo selected.*Reopen photos/ })).toBeInTheDocument()
-  })
-  it('returns focus to the completed review summary only when its focused control collapses', () => {
-    api()
-    mount(ready({ wholeMoveCovered: null }))
-    const answer = within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'Yes' })
-    answer.focus()
-    fireEvent.click(answer)
-    expect(screen.getByRole('button', { name: /Inventory reviewed.*Reopen review/ })).toHaveFocus()
-  })
-  it.each(['Message', 'Distance (miles)'])(
-    'does not steal focus from unrelated %s edits when review changes',
-    (label) => {
+  it.each(['clarify_origin', 'request_photos'] as const)(
+    'keeps native upload available during %s without inventing readiness',
+    (nextAction) => {
       api()
-      mount(ready({ wholeMoveCovered: null }))
-      within(screen.getByRole('group', { name: /whole move/i }))
-        .getByRole('button', { name: 'Yes' })
-        .focus()
-      const field = screen.getByLabelText(label)
-      field.focus()
-      fireEvent.change(field, { target: { value: label === 'Message' ? 'Unsent draft' : '42' } })
-      expect(field).toHaveFocus()
+      mount({ ...createConversationSession(), nextAction })
+      expect(screen.getByLabelText('Choose from library')).not.toBeDisabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Price summary' }))
+      expect(screen.getByRole('dialog', { name: 'Your move estimate' })).toHaveTextContent('We won’t guess a price')
+      expect(screen.getByRole('button', { name: 'Book this move' })).toBeDisabled()
     },
   )
-  it('keeps incomplete review visible despite a model photo action', () => {
+  it('shows readable pending changes behind Review suggested changes and accepts one date slot', () => {
     api()
-    mount(ready({ nextAction: 'request_photos', wholeMoveCovered: null }))
-    expect(screen.getByRole('region', { name: 'Inventory questions' })).toBeInTheDocument()
-  })
-  it('honors a genuine endpoint clarification without gating upload-first photo decisions', () => {
-    api()
-    const state = createConversationSession()
-    mount({
-      ...state,
-      moveDetails: { ...state.moveDetails, from: 'Springfield', to: 'Boston' },
-      nextAction: 'clarify_origin',
-    })
-    expect(screen.queryByRole('region', { name: 'Conversation photos' })).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Choose from library')).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Move manifest' })).toBeInTheDocument()
-  })
-  it('distinguishes accepted date-window evidence from a pending exact-date proposal and replaces the single slot on Accept', () => {
-    api()
-    mount(
-      ready({
-        moveDetails: { ...ready().moveDetails, date: null },
-        messages: [{ id: 'date-source', role: 'user', content: 'I meant 2027-01-11 instead of early January.' }],
-        facts: [
-          {
-            field: 'dateWindow',
-            sourceMessageId: 'date-source',
-            wording: 'early January',
-            uncertainty: 'uncertain',
-            precision: 'window',
-            correction: false,
-          },
-        ],
-        pendingProposals: [
-          {
-            id: 'exact-date',
-            expectedRevision: 0,
-            command: {
-              type: 'details.patch',
-              patch: { date: '2027-01-11' },
-              facts: [
-                {
-                  field: 'date',
-                  sourceMessageId: 'date-source',
-                  wording: '2027-01-11',
-                  uncertainty: 'certain',
-                  precision: 'exact',
-                  correction: true,
-                },
-              ],
-            },
-          },
-        ],
-      }),
-    )
-    expect(screen.getByText(/Accepted date window.*early January/)).toBeInTheDocument()
-    expect(screen.getByText('Suggested update — not yet accepted')).toBeInTheDocument()
-    expect(screen.getByText('Move date: 2027-01-11')).toBeInTheDocument()
-    expect(screen.getByLabelText('Move date')).toHaveValue('')
-    fireEvent.click(screen.getByRole('button', { name: 'Accept suggestion' }))
-    expect(screen.queryByText(/Accepted date window/)).not.toBeInTheDocument()
-    expect(screen.getByText(/Accepted date evidence: 2027-01-11/)).toBeInTheDocument()
-    expect(screen.getByLabelText('Move date')).toHaveValue('2027-01-11')
-  })
-  it('supports ground floor zero in the shared panel', () => {
-    api()
-    mount()
-    for (const label of ['Floor at origin', 'Floor at destination']) {
-      expect(screen.getByLabelText(label)).toHaveAttribute('min', '0')
-      fireEvent.change(screen.getByLabelText(label), { target: { value: '0' } })
-    }
-    expect(draft().moveDetails).toMatchObject({ originFloor: 0, destinationFloor: 0 })
-  })
-  it('shows readable pending proposals instead of command JSON', () => {
-    api()
-    const state = createConversationSession()
-    mount({
-      ...state,
+    const state = ready({
+      messages: [{ id: 'date-source', role: 'user', content: 'I meant 2027-01-11 instead of early January.' }],
+      facts: [
+        {
+          field: 'dateWindow',
+          sourceMessageId: 'date-source',
+          wording: 'early January',
+          uncertainty: 'uncertain',
+          precision: 'window',
+          correction: false,
+        },
+      ],
       pendingProposals: [
-        { id: 'pending', expectedRevision: 0, command: { type: 'details.patch', patch: { from: 'Tel Aviv' } } },
+        {
+          id: 'exact-date',
+          expectedRevision: 0,
+          command: {
+            type: 'details.patch',
+            patch: { date: '2027-01-11' },
+            facts: [
+              {
+                field: 'date',
+                sourceMessageId: 'date-source',
+                wording: '2027-01-11',
+                uncertainty: 'certain',
+                precision: 'exact',
+                correction: true,
+              },
+            ],
+          },
+        },
       ],
     })
-    expect(screen.getByText('Moving from: Tel Aviv')).toBeInTheDocument()
-    expect(document.querySelector('.conv-proposal')).toBeNull()
+    mount(state)
+    expect(screen.getByText('early January (date window)')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Review suggested changes'))
+    expect(screen.getByText('Move date: 2027-01-11')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Accept suggestion' }))
+    expect(stored().moveDetails.date).toBe('2027-01-11')
+    expect(screen.queryByText('early January (date window)')).not.toBeInTheDocument()
+    expect(screen.getByText('2027-01-11', { exact: true })).toBeInTheDocument()
   })
-})
-
-describe('persistent estimator conversation', () => {
-  it('keeps one feed/composer and shared manifest; mount, rerender and reload never POST', () => {
+  it('retains one feed/composer across summary, update, rerender and reload without writes', async () => {
     const fetch = api()
     const view = mount(ready())
-    const composer = screen.getByRole('textbox', { name: 'Message' })
+    const composer = screen.getByLabelText('Message')
+    const feed = screen.getByRole('log')
     fireEvent.change(composer, { target: { value: 'draft stays' } })
-    expect(screen.getByRole('log', { name: 'Move conversation' })).toBeInTheDocument()
-    expect(screen.queryByRole('navigation', { name: 'Progress' })).not.toBeInTheDocument()
-    const panel = screen.getByRole('region', { name: 'Move manifest' })
-    expect(panel.querySelector('input[type=file]')).toBeNull()
-    expect(document.querySelectorAll('input[type=file]')).toHaveLength(2)
-    fireEvent.change(within(panel).getByLabelText('Distance (miles)'), { target: { value: '42' } })
-    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer)
+    fireEvent.click(screen.getByRole('button', { name: 'Price summary' }))
+    await screen.findByRole('button', { name: 'Book this move' })
+    fireEvent.click(screen.getByRole('button', { name: 'Update this session' }))
+    expect(screen.getByLabelText('Message')).toBe(composer)
+    expect(screen.getByRole('log')).toBe(feed)
     expect(composer).toHaveValue('draft stays')
-    expect(draft()).toMatchObject({ moveDetails: { distanceMiles: 42 }, analysis: null, price: null })
+    expect(writes(fetch)).toEqual([])
     view.unmount()
     mount()
-    expect(
-      fetch.mock.calls.filter(([, request]) => request?.method === 'POST' || request?.method === 'PATCH'),
-    ).toHaveLength(0)
+    expect(writes(fetch)).toEqual([])
   })
-
-  it('analyzes only explicitly and accepts the post-start revision, preserving the composer draft', async () => {
-    const pending = deferred<Response>()
-    const fetch = api((path) => (path === '/api/analyze' ? pending.promise : undefined))
-    mount(ready())
-    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'still writing' } })
-    reopenStage(/Reopen photos/)
-    fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
-    expect(draft().analysis).toBeNull()
-    expect(draft().revision).toBe(1)
-    fireEvent.click(screen.getByRole('button', { name: /analysing/i }))
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/analyze')).toHaveLength(1)
-    await act(async () => pending.resolve(Response.json(analysis)))
-    expect(draft().analysis).toEqual(analysis)
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('still writing')
-    const body = JSON.parse(fetch.mock.calls.find(([path]) => path === '/api/analyze')?.[1]?.body as string)
-    expect(body).toMatchObject({
-      photoRefs: [{ url: 'https://example.test/room.jpg', receipt: 'test-receipt' }],
-      moveDetails: { distanceMiles: 120 },
-      sample: false,
-    })
-    expect(body).not.toHaveProperty('messages')
-  })
-
-  it('rejects late analysis and chat replies after a panel edit without losing the transcript or draft', async () => {
-    const pending = deferred<Response>()
-    const chat = deferred<Response>()
-    api((path) => (path === '/api/analyze' ? pending.promise : path === '/api/conversation' ? chat.promise : undefined))
-    mount(ready())
-    reopenStage(/Reopen photos/)
-    fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'hello' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'next draft' } })
-    fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '99' } })
-    await act(async () => {
-      pending.resolve(Response.json(analysis))
-      chat.resolve(
-        Response.json({
-          reply: 'stale reply',
-          basedOnRevision: 1,
-          proposals: [
-            {
-              id: 'late-details',
-              expectedRevision: 1,
-              command: { type: 'details.patch', patch: { from: 'Stale origin' } },
-            },
+  it.each(['save', 'schedule', 'quotes'] as const)(
+    'retained interrupted %s blocks new-session reset without reposting',
+    async (kind) => {
+      const fetch = api()
+      const state = ready({ price })
+      state.operations.unknown = {
+        id: 'unknown',
+        revision: 0,
+        status: 'interrupted',
+        request:
+          kind === 'save'
+            ? { kind }
+            : kind === 'schedule'
+              ? { kind, contact }
+              : { kind, moverIds: [mover.id], note: '' },
+      }
+      mount(state)
+      fireEvent.click(screen.getByRole('button', { name: 'Price summary' }))
+      expect(await screen.findByRole('button', { name: 'Start a new session' })).toBeDisabled()
+      expect(stored().sessionId).toBe(state.sessionId)
+      expect(writes(fetch)).toEqual([])
+    },
+  )
+  it.each(['2027-01-20', ''])(
+    'preserves intentional preferred-date edit %s across accepted move-date changes',
+    async (date) => {
+      api()
+      mount(
+        ready({
+          price,
+          moveDetails: { ...ready().moveDetails, date: '2027-01-01' },
+          pendingProposals: [
+            { id: 'date', expectedRevision: 0, command: { type: 'details.patch', patch: { date: '2027-02-02' } } },
           ],
         }),
       )
+      fireEvent.click(screen.getByRole('button', { name: 'Price summary' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Book this move' })).toBeEnabled())
+      fireEvent.click(screen.getByRole('button', { name: 'Book this move' }))
+      fireEvent.change(screen.getByLabelText('Preferred move date'), { target: { value: date } })
+      fireEvent.click(screen.getByRole('button', { name: 'Update this session' }))
+      fireEvent.click(screen.getByText('Review suggested changes'))
+      fireEvent.click(screen.getByRole('button', { name: 'Accept suggestion' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Price summary' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Book this move' })).toBeEnabled())
+      fireEvent.click(screen.getByRole('button', { name: 'Book this move' }))
+      expect(screen.getByLabelText('Preferred move date')).toHaveValue(date)
+    },
+  )
+  it.each([null, '2027-01-01'])(
+    'untouched booking date follows current accepted date rather than mounted %s',
+    async (date) => {
+      api()
+      mount(
+        ready({
+          moveDetails: { ...ready().moveDetails, date },
+          pendingProposals: [
+            { id: 'date', expectedRevision: 0, command: { type: 'details.patch', patch: { date: '2027-02-02' } } },
+          ],
+        }),
+      )
+      fireEvent.click(screen.getByText('Review suggested changes'))
+      fireEvent.click(screen.getByRole('button', { name: 'Accept suggestion' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Price summary' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Book this move' })).toBeEnabled())
+      fireEvent.click(screen.getByRole('button', { name: 'Book this move' }))
+      expect(screen.getByLabelText('Preferred move date')).toHaveValue('2027-02-02')
+    },
+  )
+  it('HEIC failure gives local actionable guidance without exposing raw upload failure', async () => {
+    api()
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL() {
+          return 'blob:heic'
+        }
+        static revokeObjectURL() {}
+      },
+    )
+    mount()
+    fireEvent.change(screen.getByLabelText('Choose from library'), {
+      target: { files: [new File(['not an image'], 'private.heic', { type: 'image/heic' })] },
     })
-    expect(draft()).toMatchObject({ analysis: null, moveDetails: { distanceMiles: 99 } })
-    expect(screen.queryByText('stale reply')).not.toBeInTheDocument()
-    expect(screen.getByText('hello')).toBeInTheDocument()
-    expect(screen.getByLabelText('Message')).toHaveValue('next draft')
-    expect(screen.getByRole('alert')).toHaveTextContent(/changed|stale/i)
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/HEIC|JPEG/i))
+    expect(document.body.textContent).not.toMatch(/private.heic|stack|responseText/)
+    expect(stored().photoRefs).toEqual([])
   })
+})
 
-  it('requires explicit confirmation, checks freshness, prices and saves once, then explicitly requests date and selected quotes', async () => {
+describe('actual controller revision and write orchestration (no replacement UI)', () => {
+  it('analysis uses post-start revision and feeds accepted structure into next Chat without consuming draft', async () => {
+    const pending = deferred<Response>()
+    const fetch = api((path) => (path === '/api/analyze' ? pending.promise : undefined))
+    const { result } = hook()
+    act(() => result.current.setDraft('still writing'))
+    let work: Promise<void> | undefined
+    act(() => {
+      work = result.current.analyzePhotos()
+    })
+    act(() => {
+      void result.current.analyzePhotos()
+    })
+    expect(result.current.session.revision).toBe(1)
+    expect(result.current.session.analysis).toBeNull()
+    expect(calls(fetch, '/api/analyze')).toHaveLength(1)
+    await act(async () => {
+      pending.resolve(Response.json(analysis))
+      await work
+    })
+    expect(result.current.session.analysis).toEqual(analysis)
+    expect(result.current.draft).toBe('still writing')
+    const body = JSON.parse(calls(fetch, '/api/analyze')[0][1]?.body as string)
+    expect(body).toMatchObject({ photoRefs: ready().photoRefs, moveDetails: { distanceMiles: 120 }, sample: false })
+    expect(body).not.toHaveProperty('messages')
+    const chat = JSON.parse(calls(fetch, '/api/conversation')[0][1]?.body as string)
+    expect(chat.snapshot.inventory).toEqual(analysis.items)
+    expect(chat.snapshot.analysis).toMatchObject({ totalVolumeCubicFeet: 80, estimatedBoxes: { min: 2, max: 4 } })
+    expect(writes(fetch)).toEqual([])
+  })
+  it('rejects late analysis and chat replies after an actual domain edit, preserving history and draft', async () => {
+    const pending = deferred<Response>()
+    const chat = deferred<Response>()
+    api((path) => (path === '/api/analyze' ? pending.promise : path === '/api/conversation' ? chat.promise : undefined))
+    const { result } = hook()
+    let work: Promise<void> | undefined
+    let reply: Promise<void> | undefined
+    act(() => {
+      work = result.current.analyzePhotos()
+      reply = result.current.sendMessage('hello')
+    })
+    act(() => {
+      result.current.setDraft('next draft')
+      result.current.apply({ type: 'details.patch', patch: { distanceMiles: 99 } }, 'panel')
+    })
+    await act(async () => {
+      pending.resolve(Response.json(analysis))
+      chat.resolve(Response.json(packet([], 1, 'stale reply')))
+      await work
+      await reply
+    })
+    expect(result.current.session).toMatchObject({ analysis: null, moveDetails: { distanceMiles: 99 } })
+    expect(result.current.session.messages.map((message) => message.content)).toEqual(['hello'])
+    expect(result.current.draft).toBe('next draft')
+    expect(result.current.error).toMatch(/changed|stale/i)
+  })
+  it('read-only summary and Book view never save; explicit callback verifies, confirms, saves and contacts once', async () => {
     const fetch = api()
-    mount(ready())
-    const composer = screen.getByLabelText('Message')
-    fireEvent.change(composer, { target: { value: 'keep this draft' } })
-    fireEvent.click(confirmPrice())
-    fireEvent.click(confirmPrice())
-    await waitFor(() => expect(draft().estimateId).toBe('saved-id'))
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/price')).toHaveLength(1)
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/estimates')).toHaveLength(1)
-    expect(screen.getByLabelText('Message')).toBe(composer)
-    expect(composer).toHaveValue('keep this draft')
-    fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Synthetic Customer' } })
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'synthetic@example.test' } })
-    fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '555-0101' } })
-    fireEvent.change(screen.getByLabelText('Preferred move date'), { target: { value: '2027-01-20' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Request this date' }))
-    await waitFor(() => expect(draft().scheduleResult?.status).toBe('requested'))
-    expect(screen.getByText(/not a confirmed booking/i)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Synthetic Mover/i }))
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/quote-requests')).toHaveLength(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Send quote requests' }))
-    await waitFor(() => expect(draft().quoteResult?.requests).toHaveLength(1))
-    expect(fetch.mock.calls.filter(([path]) => path.endsWith('/contact'))).toHaveLength(1)
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/quote-requests')).toHaveLength(1)
-    expect(screen.getByLabelText('Message')).toHaveValue('keep this draft')
+    const { result } = hook(ready({ detailsConfirmed: false }))
+    await act(async () => {
+      await result.current.openSummary()
+    })
+    expect(calls(fetch, '/api/price')).toHaveLength(1)
+    expect(writes(fetch)).toEqual([])
+    act(() => result.current.bookMove())
+    expect(writes(fetch)).toEqual([])
+    await act(async () => {
+      await result.current.bookContact(contact)
+      await result.current.bookContact(contact)
+    })
+    expect(result.current.session.detailsConfirmed).toBe(true)
+    expect(result.current.session.scheduleResult?.status).toBe('requested')
+    expect(calls(fetch, '/api/estimates')).toHaveLength(1)
+    expect(calls(fetch, '/api/estimates/saved-id/contact')).toHaveLength(1)
+    expect(calls(fetch, '/api/quote-requests')).toHaveLength(0)
   })
-
-  it('distinguishes save failure and retries save without repricing; does not retry an interrupted write on reload', async () => {
+  it('acknowledged save failure retries only save through an explicit callback, never reprices', async () => {
     let saves = 0
     const fetch = api((path) =>
       path === '/api/estimates' && ++saves === 1
         ? Promise.resolve(Response.json({ error: 'Unavailable' }, { status: 503 }))
         : undefined,
     )
-    const view = mount(ready())
-    fireEvent.click(confirmPrice())
-    expect(await screen.findByRole('alert')).toHaveTextContent(/save failed/i)
-    expect(draft().price).toEqual(price)
-    fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
-    await waitFor(() => expect(draft().estimateId).toBe('saved-id'))
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/price')).toHaveLength(1)
-    view.unmount()
-    const saved = draft()
-    saved.estimateId = null
-    saved.operations.interrupted = {
-      id: 'interrupted',
-      revision: saved.revision,
-      request: { kind: 'save' },
-      status: 'pending',
-    }
-    mount(saved)
-    expect(screen.getByText(/unknown outcome/i)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Retry save' })).not.toBeInTheDocument()
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/estimates')).toHaveLength(2)
+    const { result } = hook()
+    await act(async () => {
+      await result.current.openSummary()
+    })
+    act(() => result.current.bookMove())
+    await act(async () => {
+      await result.current.bookContact(contact)
+    })
+    expect(result.current.error).toMatch(/save failed/i)
+    expect(result.current.session.price).toEqual(price)
+    await act(async () => {
+      await result.current.bookContact(contact)
+    })
+    expect(result.current.session.estimateId).toBe('saved-id')
+    expect(calls(fetch, '/api/price')).toHaveLength(1)
+    expect(calls(fetch, '/api/estimates')).toHaveLength(2)
   })
-
   it.each(
     writeCases.flatMap((write) =>
       ['pagehide abort', 'unmount abort', 'transport loss', 'response body loss', 'pagehide success'].map(
-        (boundary) => ({
-          ...write,
-          boundary,
-        }),
+        (boundary) => ({ ...write, boundary }),
       ),
     ),
   )(
-    'preserves unknown $kind evidence after $boundary without blind retry on reload',
+    'preserves unknown $kind after $boundary and blocks blind retry across reload',
     async ({ kind, path, boundary }) => {
       const pending = deferred<Response>()
       const fetch = api((endpoint) => (endpoint === path ? pending.promise : undefined))
-      const view = mount(ready({ price, estimateId: kind === 'save' ? null : 'saved-id', contact }))
-      await beginWrite(kind)
-      await waitFor(() => expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1))
-      const operation = Object.values(draft().operations).find((entry) => entry.request.kind === kind)
-      if (!operation) throw new Error('Explicit action did not start its write')
+      const view = hook(ready({ price, estimateId: kind === 'save' ? null : 'saved-id', contact }))
+      let work: Promise<void> | undefined
+      // Open displayed scope before starting the held callback save.
+      if (kind === 'save') {
+        await act(async () => {
+          await view.result.current.openSummary()
+        })
+        act(() => view.result.current.bookMove())
+      }
+      act(() => {
+        work =
+          kind === 'save'
+            ? view.result.current.bookContact(contact)
+            : kind === 'schedule'
+              ? view.result.current.submitContact(contact)
+              : view.result.current.submitQuotes([mover.id], '')
+      })
+      await waitFor(() => expect(calls(fetch, path)).toHaveLength(1))
+      const operation = Object.values(stored().operations).find((op) => op.request.kind === kind)
+      if (!operation) throw new Error('Explicit write did not start')
       expect(operation.status).toBe('pending')
-      // Navigation can abort the transport before React unmounts the old document.
       if (boundary.startsWith('pagehide')) fireEvent(window, new Event('pagehide'))
       if (boundary === 'unmount abort') view.unmount()
       await act(async () => {
@@ -594,26 +532,15 @@ describe('persistent estimator conversation', () => {
           pending.resolve(
             Response.json({
               id: 'saved-id',
-              storage: 'memory',
               reference: 'saved-id',
               requestedDate: contact.requestedDate,
-              requests: [
-                {
-                  id: 'quote-1',
-                  estimateId: 'saved-id',
-                  moverId: 'mover-1',
-                  moverName: mover.name,
-                  note: '',
-                  status: 'logged',
-                  createdAt: '2026-11-16T12:00:00Z',
-                },
-              ],
-              delivery: { 'mover-1': 'logged' },
+              requests: [quote],
+              delivery: { [mover.id]: 'logged' },
             }),
           )
         else if (boundary === 'response body loss') {
           const response = Response.json({})
-          vi.spyOn(response, 'json').mockRejectedValue(new DOMException('Response interrupted', 'AbortError'))
+          vi.spyOn(response, 'json').mockRejectedValue(new DOMException('Interrupted', 'AbortError'))
           pending.resolve(response)
         } else
           pending.reject(
@@ -621,386 +548,478 @@ describe('persistent estimator conversation', () => {
               ? new TypeError('Failed to fetch')
               : new DOMException('Navigation', 'AbortError'),
           )
+        await work
       })
-      expect(draft().operations[operation.id].status).toBe('pending')
-      const retry = screen.queryByRole('button', { name: `Retry ${kind}` })
-      if (retry) expect(retry).toBeDisabled()
+      expect(stored().operations[operation.id].status).toBe('pending')
       if (boundary === 'transport loss' || boundary === 'response body loss')
-        expect(screen.getByRole('alert')).toHaveTextContent(/unknown outcome/i)
+        expect(view.result.current.error).toMatch(/unknown outcome/i)
       if (boundary.startsWith('pagehide')) {
         fireEvent(window, new Event('pageshow'))
-        expect(screen.getByRole('alert')).toHaveTextContent(/unknown outcome/i)
+        expect(view.result.current.error).toMatch(/unknown outcome/i)
       }
       if (boundary !== 'unmount abort') view.unmount()
-      mount()
-      expect(draft().operations[operation.id].status).toBe('interrupted')
-      expect(screen.getByText(/interrupted — unknown outcome/i)).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: `Retry ${kind}` })).not.toBeInTheDocument()
-      if (kind !== 'save') await beginWrite(kind)
-      expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1)
+      const restored = renderHook(() => useConversationController())
+      expect(restored.result.current.session.operations[operation.id].status).toBe('interrupted')
+      await act(async () => {
+        await beginWrite(restored.result, kind)
+      })
+      expect(calls(fetch, path)).toHaveLength(1)
     },
   )
-
   it.each(
     (['analyze', 'price'] as const).flatMap((kind) =>
       (['success', 'HTTP rejection', 'transport rejection'] as const).map((outcome) => ({ kind, outcome })),
     ),
-  )('settles hidden $kind $outcome and restores explicit controls without saving', async ({ kind, outcome }) => {
+  )('settles hidden $kind $outcome without resuming dependent writes', async ({ kind, outcome }) => {
     const pending = deferred<Response>()
     let attempts = 0
     const path = `/api/${kind}`
     const fetch = api((endpoint) => (endpoint === path && ++attempts === 1 ? pending.promise : undefined))
-    mount(ready())
-    const control = () => {
-      if (kind === 'analyze') reopenStage(/Reopen photos/)
-      return screen.getByRole('button', {
-        name: kind === 'analyze' ? /^Analyse / : draft().price ? 'Retry save' : 'Confirm inventory and get estimate',
-      })
-    }
-    fireEvent.click(control())
-    await waitFor(() => expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1))
+    const { result } = hook()
+    let work: Promise<void> | undefined
+    act(() => {
+      work = kind === 'analyze' ? result.current.analyzePhotos() : result.current.openSummary()
+    })
+    await waitFor(() => expect(calls(fetch, path)).toHaveLength(1))
     fireEvent(window, new Event('pagehide'))
     await act(async () => {
-      if (outcome === 'transport rejection') pending.reject(new TypeError('Failed to fetch'))
+      if (outcome === 'transport rejection') pending.reject(new TypeError('Disconnected'))
       else
         pending.resolve(
           outcome === 'HTTP rejection'
             ? Response.json({ error: 'Unavailable' }, { status: 503 })
             : Response.json(kind === 'analyze' ? analysis : { price }),
         )
+      await work
     })
-    expect(Object.values(draft().operations).find((operation) => operation.request.kind === kind)?.status).toBe(
+    expect(Object.values(result.current.session.operations).at(-1)?.status).toBe(
       outcome === 'success' ? 'succeeded' : 'failed',
     )
-    fireEvent.click(control())
-    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1)
-    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/estimates')).toHaveLength(0)
     fireEvent(window, new Event('pageshow'))
-    expect(control()).toBeEnabled()
-    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/estimates')).toHaveLength(0)
-    expect(draft().estimateId).toBeNull()
-    if (outcome === 'success')
-      expect(kind === 'analyze' ? draft().analysis : draft().price).toEqual(kind === 'analyze' ? analysis : price)
-    fireEvent.click(control())
-    await waitFor(() => {
-      if (kind === 'price') expect(draft().estimateId).toBe('saved-id')
-      else
-        expect(
-          Object.values(draft().operations).filter(
-            (operation) => operation.request.kind === kind && operation.status === 'succeeded',
-          ),
-        ).toHaveLength(outcome === 'success' ? 2 : 1)
-    })
-    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/estimates')).toHaveLength(
-      kind === 'price' ? 1 : 0,
-    )
+    expect(result.current.busy).toBe(false)
+    expect(writes(fetch)).toEqual([])
   })
-
-  it.each(['success', 'rejection'])('settles hidden mover loader %s and restores Choose movers', async (outcome) => {
-    const pending = deferred<Response>()
-    let attempts = 0
-    const fetch = api((path) => (path === '/api/movers' && ++attempts === 1 ? pending.promise : undefined))
-    mount(ready({ price, estimateId: 'saved-id', contact }))
-    fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
-    fireEvent(window, new Event('pagehide'))
-    await act(async () => {
-      if (outcome === 'success') pending.resolve(Response.json({ movers: [mover] }))
-      else pending.reject(new TypeError('Failed to fetch'))
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/movers')).toHaveLength(1)
-    fireEvent(window, new Event('pageshow'))
-    expect(screen.getByRole('button', { name: 'Choose movers' })).toBeEnabled()
-    if (outcome === 'success') expect(screen.getByRole('checkbox', { name: /Synthetic Mover/i })).toBeInTheDocument()
-    else expect(screen.getByRole('alert')).toHaveTextContent(/Unable to load movers/i)
-    fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
-    expect(await screen.findByRole('checkbox', { name: /Synthetic Mover/i })).not.toBeChecked()
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/movers')).toHaveLength(2)
-    expect(
-      fetch.mock.calls.filter(([, request]) => request?.method === 'POST' || request?.method === 'PATCH'),
-    ).toHaveLength(0)
-  })
-
-  it.each(['preflight', 'price'])(
-    'does not resume the %s-to-save chain across a pagehide/pageshow cycle',
-    async (stage) => {
+  it.each(['success', 'rejection'])(
+    'settles hidden retained mover loader %s and permits another explicit load',
+    async (outcome) => {
       const pending = deferred<Response>()
       let attempts = 0
-      const path = stage === 'preflight' ? '/api/ai-status' : '/api/price'
-      const fetch = api((endpoint) => (endpoint === path && ++attempts === 1 ? pending.promise : undefined))
-      mount(ready())
-      fireEvent.click(confirmPrice())
-      await waitFor(() => expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1))
+      const fetch = api((path) => (path === '/api/movers' && ++attempts === 1 ? pending.promise : undefined))
+      const { result } = hook()
+      let work: Promise<void>
+      act(() => {
+        work = result.current.loadMovers()
+      })
       fireEvent(window, new Event('pagehide'))
+      await act(async () => {
+        if (outcome === 'success') pending.resolve(Response.json({ movers: [mover] }))
+        else pending.reject(new TypeError('Disconnected'))
+        await work
+      })
       fireEvent(window, new Event('pageshow'))
-      await act(async () =>
-        pending.resolve(
-          Response.json(
-            stage === 'preflight' ? { visionRevision: 99, visionFingerprint: 'current-vision' } : { price },
-          ),
-        ),
-      )
-      expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/estimates')).toHaveLength(0)
-      expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/price')).toHaveLength(stage === 'price' ? 1 : 0)
-      expect(Object.values(draft().operations).every((operation) => operation.status !== 'pending')).toBe(true)
-      fireEvent.click(stage === 'price' ? screen.getByRole('button', { name: 'Retry save' }) : confirmPrice())
-      await waitFor(() => expect(draft().estimateId).toBe('saved-id'))
-      expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/estimates')).toHaveLength(1)
-      expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/price')).toHaveLength(1)
+      expect(result.current.moversBusy).toBe(false)
+      await act(async () => {
+        await result.current.loadMovers()
+      })
+      expect(calls(fetch, '/api/movers')).toHaveLength(2)
+      expect(writes(fetch)).toEqual([])
     },
   )
-
-  it.each(['analysis', 'pricing', 'movers', 'chat'])('does not start %s while the page is leaving', async (kind) => {
-    const fetch = api()
-    mount(ready(kind === 'movers' ? { price, estimateId: 'saved-id', contact } : {}))
-    if (kind === 'analysis') reopenStage(/Reopen photos/)
-    fireEvent(window, new Event('pagehide'))
-    await act(async () => {
-      if (kind === 'analysis') {
-        fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
-      } else if (kind === 'pricing') fireEvent.click(confirmPrice())
-      else if (kind === 'movers') fireEvent.click(screen.getByRole('button', { name: 'Choose movers' }))
-      else send('Synthetic hidden-page message')
-    })
-    expect(fetch.mock.calls).toHaveLength(0)
-    expect(Object.values(draft().operations)).toHaveLength(0)
-  })
-
-  it('restores the composer after a pagehide-aborted reply without starting writes', async () => {
+  it.each(['preflight', 'save-result'])('pagehide/pageshow never resumes callback chain held at %s', async (stage) => {
     const pending = deferred<Response>()
-    const fetch = api((path, request) => {
-      if (path !== '/api/conversation') return undefined
-      request?.signal?.addEventListener('abort', () => pending.reject(new DOMException('Navigation', 'AbortError')))
-      return pending.promise
+    const path = stage === 'preflight' ? '/api/ai-status' : '/api/estimates'
+    let hold = false
+    const fetch = api((endpoint) => (hold && endpoint === path ? pending.promise : undefined))
+    const { result } = hook()
+    await act(async () => {
+      await result.current.openSummary()
     })
-    mount(ready())
-    send('Synthetic message before navigation')
-    await act(async () => fireEvent(window, new Event('pagehide')))
+    act(() => result.current.bookMove())
+    hold = true
+    let work: Promise<void>
+    act(() => {
+      work = result.current.bookContact(contact)
+    })
+    await waitFor(() => expect(calls(fetch, path).length).toBeGreaterThan(0))
+    fireEvent(window, new Event('pagehide'))
     fireEvent(window, new Event('pageshow'))
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Synthetic return draft' } })
-    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
-    expect(draft().messages.some((message) => message.content === 'Synthetic message before navigation')).toBe(true)
-    expect(
-      fetch.mock.calls.filter(([, request]) => request?.method === 'POST' || request?.method === 'PATCH'),
-    ).toHaveLength(1)
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          stage === 'preflight' ? { visionRevision: 1, visionFingerprint: 'current-vision' } : { id: 'saved-id' },
+        ),
+      )
+      await work
+    })
+    expect(calls(fetch, '/api/estimates/saved-id/contact')).toHaveLength(0)
+    expect(calls(fetch, '/api/estimates')).toHaveLength(stage === 'preflight' ? 0 : 1)
   })
-
-  it.each(writeCases)('keeps acknowledged $kind rejection explicitly retryable', async ({ kind, path }) => {
-    let attempts = 0
-    const fetch = api((endpoint) =>
-      endpoint === path && ++attempts === 1
-        ? Promise.resolve(Response.json({ error: 'Unavailable' }, { status: 503 }))
-        : undefined,
-    )
-    mount(ready({ price, estimateId: kind === 'save' ? null : 'saved-id', contact }))
-    await beginWrite(kind)
-    await waitFor(() =>
-      expect(Object.values(draft().operations).find((entry) => entry.request.kind === kind)?.status).toBe('failed'),
-    )
-    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: `Retry ${kind}` }))
-    await waitFor(() =>
-      expect(
-        Object.values(draft().operations).some((entry) => entry.request.kind === kind && entry.status === 'succeeded'),
-      ).toBe(true),
-    )
-    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === path)).toHaveLength(2)
-    expect(fetch.mock.calls.filter(([endpoint]) => endpoint === '/api/price')).toHaveLength(0)
-  })
-
-  it('does not save a late price after coverage edits', async () => {
+  it.each(['analysis', 'pricing', 'movers', 'chat'] as const)(
+    'starts no %s while the page is leaving',
+    async (kind) => {
+      const fetch = api()
+      const { result } = hook()
+      fireEvent(window, new Event('pagehide'))
+      await act(async () => {
+        if (kind === 'analysis') await result.current.analyzePhotos()
+        else if (kind === 'pricing') await result.current.openSummary()
+        else if (kind === 'movers') await result.current.loadMovers()
+        else await result.current.sendMessage('Hello')
+      })
+      expect(fetch).not.toHaveBeenCalled()
+    },
+  )
+  it.each(writeCases)(
+    'acknowledged $kind rejection is explicitly retryable, unlike unknown transport loss',
+    async ({ kind, path }) => {
+      let attempts = 0
+      const fetch = api((endpoint) =>
+        endpoint === path && ++attempts === 1
+          ? Promise.resolve(Response.json({ error: 'Unavailable' }, { status: 503 }))
+          : undefined,
+      )
+      const { result } = hook(ready({ price, estimateId: kind === 'save' ? null : 'saved-id', contact }))
+      if (kind === 'save') {
+        await act(async () => {
+          await result.current.openSummary()
+        })
+        act(() => result.current.bookMove())
+      }
+      await act(async () => {
+        await beginWrite(result, kind)
+      })
+      expect(Object.values(result.current.session.operations).at(-1)?.status).toBe('failed')
+      await act(async () => {
+        await beginWrite(result, kind)
+      })
+      expect(calls(fetch, path)).toHaveLength(2)
+      expect(Object.values(result.current.session.operations).at(-1)?.status).toBe('succeeded')
+    },
+  )
+  it('coverage edits reject late pricing without restoring any dependent lead', async () => {
     const pending = deferred<Response>()
     const fetch = api((path) => (path === '/api/price' ? pending.promise : undefined))
-    mount(ready())
-    fireEvent.click(confirmPrice())
-    await waitFor(() => expect(fetch.mock.calls.some(([path]) => path === '/api/price')).toBe(true))
-    reopenStage(/Reopen review/)
-    fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'No' }))
-    await act(async () => pending.resolve(Response.json({ price })))
-    expect(draft()).toMatchObject({ wholeMoveCovered: false, price: null, estimateId: null })
-    expect(fetch.mock.calls.some(([path]) => path === '/api/estimates')).toBe(false)
-  })
-
-  it.each(['check', 'price'])('blocks stale vision at %s, never saves, and retains conversation', async (stage) => {
-    const fetch = api((path) => {
-      if (stage === 'check' && path === '/api/ai-status')
-        return Promise.resolve(Response.json({ visionRevision: 2, visionFingerprint: 'changed' }))
-      if (stage === 'price' && path === '/api/price')
-        return Promise.resolve(Response.json({ code: 'REANALYZE_REQUIRED' }, { status: 409 }))
-      return undefined
+    const { result } = hook()
+    let work: Promise<void>
+    act(() => {
+      work = result.current.openSummary()
     })
-    mount(ready())
-    fireEvent.click(confirmPrice())
-    await screen.findByText(/analyze your photos again/i)
-    expect(fetch.mock.calls.some(([path]) => path === '/api/estimates')).toBe(false)
-    expect(screen.getByRole('log', { name: 'Move conversation' })).toBeInTheDocument()
-    expect(screen.getByLabelText('Message')).toBeEnabled()
-    if (stage === 'price') expect(draft().analysis).toBeNull()
+    await waitFor(() => expect(calls(fetch, '/api/price')).toHaveLength(1))
+    act(() => {
+      result.current.apply({ type: 'coverage.answer', answer: false })
+    })
+    await act(async () => {
+      pending.resolve(Response.json({ price }))
+      await work
+    })
+    expect(result.current.session.price).toBeNull()
+    expect(result.current.session.estimateId).toBeNull()
+    expect(writes(fetch)).toEqual([])
   })
+  it.each(['check', 'price'])('stale vision at %s cannot restore a price or save', async (stage) => {
+    const fetch = api((path) =>
+      stage === 'check' && path === '/api/ai-status'
+        ? Promise.resolve(Response.json({ visionRevision: 2, visionFingerprint: 'changed' }))
+        : stage === 'price' && path === '/api/price'
+          ? Promise.resolve(Response.json({ error: 'Changed', code: 'REANALYZE_REQUIRED' }, { status: 409 }))
+          : undefined,
+    )
+    const { result } = hook()
+    await act(async () => {
+      await result.current.openSummary()
+    })
+    expect(result.current.session.price).toBeNull()
+    expect(result.current.session.analysis).toEqual(stage === 'check' ? analysis : null)
+    expect(result.current.session.verifiedVisionFingerprint).toBeNull()
+    expect(writes(fetch)).toEqual([])
+    expect(result.current.error).toMatch(/changed|again/i)
+  })
+  it.each(['success', 'failure', 'stale'])(
+    'revalidates restored saved estimate only on explicit contact (%s)',
+    async (outcome) => {
+      const fetch = api((path) =>
+        path === '/api/ai-status'
+          ? Promise.resolve(
+              outcome === 'failure'
+                ? Response.json({}, { status: 503 })
+                : Response.json({
+                    visionRevision: 1,
+                    visionFingerprint: outcome === 'stale' ? 'changed' : 'current-vision',
+                  }),
+            )
+          : undefined,
+      )
+      const { result } = hook(ready({ price, estimateId: 'saved-id' }))
+      expect(fetch).not.toHaveBeenCalled()
+      await act(async () => {
+        await result.current.submitContact(contact)
+      })
+      expect(calls(fetch, '/api/ai-status')).toHaveLength(1)
+      expect(calls(fetch, '/api/estimates/saved-id/contact')).toHaveLength(outcome === 'success' ? 1 : 0)
+    },
+  )
+})
 
-  it('keeps uncertain candidates separate, durable choices and duplicate/missing questions update the same inventory', async () => {
-    api()
-    const uncertain = {
-      url: 'https://example.test/room.jpg',
-      status: 'uncertain' as const,
-      reason: 'Please check.',
-      candidates: {
-        items: [{ type: 'couch', count: 2 }],
-        total_volume_cubic_feet: 160,
-        estimated_boxes_min: 3,
-        estimated_boxes_max: 5,
-      },
-    }
-    const view = mount(
+describe('source-bound Send, retry and safe proposals', () => {
+  it.each(['current', 'wrong-message', 'missing-facts'] as const)(
+    'only current grounded details auto-apply (%s)',
+    async (mode) => {
+      const fetch = api((path, request) => {
+        if (path !== '/api/conversation') return
+        const body = JSON.parse(request?.body as string)
+        const latest = body.messages.at(-1)
+        return Promise.resolve(
+          Response.json(
+            packet(
+              [
+                {
+                  type: 'details.patch',
+                  patch: {
+                    from: '12 Main Street, Boston, MA',
+                    to: '9 Oak Street, Hartford, CT',
+                    date: '2027-01-11',
+                    originFloor: 0,
+                  },
+                  ...(mode === 'missing-facts'
+                    ? {}
+                    : {
+                        facts: ['from', 'to', 'date', 'originFloor'].map((field) => ({
+                          field,
+                          sourceMessageId: mode === 'current' ? latest.id : 'older-answer',
+                          wording: latest.content,
+                          precision: field === 'from' || field === 'to' ? 'address' : 'exact',
+                          uncertainty: 'certain',
+                          correction: false,
+                        })),
+                      }),
+                } as ConversationCommand,
+              ],
+              body.snapshot.revision,
+            ),
+          ),
+        )
+      })
+      const state = createConversationSession()
+      state.messages = [
+        { id: 'older-answer', role: 'user', content: 'Pickup and delivery are stated here, January 11, ground floor.' },
+      ]
+      const { result } = hook(state)
+      await act(async () => {
+        await result.current.sendMessage('Pickup and delivery are stated here, January 11, ground floor.')
+      })
+      expect(result.current.session.revision).toBe(mode === 'current' ? 1 : 0)
+      expect(result.current.session.pendingProposals).toHaveLength(mode === 'current' ? 0 : 1)
+      expect(writes(fetch)).toEqual([])
+      if (mode === 'current')
+        expect(result.current.session.moveDetails).toMatchObject({
+          from: '12 Main Street, Boston, MA',
+          to: '9 Oak Street, Hartford, CT',
+          originFloor: 0,
+          date: '2027-01-11',
+        })
+    },
+  )
+  it('current source-bound factual answers apply as one validated batch while prose alone cannot mutate', async () => {
+    const fetch = api((path, request) => {
+      if (path !== '/api/conversation') return
+      const body = JSON.parse(request?.body as string)
+      const latest = body.messages.at(-1)
+      return Promise.resolve(
+        Response.json({
+          ...packet(
+            [
+              { type: 'followUp.answer', key: 'garage', answer: false },
+              { type: 'coverage.answer', answer: true },
+            ],
+            body.snapshot.revision,
+          ),
+          proposals: packet(
+            [
+              { type: 'followUp.answer', key: 'garage', answer: false },
+              { type: 'coverage.answer', answer: true },
+            ],
+            body.snapshot.revision,
+          ).proposals.map((proposal) => ({
+            ...proposal,
+            evidence: { sourceMessageId: latest.id, wording: latest.content },
+          })),
+        }),
+      )
+    })
+    const { result } = hook(
       ready({
-        analysis: {
-          ...analysis,
-          items: [],
-          totalVolumeCubicFeet: 0,
-          estimatedBoxes: { min: 0, max: 0 },
-          photoAssessments: [uncertain],
-          possibleDuplicates: [{ item: 'sofa', count: 2 }],
-        },
-        items: [],
-        followUps: { garage: null, closets: null, appliances: null },
         wholeMoveCovered: null,
+        followUps: { garage: null, closets: false, appliances: false },
+        moveDetails: { ...ready().moveDetails, distanceMiles: null },
       }),
     )
-    expect(confirmPrice()).toBeDisabled()
-    expect(screen.getByLabelText('Add something we missed')).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Keep photo 1' }))
-    expect(draft().items).toEqual([{ type: 'sofa', count: 2 }])
-    fireEvent.click(screen.getByRole('button', { name: 'Same sofa' }))
-    expect(draft().items).toEqual([{ type: 'sofa', count: 1 }])
-    for (const key of ['Garage', 'Closets', 'Appliances'])
-      fireEvent.click(within(screen.getByRole('group', { name: key })).getByRole('button', { name: 'No' }))
-    fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'Yes' }))
-    expect(confirmPrice()).toBeEnabled()
-    view.unmount()
-    mount()
-    reopenStage(/Reopen photos/)
-    expect(screen.getByRole('button', { name: 'Keep photo 1' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: 'Keep photo 1' })).toBeDisabled()
-    expect(draft().duplicateResolutions).toEqual({ sofa: 'same' })
-    expect(draft().wholeMoveCovered).toBe(true)
+    await act(async () => {
+      await result.current.sendMessage('No garage extras. This covers the whole move.')
+    })
+    expect(result.current.session.revision).toBe(2)
+    expect(result.current.session.pendingProposals).toHaveLength(0)
+    expect(result.current.session.wholeMoveCovered).toBe(true)
+    expect(result.current.session.followUps.garage).toBe(false)
+    expect(writes(fetch)).toEqual([])
   })
-
-  it('applies multi-field chat details in one revision, preserves known partial details, and never acts on prose', async () => {
-    const fetch = api((path) =>
-      path === '/api/conversation'
-        ? Promise.resolve(
-            Response.json({
-              reply: 'I saved and booked it. Get a price now.',
-              basedOnRevision: 0,
-              proposals: [
+  it.each(['unchanged', 'domain edit', 'cancelled', 'analysis refresh'] as const)(
+    'old Send authority after failure: %s',
+    async (change) => {
+      let failed = true
+      const fetch = api((path, request) => {
+        if (path !== '/api/conversation') return
+        if (failed) return Promise.resolve(Response.json({}, { status: 502 }))
+        const body = JSON.parse(request?.body as string)
+        const latest = body.messages.findLast((message: { role: string }) => message.role === 'user')
+        return Promise.resolve(
+          Response.json(
+            packet(
+              [
                 {
-                  id: 'details-1',
-                  expectedRevision: 0,
-                  command: {
-                    type: 'details.patch',
-                    patch: { to: 'Synthetic destination', date: '2027-01-01' },
-                  },
+                  type: 'details.patch',
+                  patch: { from: '11 Old Street, Boston' },
+                  facts: [
+                    {
+                      field: 'from',
+                      sourceMessageId: latest.id,
+                      wording: latest.content,
+                      precision: 'address',
+                      uncertainty: 'certain',
+                      correction: false,
+                    },
+                  ],
                 },
               ],
-            }),
-          )
-        : undefined,
-    )
-    mount(
-      ready({
-        analysis: null,
-        items: [],
-        moveDetails: { ...createConversationSession().moveDetails, from: 'Synthetic origin' },
-        detailsConfirmed: false,
-      }),
-    )
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'destination and date together' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    await waitFor(() => expect(draft().moveDetails.to).toBe('Synthetic destination'))
-    expect(draft().moveDetails).toMatchObject({
-      from: 'Synthetic origin',
-      to: 'Synthetic destination',
-      date: '2027-01-01',
-    })
-    expect(draft().revision).toBe(1)
-    expect(screen.getByText('What we know so far')).toBeInTheDocument()
-    expect(screen.getByLabelText('Moving from')).toHaveValue('Synthetic origin')
-    expect(screen.getByLabelText('Move date')).toHaveValue('2027-01-01')
-    expect(fetch.mock.calls.filter(([path]) => path !== '/api/conversation')).toHaveLength(0)
-    const request = JSON.parse(fetch.mock.calls[0]?.[1]?.body as string)
-    expect(request.snapshot).toMatchObject({ version: 6, revision: 0, moveDetails: { from: 'Synthetic origin' } })
-    expect(JSON.stringify(request.snapshot)).not.toContain('test-receipt')
-    expect(JSON.stringify(request.snapshot)).not.toContain('example.test/room.jpg')
-  })
-
-  it('immediately fills the exact combined answer in the shared summary through one validated proposal', async () => {
-    const fetch = api((path) =>
-      path === '/api/conversation'
-        ? Promise.resolve(
-            Response.json(
-              packet(
-                [{ type: 'details.patch', patch: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' } }],
-                0,
-                'Please add photos of the rooms you are moving.',
-              ),
-              { headers: { 'x-movers-ai-mode': 'mock' } },
+              body.snapshot.revision,
             ),
-          )
-        : undefined,
-    )
-    mount(createConversationSession())
-    send('from Tel Aviv to Raanana on 1.1.2027')
-    await screen.findByText('Please add photos of the rooms you are moving.')
-    expect(screen.getByLabelText('Moving from')).toHaveValue('Tel Aviv')
-    expect(screen.getByLabelText('Moving to')).toHaveValue('Raanana')
-    expect(screen.getByLabelText('Move date')).toHaveValue('2027-01-01')
-    expect(screen.getByText('What we know so far')).toBeInTheDocument()
-    expect(screen.getByText('Demo data: AI is mocked locally')).toBeInTheDocument()
-    expect(screen.getByText(/Move details updated in the shared manifest/)).toBeInTheDocument()
-    expect(draft()).toMatchObject({
-      revision: 1,
-      pendingProposals: [],
-      moveDetails: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01', distanceMiles: null },
+          ),
+        )
+      })
+      const { result } = hook(ready({ moveDetails: { ...ready().moveDetails, distanceMiles: null } }))
+      await act(async () => {
+        await result.current.sendMessage('11 Old Street, Boston')
+      })
+      expect(result.current.chatFailed).toBe(true)
+      if (change === 'domain edit')
+        act(() => {
+          result.current.apply({ type: 'details.patch', patch: { to: '22 New Street, Hartford' } }, 'panel')
+        })
+      if (change === 'cancelled') act(() => result.current.cancel())
+      failed = false
+      await act(async () => {
+        if (change === 'analysis refresh') await result.current.analyzePhotos()
+        else await result.current.retryChat()
+      })
+      expect(result.current.session.moveDetails.from).toBe(
+        change === 'unchanged' ? '11 Old Street, Boston' : ready().moveDetails.from,
+      )
+      expect(result.current.session.messages.filter((message) => message.role === 'user')).toHaveLength(1)
+      expect(writes(fetch)).toEqual([])
+    },
+  )
+  it.each(['analyze', 'price', 'schedule', 'quotes'] as const)(
+    'accepting an ungrounded %s action hint never executes it',
+    async (action) => {
+      const fetch = api((path) =>
+        path === '/api/conversation'
+          ? Promise.resolve(
+              Response.json(packet([{ type: 'request.action', action }], 0, 'I saved and booked everything.')),
+            )
+          : undefined,
+      )
+      const state = ready({ pendingProposals: packet([{ type: 'request.action', action }]).proposals })
+      const { result } = hook(state)
+      act(() => {
+        result.current.apply({ type: 'proposal.apply', proposalId: 'suggestion-0' })
+      })
+      expect(result.current.session.requestedAction).toBe(action)
+      expect(fetch).not.toHaveBeenCalled()
+      expect(result.current.session.estimateId).toBeNull()
+    },
+  )
+  it.each(['accept', 'domain edit'] as const)(
+    'expires the remaining proposal batch after %s without rebase or automatic refresh',
+    async (change) => {
+      const fetch = api((path) =>
+        path === '/api/conversation'
+          ? Promise.resolve(
+              Response.json(
+                packet([
+                  { type: 'item.count', itemType: 'sofa', count: 2 },
+                  { type: 'coverage.answer', answer: false },
+                ]),
+              ),
+            )
+          : undefined,
+      )
+      const { result } = hook()
+      await act(async () => {
+        await result.current.sendMessage('Review this')
+      })
+      act(() => {
+        result.current.apply(
+          change === 'accept'
+            ? { type: 'proposal.apply', proposalId: 'suggestion-0' }
+            : { type: 'details.patch', patch: { distanceMiles: 99 } },
+          'panel',
+        )
+      })
+      expect(result.current.session.pendingProposals).toHaveLength(0)
+      expect(result.current.suggestionsExpired).toBe(true)
+      expect(calls(fetch, '/api/conversation')).toHaveLength(1)
+      expect(writes(fetch)).toEqual([])
+    },
+  )
+  it.each<ConversationCommand>([
+    { type: 'item.add', item: { type: 'chair', count: 1 } },
+    { type: 'item.count', itemType: 'sofa', count: 2 },
+    { type: 'item.remove', itemType: 'sofa' },
+    { type: 'coverage.answer', answer: false },
+    { type: 'followUp.answer', key: 'garage', answer: true },
+    { type: 'photo.decide', photoId: 'photo-1', decision: 'exclude' },
+    { type: 'duplicate.resolve', itemType: 'sofa', resolution: 'same' },
+  ])('ungrounded $type is held for explicit acceptance or dismissal', async (command) => {
+    api((path) => (path === '/api/conversation' ? Promise.resolve(Response.json(packet([command]))) : undefined))
+    const state = ready({
+      analysis: {
+        ...analysis,
+        possibleDuplicates: [{ item: 'sofa', count: 2 }],
+        photoAssessments:
+          command.type === 'photo.decide'
+            ? [{ url: ready().photos[0].url, status: 'uncertain', reason: 'Review' }]
+            : [],
+      },
     })
-    expect(draft().timeline.filter((entry) => entry.kind === 'event' && entry.event === 'proposal.added')).toHaveLength(
-      1,
-    )
-    expect(new Set(draft().appliedActionIds).size).toBe(draft().appliedActionIds.length)
-    expect(draft().appliedActionIds).not.toContain('suggestion-0')
-    expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation'])
-    const body = JSON.parse(fetch.mock.calls[0]?.[1]?.body as string)
-    expect(Object.keys(body).sort()).toEqual(['messages', 'snapshot'])
-  })
-
-  it('sends already edited state and preserves omission while applying an explicit null correction', async () => {
-    const fetch = api((path) =>
-      path === '/api/conversation'
-        ? Promise.resolve(Response.json(packet([{ type: 'details.patch', patch: { from: null } }], 1)))
-        : undefined,
-    )
-    mount(ready())
-    fireEvent.change(screen.getByLabelText('Moving to'), { target: { value: 'Edited destination' } })
-    send('clear origin')
-    await waitFor(() => expect(draft().moveDetails.from).toBeNull())
-    expect(draft().moveDetails).toMatchObject({ to: 'Edited destination', distanceMiles: null })
-    expect(draft().revision).toBe(2)
-    expect(JSON.parse(fetch.mock.calls[0]?.[1]?.body as string).snapshot).toMatchObject({
-      revision: 1,
-      moveDetails: { to: 'Edited destination' },
+    const { result } = hook(state)
+    await act(async () => {
+      await result.current.sendMessage('Proposed change')
     })
+    expect(result.current.session.revision).toBe(0)
+    expect(result.current.session.items).toEqual(state.items)
+    act(() => {
+      result.current.apply({ type: 'proposal.dismiss', proposalId: 'suggestion-0' })
+    })
+    expect(result.current.session.revision).toBe(0)
+    expect(result.current.session.pendingProposals).toHaveLength(0)
+    await act(async () => {
+      await result.current.sendMessage('Propose again')
+    })
+    act(() => {
+      result.current.apply({ type: 'proposal.apply', proposalId: 'suggestion-0' })
+    })
+    expect(result.current.session.revision).toBe(1)
   })
-
   it.each([
     ['legacy payload', { reply: 'Rejected', moveDetails: { from: 'Untrusted' }, finished: true }],
-    ['unknown field', { ...packet(), contact: { email: 'private@example.test' } }],
-    ['malformed reply', { ...packet(), reply: '' }],
+    ['private field', { ...packet(), contact }],
+    ['empty reply', { ...packet(), reply: '' }],
     ['wrong revision', packet([{ type: 'details.patch', patch: { from: 'Untrusted' } }], 9)],
     [
       'wrong proposal revision',
       {
         ...packet(),
         proposals: [
-          { id: 'bad-revision', expectedRevision: 9, command: { type: 'details.patch', patch: { from: 'Untrusted' } } },
+          { id: 'bad', expectedRevision: 9, command: { type: 'details.patch', patch: { from: 'Untrusted' } } },
         ],
       },
     ],
@@ -1010,32 +1029,24 @@ describe('persistent estimator conversation', () => {
         ...packet(),
         proposals: [
           {
-            id: 'private',
+            id: 'bad',
             expectedRevision: 0,
             command: { type: 'details.patch', patch: { from: 'Untrusted', receipt: 'private' } },
           },
         ],
       },
     ],
-    [
-      'invalid count',
-      {
-        ...packet(),
-        proposals: [
-          { id: 'bad-count', expectedRevision: 0, command: { type: 'item.count', itemType: 'sofa', count: 0 } },
-        ],
-      },
-    ],
+    ['invalid count', packet([{ type: 'item.count', itemType: 'sofa', count: 0 }])],
     ['invalid date', packet([{ type: 'details.patch', patch: { date: '2027-02-30' } }])],
     [
       'invalid reference after valid proposal',
       packet([
         { type: 'coverage.answer', answer: false },
-        { type: 'item.remove', itemType: 'not-present' },
+        { type: 'item.remove', itemType: 'missing' },
       ]),
     ],
     [
-      'duplicate proposal ID',
+      'duplicate ID',
       {
         ...packet(),
         proposals: [0, 1].map(() => ({
@@ -1052,1077 +1063,688 @@ describe('persistent estimator conversation', () => {
         { type: 'details.patch', patch: { to: 'B' } },
       ]),
     ],
-  ])('rejects %s atomically with retry guidance and no legacy fallback', async (_name, response) => {
+  ])('rejects %s atomically at adapter ingress with no fallback', async (_name, response) => {
     const fetch = api((path) => (path === '/api/conversation' ? Promise.resolve(Response.json(response)) : undefined))
     const state = ready()
-    mount(state)
-    send('synthetic answer')
-    await screen.findByRole('button', { name: 'Retry reply' })
-    expect(draft()).toMatchObject({
+    const { result } = hook(state)
+    await act(async () => {
+      await result.current.sendMessage('Synthetic answer')
+    })
+    expect(result.current.chatFailed).toBe(true)
+    expect(result.current.session).toMatchObject({
       revision: 0,
       moveDetails: state.moveDetails,
       items: state.items,
       pendingProposals: [],
       wholeMoveCovered: true,
     })
-    expect(draft().messages.filter((message) => message.role === 'assistant')).toHaveLength(0)
+    expect(result.current.session.messages.filter((message) => message.role === 'assistant')).toHaveLength(0)
     expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation'])
   })
-
-  it.each<ConversationCommand>([
-    { type: 'item.add', item: { type: 'chair', count: 1 } },
-    { type: 'item.count', itemType: 'sofa', count: 2 },
-    { type: 'item.remove', itemType: 'sofa' },
-    { type: 'coverage.answer', answer: false },
-    { type: 'followUp.answer', key: 'garage', answer: true },
-    { type: 'photo.decide', photoId: 'photo-1', decision: 'exclude' },
-    { type: 'duplicate.resolve', itemType: 'sofa', resolution: 'same' },
-  ])('holds $type for explicit inline acceptance and supports dismissal', async (command) => {
-    api((path) => (path === '/api/conversation' ? Promise.resolve(Response.json(packet([command]))) : undefined))
-    const state = ready({
-      analysis: {
-        ...analysis,
-        possibleDuplicates: [{ item: 'sofa', count: 2 }],
-        photoAssessments:
-          command.type === 'photo.decide'
-            ? [{ url: 'https://example.test/room.jpg', status: 'uncertain', reason: 'Review' }]
-            : [],
-      },
-    })
-    mount(state)
-    send('synthetic proposed change')
-    await screen.findByRole('button', { name: 'Accept suggestion' })
-    expect(draft()).toMatchObject({ revision: 0, items: state.items, wholeMoveCovered: true, photoDecisions: {} })
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss suggestion' }))
-    expect(draft().pendingProposals).toHaveLength(0)
-    expect(draft().revision).toBe(0)
-    send('synthetic proposed change again')
-    fireEvent.click(await screen.findByRole('button', { name: 'Accept suggestion' }))
-    expect(draft().pendingProposals).toHaveLength(0)
-    expect(draft().revision).toBe(1)
+  it('validates adapter packets while legacy chatApi remains compatible', async () => {
+    const fetch = api(() =>
+      Promise.resolve(Response.json({ reply: 'Legacy reply', moveDetails: { from: 'Boston' }, finished: false })),
+    )
+    await expect(conversationChatApi([], conversationSnapshot(createConversationSession()))).rejects.toThrow()
+    await expect(chatApi([])).resolves.toMatchObject({ reply: 'Legacy reply' })
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
+  it('cancellation ignores a late reply; retry never double-adds the submitted user turn', async () => {
+    const pending = deferred<Response>()
+    let attempt = 0
+    const fetch = api((path) =>
+      path === '/api/conversation'
+        ? ++attempt === 1
+          ? Promise.resolve(Response.json({}, { status: 502 }))
+          : pending.promise
+        : undefined,
+    )
+    const { result } = hook()
+    await act(async () => {
+      await result.current.sendMessage('hello')
+    })
+    let work: Promise<void>
+    act(() => {
+      work = result.current.retryChat()
+    })
+    act(() => result.current.cancel())
+    await act(async () => {
+      pending.resolve(Response.json(packet([], 0, 'late')))
+      await work
+    })
+    expect(result.current.session.messages.map((message) => message.content)).toEqual(['hello'])
+    expect(result.current.chatBusy).toBe(false)
+    expect(calls(fetch, '/api/conversation')).toHaveLength(2)
+  })
+})
 
-  it.each(['accept', 'panel edit'] as const)(
-    'visibly expires the remaining batch after %s without rebasing or automatic refresh',
-    async (change) => {
-      const fetch = api((path) =>
-        path === '/api/conversation'
-          ? Promise.resolve(
-              Response.json(
-                packet([
-                  { type: 'item.count', itemType: 'sofa', count: 2 },
-                  { type: 'coverage.answer', answer: false },
-                ]),
-              ),
-            )
-          : undefined,
+describe('photo receipts, evidence, uploads and inventory', () => {
+  it.each(
+    (['photoAssessments', 'photoLinkStatuses'] as const).flatMap((source) =>
+      (['unlinked', 'unavailable'] as const).map((status) => ({ source, status })),
+    ),
+  )('partial $source $status failures remain durable and removal clears stale analysis', async ({ source, status }) => {
+    const photos = [
+      ...ready().photos,
+      { id: 'photo-2', url: 'https://example.test/failed.jpg', receipt: 'second-receipt' },
+    ]
+    const partial = {
+      ...analysis,
+      [source]: [
+        { url: photos[0].url, status: source === 'photoAssessments' ? 'relevant' : 'eligible', reason: 'Linked' },
+        { url: photos[1].url, status, reason: 'Re-upload this photo.' },
+      ],
+    }
+    api((path) => (path === '/api/analyze' ? Promise.resolve(Response.json(partial)) : undefined))
+    const view = hook(
+      ready({
+        photos,
+        photoUrls: photos.map((photo) => photo.url),
+        photoRefs: photos.map(({ url, receipt }) => ({ url, receipt })),
+      }),
+    )
+    await act(async () => {
+      await view.result.current.analyzePhotos()
+    })
+    expect(Object.values(view.result.current.session.operations).at(-1)?.status).toBe('succeeded')
+    view.unmount()
+    mount()
+    expect(screen.getByText('Photo 2 · Re-upload required')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/re-upload/i)
+    fireEvent.click(screen.getByText('Manage photo 2'))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove photo 2' }))
+    expect(stored().photos).toHaveLength(1)
+    expect(stored().analysis).toBeNull()
+  })
+  it.each(['keep', 'exclude'] as const)(
+    'prices reviewed %s candidates and evidence, never raw analysis totals',
+    async (decision) => {
+      const relevant = ready().photos[0]
+      const uncertain = { id: 'photo-2', url: 'https://example.test/uncertain.jpg', receipt: 'uncertain-receipt' }
+      const candidate = {
+        ...analysis,
+        items: [{ type: 'desk', count: 1 }],
+        totalVolumeCubicFeet: 40,
+        photoAssessments: [
+          { url: relevant.url, status: 'relevant' as const, reason: 'Desk' },
+          {
+            url: uncertain.url,
+            status: 'uncertain' as const,
+            reason: 'Review',
+            candidates: {
+              items: [{ type: 'armchair', count: 1 }],
+              total_volume_cubic_feet: 20,
+              estimated_boxes_min: 1,
+              estimated_boxes_max: 2,
+            },
+          },
+        ],
+      }
+      const fetch = api()
+      const { result } = hook(
+        ready({
+          analysis: candidate,
+          items: candidate.items,
+          photos: [relevant, uncertain],
+          photoUrls: [relevant.url, uncertain.url],
+          photoRefs: [relevant, uncertain].map(({ url, receipt }) => ({ url, receipt })),
+        }),
       )
-      mount(ready())
-      send('change count and coverage')
-      const [accept] = await screen.findAllByRole('button', { name: 'Accept suggestion' })
-      if (!accept) throw new Error('Missing suggestion control')
-      if (change === 'accept') fireEvent.click(accept)
-      else fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '42' } })
-      expect(screen.getByText(/suggestions expired/i)).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Refresh suggestions' })).toBeEnabled()
-      expect(screen.queryByRole('button', { name: 'Accept suggestion' })).not.toBeInTheDocument()
-      expect(draft().wholeMoveCovered).toBe(change === 'accept' ? true : null)
-      expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation'])
-    },
-  )
-
-  it.each(['analyze', 'price', 'schedule', 'quotes'] as const)(
-    'accepting a %s action hint and prose never executes an operation',
-    async (action) => {
-      const fetch = api((path) =>
-        path === '/api/conversation'
-          ? Promise.resolve(
-              Response.json(
-                packet(
-                  [{ type: 'request.action', action }],
-                  0,
-                  'Untrusted prose claiming a saved estimate and requested date.',
-                ),
-              ),
-            )
-          : undefined,
-      )
-      mount(ready())
-      send(`please ${action}`)
-      fireEvent.click(await screen.findByRole('button', { name: 'Accept suggestion' }))
-      expect(draft().requestedAction).toBe(action)
-      expect(draft()).toMatchObject({
-        revision: 0,
-        price: null,
-        estimateId: null,
-        scheduleResult: null,
-        quoteResult: null,
-        operations: {},
+      act(() => {
+        result.current.apply({ type: 'photo.decide', photoId: uncertain.id, decision })
       })
-      expect(screen.getByText(/use the explicit.*control/i)).toBeInTheDocument()
-      expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation'])
+      await act(async () => {
+        await result.current.openSummary()
+      })
+      expect(calls(fetch, '/api/price')).toHaveLength(1)
+      const body = JSON.parse(calls(fetch, '/api/price')[0][1]?.body as string)
+      expect(body.analysis.items).toEqual(
+        decision === 'keep'
+          ? [
+              { type: 'desk', count: 1 },
+              { type: 'armchair', count: 1 },
+            ]
+          : [{ type: 'desk', count: 1 }],
+      )
+      expect(body.analysis.totalVolumeCubicFeet).toBe(decision === 'keep' ? 60 : 40)
+      expect(body.analysis.estimatedBoxes).toEqual(decision === 'keep' ? { min: 3, max: 6 } : { min: 2, max: 4 })
+      expect(body.review.photoEvidence).toEqual({ unresolvedCount: 0, excludedCount: decision === 'keep' ? 0 : 1 })
+      expect(result.current.session.photoDecisions[uncertain.url]).toBe(decision)
+      expect(writes(fetch)).toEqual([])
     },
   )
+  it('uncertain-only inventory stays empty until kept; exclude-all remains blocked after reload', async () => {
+    const url = ready().photos[0].url
+    const uncertain = {
+      ...analysis,
+      items: [],
+      totalVolumeCubicFeet: 0,
+      photoAssessments: [
+        {
+          url,
+          status: 'uncertain' as const,
+          reason: 'Review',
+          candidates: {
+            items: [{ type: 'armchair', count: 1 }],
+            total_volume_cubic_feet: 20,
+            estimated_boxes_min: 1,
+            estimated_boxes_max: 2,
+          },
+        },
+      ],
+    }
+    const fetch = api()
+    const view = hook(ready({ analysis: uncertain, items: [] }))
+    expect(view.result.current.completeness.ready).toBe(false)
+    act(() => {
+      view.result.current.apply({ type: 'photo.decide', photoId: 'photo-1', decision: 'exclude' })
+    })
+    view.unmount()
+    const restored = renderHook(() => useConversationController())
+    await act(async () => {
+      await restored.result.current.openSummary()
+    })
+    expect(calls(fetch, '/api/price')).toHaveLength(0)
+    expect(restored.result.current.session.items).toEqual([])
+    act(() => {
+      restored.result.current.apply({ type: 'item.add', item: { type: 'fixture trunk', count: 1 } })
+    })
+    expect(restored.result.current.session.items).toEqual([{ type: 'fixture trunk', count: 1 }])
+    // An added item cannot fabricate relevant photo evidence under the goal-driven readiness contract.
+    expect(restored.result.current.completeness.ready).toBe(false)
+  })
+  it('alias/count/add/remove and duplicate decisions update the same inventory and lock later photo decisions', () => {
+    api()
+    const { result } = hook(
+      ready({
+        items: [{ type: 'couch', count: 2 }],
+        analysis: {
+          ...analysis,
+          items: [{ type: 'couch', count: 2 }],
+          possibleDuplicates: [{ item: 'sofa', count: 2 }],
+        },
+      }),
+    )
+    act(() => {
+      result.current.apply({ type: 'duplicate.resolve', itemType: 'sofa', resolution: 'same' })
+    })
+    expect(result.current.session.items[0].count).toBe(1)
+    act(() => {
+      result.current.apply({ type: 'item.count', itemType: 'sofa', count: 3 })
+      result.current.apply({ type: 'item.add', item: { type: 'chair', count: 2 } })
+      result.current.apply({ type: 'item.remove', itemType: 'chair' })
+    })
+    expect(result.current.session.items).toEqual([{ type: 'sofa', count: 3 }])
+    expect(result.current.session.photoDecisionsLocked).toBe(true)
+  })
+  it.each(['request_failed', 'photo_link_failed'] as const)(
+    'sanitizes and persists %s failure evidence; accepted retry clears it',
+    async (code) => {
+      let failed = true
+      const url = ready().photos[0].url
+      const fetch = api((path) =>
+        path === '/api/analyze' && failed
+          ? Promise.resolve(
+              Response.json(
+                {
+                  error: 'raw-private-provider',
+                  code: code === 'photo_link_failed' ? 'PHOTO_LINK_FAILED' : 'ANALYSIS_FAILED',
+                  photoAssessments: [
+                    { url, status: 'unavailable', reason: 'Unavailable' },
+                    { url: 'https://example.test/not-selected.jpg', status: 'unavailable', reason: 'Private' },
+                  ],
+                },
+                { status: 400 },
+              ),
+            )
+          : undefined,
+      )
+      const view = hook()
+      await act(async () => {
+        await view.result.current.analyzePhotos()
+      })
+      expect(Object.values(stored().operations).at(-1)?.errorCode).toBe(code)
+      expect(JSON.stringify(stored())).not.toContain('raw-private-provider')
+      expect(stored().failedPhotoAssessments.every((entry) => entry.url === url)).toBe(true)
+      view.unmount()
+      const restored = renderHook(() => useConversationController())
+      expect(calls(fetch, '/api/analyze')).toHaveLength(1)
+      failed = false
+      await act(async () => {
+        await restored.result.current.analyzePhotos()
+      })
+      expect(restored.result.current.session.failedPhotoAssessments).toEqual([])
+      expect(restored.result.current.session.analysis).toEqual(analysis)
+    },
+  )
+  it.each(['details', 'photos'])(
+    'retains photo-specific recovery across %s edits until photos actually change',
+    (change) => {
+      const failedPhotoAssessments = [
+        { url: ready().photos[0].url, status: 'unavailable' as const, reason: 'Unavailable' },
+      ]
+      api()
+      const { result } = hook(ready({ failedPhotoAssessments }))
+      act(() => {
+        if (change === 'details') result.current.apply({ type: 'details.patch', patch: { distanceMiles: 99 } })
+        else result.current.removePhoto('photo-1')
+      })
+      expect(result.current.session.failedPhotoAssessments).toEqual(change === 'details' ? failedPhotoAssessments : [])
+    },
+  )
+  it.each([0, 1])('overlapping upload cohorts retain both receipts when completion %s is first', async (first) => {
+    const control = uploads()
+    api()
+    const { result } = hook(createConversationSession())
+    let one: Promise<void> | undefined
+    let two: Promise<void> | undefined
+    act(() => {
+      one = result.current.uploadFiles([control.file()])
+      two = result.current.uploadFiles([control.file()])
+    })
+    await waitFor(() => expect(control.pending).toHaveLength(2))
+    await act(async () => {
+      control.pending[first].done()
+    })
+    expect(result.current.session.photos).toHaveLength(1)
+    await act(async () => {
+      control.pending[1 - first].done()
+      await one
+      await two
+    })
+    expect(result.current.session.photos).toHaveLength(2)
+    expect(result.current.session.photos.every((photo) => photo.receipt)).toBe(true)
+  })
+  it('unrelated edits and a newer selection cannot rebase an older upload cohort', async () => {
+    const control = uploads()
+    api()
+    const { result } = hook(createConversationSession())
+    let old: Promise<void> | undefined
+    let current: Promise<void> | undefined
+    act(() => {
+      old = result.current.uploadFiles([control.file()])
+    })
+    await waitFor(() => expect(control.pending).toHaveLength(1))
+    act(() => {
+      result.current.apply({ type: 'details.patch', patch: { from: 'Changed origin' } }, 'panel')
+      current = result.current.uploadFiles([control.file()])
+    })
+    await waitFor(() => expect(control.pending).toHaveLength(2))
+    await act(async () => {
+      control.pending[1].done()
+      await current
+    })
+    await act(async () => {
+      control.pending[0].done()
+      await old
+    })
+    expect(result.current.session.photos.map((photo) => photo.receipt)).toEqual(['selection-receipt-2'])
+    expect(result.current.uploads[0].status).toBe('error')
+  })
+  it('caps selected uploads at ten, retains receipts and never resurrects a removed upload', async () => {
+    const control = uploads()
+    const fetch = api()
+    const { result } = hook(createConversationSession())
+    let work: Promise<void> | undefined
+    act(() => {
+      work = result.current.uploadFiles(Array.from({ length: 12 }, control.file))
+    })
+    await waitFor(() => expect(control.pending).toHaveLength(10))
+    expect(result.current.error).toMatch(/10 photos/)
+    const removed = result.current.uploads[0].id
+    act(() => result.current.removeUpload(removed))
+    await act(async () => {
+      for (const upload of control.pending) upload.done()
+      await work
+    })
+    expect(result.current.session.photos).toHaveLength(9)
+    expect(result.current.session.photos.every((photo) => photo.receipt)).toBe(true)
+    expect(result.current.session.photos.some((photo) => photo.id === removed)).toBe(false)
+    expect(writes(fetch)).toEqual([])
+  })
+  it('upload failure supports explicit retry/removal and blocks analysis/pricing without losing draft', async () => {
+    const control = uploads()
+    const fetch = api()
+    const { result } = hook()
+    let work: Promise<void> | undefined
+    act(() => {
+      result.current.setDraft('keep writing')
+      work = result.current.uploadFiles([control.file()])
+    })
+    await waitFor(() => expect(control.pending).toHaveLength(1))
+    await act(async () => {
+      await result.current.openSummary()
+      control.pending[0].fail()
+      await work
+    })
+    expect(calls(fetch, '/api/price')).toHaveLength(0)
+    expect(result.current.uploads[0].status).toBe('error')
+    let retry: Promise<void> | undefined
+    act(() => {
+      retry = result.current.retryUpload(result.current.uploads[0].id)
+    })
+    await waitFor(() => expect(control.pending).toHaveLength(2))
+    act(() => result.current.removeUpload(result.current.uploads[0].id))
+    await act(async () => {
+      control.pending[1].done()
+      await retry
+    })
+    expect(result.current.draft).toBe('keep writing')
+    expect(result.current.session.photos).toHaveLength(1)
+    expect(writes(fetch)).toEqual([])
+  })
+  it.each(['preflight', 'price-result'] as const)(
+    'selection during %s blocks dependent work even without a revision change',
+    async (stage) => {
+      const control = uploads()
+      const pending = deferred<Response>()
+      const path = stage === 'preflight' ? '/api/ai-status' : '/api/price'
+      const fetch = api((endpoint) => (endpoint === path ? pending.promise : undefined))
+      const { result } = hook()
+      let work: Promise<void>
+      act(() => {
+        work = result.current.openSummary()
+      })
+      await waitFor(() => expect(calls(fetch, path)).toHaveLength(1))
+      act(() => {
+        void result.current.uploadFiles([control.file()])
+      })
+      await waitFor(() => expect(control.pending).toHaveLength(1))
+      await act(async () => {
+        pending.resolve(
+          Response.json(stage === 'preflight' ? { visionRevision: 1, visionFingerprint: 'current-vision' } : { price }),
+        )
+        await work
+      })
+      expect(writes(fetch)).toEqual([])
+      expect(calls(fetch, '/api/price')).toHaveLength(stage === 'preflight' ? 0 : 1)
+      expect(result.current.uploads).toHaveLength(1)
+    },
+  )
+})
 
-  it('keeps a mixed detail/action batch pending until acceptance and expires its remaining suggestion', async () => {
+describe('remaining legacy guards through actual controller entry points', () => {
+  it('supports ground-floor zero without editable manifest fields', () => {
+    api()
+    const { result } = hook(createConversationSession())
+    act(() => {
+      result.current.apply({ type: 'details.patch', patch: { originFloor: 0, destinationFloor: 0 } })
+    })
+    expect(result.current.session.moveDetails).toMatchObject({ originFloor: 0, destinationFloor: 0 })
+  })
+  it('includes accepted state in next Chat and distinguishes omitted fields from explicit null correction', async () => {
+    const fetch = api((path, request) => {
+      if (path !== '/api/conversation') return
+      const body = JSON.parse(request?.body as string)
+      const latest = body.messages.at(-1)
+      return Promise.resolve(
+        Response.json(
+          packet(
+            [
+              {
+                type: 'details.patch',
+                patch: { date: null },
+                facts: [
+                  {
+                    field: 'dateWindow',
+                    sourceMessageId: latest.id,
+                    wording: 'early January',
+                    uncertainty: 'uncertain',
+                    precision: 'window',
+                    correction: true,
+                  },
+                ],
+              },
+            ],
+            body.snapshot.revision,
+          ),
+        ),
+      )
+    })
+    const { result } = hook(ready({ moveDetails: { ...ready().moveDetails, date: '2027-01-11' } }))
+    act(() => {
+      result.current.apply({ type: 'details.patch', patch: { originFloor: 2, originElevator: false } }, 'panel')
+    })
+    await act(async () => {
+      await result.current.sendMessage('Actually early January, not an exact date.')
+    })
+    const request = JSON.parse(calls(fetch, '/api/conversation')[0][1]?.body as string)
+    expect(request.snapshot.moveDetails).toMatchObject({ originFloor: 2, originElevator: false, date: '2027-01-11' })
+    expect(result.current.session.moveDetails).toMatchObject({
+      originFloor: 2,
+      originElevator: false,
+      date: null,
+      from: ready().moveDetails.from,
+    })
+    expect(result.current.session.analysis).toEqual(analysis)
+    expect(writes(fetch)).toEqual([])
+  })
+  it('mixed old-turn details/action batch requires Accept and never executes the remaining hint', async () => {
     const fetch = api((path) =>
       path === '/api/conversation'
         ? Promise.resolve(
             Response.json(
               packet([
-                { type: 'details.patch', patch: { from: 'New origin' } },
+                { type: 'details.patch', patch: { date: '2027-01-11' } },
                 { type: 'request.action', action: 'analyze' },
               ]),
             ),
           )
         : undefined,
     )
-    mount(ready())
-    send('change origin and analyze')
-    const [accept] = await screen.findAllByRole('button', { name: 'Accept suggestion' })
-    if (!accept) throw new Error('Missing suggestion control')
-    expect(draft().moveDetails.from).toBe('Boston, MA')
-    expect(draft().revision).toBe(0)
-    fireEvent.click(accept)
-    expect(draft().moveDetails.from).toBe('New origin')
-    expect(draft().requestedAction).toBeNull()
-    expect(screen.getByText(/suggestions expired/i)).toBeInTheDocument()
+    const { result } = hook(ready({ messages: [{ id: 'old-turn', role: 'user', content: 'Synthetic old proposal' }] }))
+    await act(async () => {
+      await result.current.retryChat()
+    })
+    expect(result.current.session.pendingProposals).toHaveLength(2)
+    expect(result.current.session.moveDetails.date).toBeNull()
+    act(() => {
+      result.current.apply({ type: 'proposal.apply', proposalId: 'suggestion-0' })
+    })
+    expect(result.current.session.moveDetails.date).toBe('2027-01-11')
+    expect(result.current.session.pendingProposals).toEqual([])
     expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation'])
   })
-
-  it('retrying a reply keeps its user message once and leaves a pending explicit analysis intact', async () => {
-    const pending = deferred<Response>()
-    let replies = 0
-    const fetch = api((path) => {
-      if (path === '/api/analyze') return pending.promise
-      if (path === '/api/conversation')
-        return Promise.resolve(
-          ++replies === 1
-            ? Response.json({ error: 'Unavailable', retryable: true }, { status: 502 })
-            : Response.json(packet([], 1, 'Use the existing analysis control.')),
-        )
-      return undefined
-    })
-    mount(ready())
-    reopenStage(/Reopen photos/)
-    fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
-    send('synthetic question during analysis')
-    const operations = draft().operations
-    fireEvent.click(await screen.findByRole('button', { name: 'Retry reply' }))
-    await screen.findByText('Use the existing analysis control.')
-    expect(draft().operations).toEqual(operations)
-    expect(draft().messages.filter((message) => message.role === 'user')).toHaveLength(1)
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/analyze')).toHaveLength(1)
-    const requests = fetch.mock.calls
-      .filter(([path]) => path === '/api/conversation')
-      .map(([, request]) => JSON.parse(request?.body as string))
-    expect(requests).toHaveLength(2)
-    expect(requests[0]).toEqual(requests[1])
-    await act(async () => pending.resolve(Response.json(analysis)))
-    expect(draft().analysis).toEqual(analysis)
-  })
-
-  it.each(['Retry reply', 'Refresh suggestions'] as const)(
-    '%s does not reauthorize a failed old answer after panel edits, even when its new packet matches the current revision',
-    async (control) => {
-      let attempts = 0
-      const fetch = api((path, request) => {
-        if (path !== '/api/conversation') return undefined
-        attempts += 1
-        if (attempts === 1)
-          return Promise.resolve(Response.json({ error: 'Unavailable', retryable: true }, { status: 502 }))
-        const revision = JSON.parse(request?.body as string).snapshot.revision
-        // A current-revision, well-formed response can still describe an old submitted command.
-        return Promise.resolve(
-          Response.json(
-            packet(
-              [{ type: 'details.patch', patch: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' } }],
-              revision,
-              'Review this extracted answer.',
-            ),
-          ),
-        )
-      })
-      const state = createConversationSession()
-      if (control === 'Refresh suggestions')
-        state.pendingProposals = [
-          {
-            id: 'earlier-suggestion',
-            expectedRevision: 0,
-            command: { type: 'request.action', action: 'analyze' },
-          },
-        ]
-      mount(state)
-      send('from Tel Aviv to Raanana on 1.1.2027')
-      await screen.findByRole('button', { name: 'Retry reply' })
-      fireEvent.change(screen.getByLabelText('Moving from'), { target: { value: 'Haifa' } })
-      fireEvent.change(screen.getByLabelText('Moving to'), { target: { value: 'Jerusalem' } })
-      fireEvent.change(screen.getByLabelText('Move date'), { target: { value: '2028-02-02' } })
-      const revision = draft().revision
-      fireEvent.click(screen.getByRole('button', { name: control }))
-      await screen.findByText('Review this extracted answer.')
-      expect(draft()).toMatchObject({
-        revision,
-        moveDetails: { from: 'Haifa', to: 'Jerusalem', date: '2028-02-02' },
-        operations: {},
-      })
-      expect(screen.getByLabelText('Moving from')).toHaveValue('Haifa')
-      expect(screen.getByLabelText('Moving to')).toHaveValue('Jerusalem')
-      expect(screen.getByLabelText('Move date')).toHaveValue('2028-02-02')
-      expect(draft().messages.filter((message) => message.role === 'user')).toHaveLength(1)
-      const requests = fetch.mock.calls.map(([path, request]) => ({ path, body: JSON.parse(request?.body as string) }))
-      expect(requests.map(({ path }) => path)).toEqual(['/api/conversation', '/api/conversation'])
-      expect(requests[1]?.body.snapshot).toMatchObject({
-        revision,
-        moveDetails: { from: 'Haifa', to: 'Jerusalem', date: '2028-02-02' },
-      })
-      expect(requests[1]?.body.messages).toEqual(requests[0]?.body.messages)
-      expect(draft().pendingProposals).toMatchObject([
-        { expectedRevision: revision, command: { type: 'details.patch' } },
-      ])
-      fireEvent.click(screen.getByRole('button', { name: 'Accept suggestion' }))
-      expect(draft()).toMatchObject({
-        revision: revision + 1,
-        pendingProposals: [],
-        moveDetails: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' },
-        operations: {},
-      })
-      expect(fetch).toHaveBeenCalledTimes(2)
-    },
-  )
-
-  it('allows a failed combined answer to autoapply on retry only while its original submitted revision is unchanged', async () => {
-    let attempts = 0
-    const fetch = api((path) =>
-      path === '/api/conversation'
-        ? Promise.resolve(
-            ++attempts === 1
-              ? Response.json({ error: 'Unavailable', retryable: true }, { status: 502 })
-              : Response.json(
-                  packet(
-                    [{ type: 'details.patch', patch: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' } }],
-                    0,
-                    'Please add photos of the rooms you are moving.',
-                  ),
-                ),
-          )
-        : undefined,
-    )
-    mount(createConversationSession())
-    send('from Tel Aviv to Raanana on 1.1.2027')
-    fireEvent.click(await screen.findByRole('button', { name: 'Retry reply' }))
-    await screen.findByText('Please add photos of the rooms you are moving.')
-    expect(draft()).toMatchObject({
-      revision: 1,
-      pendingProposals: [],
-      moveDetails: { from: 'Tel Aviv', to: 'Raanana', date: '2027-01-01' },
-      operations: {},
-    })
-    expect(draft().messages.filter((message) => message.role === 'user')).toHaveLength(1)
-    expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation', '/api/conversation'])
-  })
-
-  it('validates packets at adapter ingress while leaving legacy chatApi compatible', async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(Response.json({ ...packet(), receipt: 'private' }))
-      .mockResolvedValueOnce(Response.json({ reply: 'legacy', moveDetails: {}, finished: false }))
-    vi.stubGlobal('fetch', fetch)
-    await expect(conversationChatApi([], conversationSnapshot(ready()))).rejects.toThrow()
-    await expect(chatApi([])).resolves.toMatchObject({ reply: 'legacy', finished: false })
-    expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/conversation', '/api/chat'])
-  })
-
-  it('blocks pricing while a selected photo is still uploading and supports failure/retry/removal without losing chat', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    vi.stubGlobal(
-      'URL',
-      class extends URL {
-        static createObjectURL() {
-          return 'blob:test-upload'
-        }
-        static revokeObjectURL() {}
-      },
-    )
-    vi.stubGlobal('createImageBitmap', undefined)
-    let uploads = 0
-    const pending: { finish: () => void }[] = []
-    class XHR {
-      upload = { onprogress: null }
-      status = 200
-      responseText = JSON.stringify({ uploads: [{ url: 'https://example.test/new.jpg', receipt: 'new-receipt' }] })
-      onload: (() => void) | null = null
-      onerror: (() => void) | null = null
-      open() {}
-      send() {
-        const attempt = ++uploads
-        pending.push({
-          finish: () => {
-            if (attempt === 1) this.onerror?.()
-            else this.onload?.()
-          },
-        })
-      }
-    }
-    vi.stubGlobal('XMLHttpRequest', XHR)
-    const fetch = api()
-    mount(ready())
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'upload draft' } })
-    fireEvent.change(screen.getByLabelText('Choose from library'), {
-      target: { files: [new File(['synthetic'], 'room.jpg', { type: 'image/jpeg' })] },
-    })
-    await waitFor(() => expect(pending).toHaveLength(1))
-    expect(confirmPrice()).toBeDisabled()
-    await act(async () => pending[0]?.finish())
-    expect(draft().photos).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: 'Retry upload' }))
-    await waitFor(() => expect(pending).toHaveLength(2))
-    await act(async () => pending[1]?.finish())
-    expect(draft()).toMatchObject({
-      analysis: null,
-      price: null,
-      photoRefs: [
-        { url: 'https://example.test/room.jpg', receipt: 'test-receipt' },
-        { url: 'https://example.test/new.jpg', receipt: 'new-receipt' },
-      ],
-    })
-    fireEvent.click(
-      within(screen.getByAltText('new.jpg').closest('li') as HTMLElement).getByRole('button', { name: 'Remove' }),
-    )
-    expect(draft().photos).toHaveLength(1)
-    expect(screen.getByLabelText('Message')).toHaveValue('upload draft')
-    expect(fetch.mock.calls).toHaveLength(0)
-  })
-
-  it.each(['keep', 'exclude'] as const)(
-    'prices only accepted %s candidate totals and evidence, not raw analysis',
-    async (decision) => {
-      const fetch = api()
-      const candidate = {
-        url: 'https://example.test/extra.jpg',
-        status: 'uncertain' as const,
-        reason: 'Check this photo.',
-        candidates: {
-          items: [{ type: 'couch', count: 2 }],
-          total_volume_cubic_feet: 160,
-          estimated_boxes_min: 3,
-          estimated_boxes_max: 5,
-        },
-      }
-      mount(
-        ready({
-          photos: [...ready().photos, { id: 'extra', url: candidate.url, receipt: 'extra-receipt' }],
-          photoUrls: [...ready().photoUrls, candidate.url],
-          photoRefs: [...ready().photoRefs, { url: candidate.url, receipt: 'extra-receipt' }],
-          analysis: { ...analysis, photoAssessments: [candidate] },
-        }),
-      )
-      fireEvent.click(screen.getByRole('button', { name: `${decision === 'keep' ? 'Keep' : 'Exclude'} photo 2` }))
-      for (const key of ['Garage', 'Closets', 'Appliances'])
-        fireEvent.click(within(screen.getByRole('group', { name: key })).getByRole('button', { name: 'No' }))
-      fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'Yes' }))
-      fireEvent.click(confirmPrice())
-      await waitFor(() => expect(draft().estimateId).toBe('saved-id'))
-      const payload = JSON.parse(fetch.mock.calls.find(([path]) => path === '/api/price')?.[1]?.body as string)
-      expect(payload).toMatchObject({
-        analysis: {
-          items: [{ type: 'sofa', count: decision === 'keep' ? 3 : 1 }],
-          totalVolumeCubicFeet: decision === 'keep' ? 240 : 80,
-          estimatedBoxes: decision === 'keep' ? { min: 5, max: 9 } : { min: 2, max: 4 },
-        },
-        review: { photoEvidence: { unresolvedCount: 0, excludedCount: decision === 'keep' ? 0 : 1 } },
-      })
-      expect(draft().analysis?.items).toEqual([{ type: 'sofa', count: 1 }])
-    },
-  )
-
-  it('keeps uncertain-only inventory empty until all decisions resolve, then blocks exclude-all across reload until an explicit add', () => {
-    const fetch = api()
-    const photos = [
-      { id: 'a', url: 'https://example.test/a.jpg', receipt: 'a-receipt' },
-      { id: 'b', url: 'https://example.test/b.jpg', receipt: 'b-receipt' },
-    ]
-    const view = mount(
-      ready({
-        photos,
-        photoUrls: photos.map((photo) => photo.url),
-        photoRefs: photos.map(({ url, receipt }) => ({ url, receipt })),
-        analysis: {
-          ...analysis,
-          items: [],
-          totalVolumeCubicFeet: 0,
-          estimatedBoxes: { min: 0, max: 0 },
-          photoAssessments: photos.map((photo) => ({
-            url: photo.url,
-            status: 'uncertain',
-            reason: 'Check.',
-            candidates: { items: [{ type: 'table', count: 1 }], total_volume_cubic_feet: 20 },
-          })),
-        },
-        items: [],
-      }),
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Exclude photo 1' }))
-    expect(draft().items).toEqual([])
-    expect(screen.getByLabelText('Add something we missed')).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Exclude photo 2' }))
-    expect(draft().items).toEqual([])
-    expect(confirmPrice()).toBeDisabled()
-    view.unmount()
-    mount()
-    expect(confirmPrice()).toBeDisabled()
-    fireEvent.change(screen.getByLabelText('Add something we missed'), { target: { value: 'table' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add', exact: true }))
-    expect(draft().items).toEqual([{ type: 'table', count: 1 }])
-    reopenStage(/Reopen photos/)
-    expect(screen.getByRole('button', { name: 'Keep photo 1' })).toBeDisabled()
-    expect(fetch.mock.calls).toHaveLength(0)
-  })
-
-  it.each(['request_failed', 'photo_link_failed'])(
-    'retains sanitized %s analysis failure evidence on reload, then clears it only after accepted retry',
-    async (code) => {
-      const pending = deferred<Response>()
-      let tries = 0
-      const fetch = api((path) =>
-        path === '/api/analyze'
-          ? ++tries === 1
-            ? Promise.resolve(
-                Response.json(
-                  {
-                    code:
-                      code === 'photo_link_failed'
-                        ? 'PHOTO_REUPLOAD_REQUIRED'
-                        : code === 'reanalyze_required'
-                          ? 'REANALYZE_REQUIRED'
-                          : 'NO_USABLE_PHOTOS',
-                    photoAssessments: [
-                      {
-                        url: 'https://example.test/room.jpg',
-                        status: 'uncertain',
-                        reason: 'Check this room.',
-                        candidates: { items: [], total_volume_cubic_feet: 0 },
-                      },
-                    ],
-                  },
-                  { status: 400 },
-                ),
-              )
-            : pending.promise
-          : undefined,
-      )
-      const view = mount(ready({ price, estimateId: 'old-id' }))
-      reopenStage(/Reopen photos/)
-      fireEvent.click(screen.getByRole('button', { name: 'Analyse again' }))
-      await screen.findByText(/Photo 1: Check this room/)
-      expect(draft()).toMatchObject({ analysis: null, items: [], price: null, estimateId: null, photoDecisions: {} })
-      expect(draft().failedPhotoAssessments[0]).not.toHaveProperty('candidates')
-      expect(Object.values(draft().operations).at(-1)?.errorCode).toBe(code)
-      expect(screen.queryByRole('button', { name: 'Keep photo 1' })).not.toBeInTheDocument()
-      view.unmount()
-      mount()
-      expect(screen.getByText(/Photo 1: Check this room/)).toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Analyse 1 photo' }))
-      expect(screen.getByText(/Photo 1: Check this room/)).toBeInTheDocument()
-      await act(async () => pending.resolve(Response.json(analysis)))
-      expect(draft()).toMatchObject({
-        analysis,
-        failedPhotoAssessments: [],
-        photoDecisions: {},
-        followUps: { garage: null, closets: null, appliances: null },
-        wholeMoveCovered: null,
-      })
-      expect(fetch.mock.calls.some(([path]) => path === '/api/price' || path === '/api/estimates')).toBe(false)
-    },
-  )
-
-  it.each(['details', 'photos'])('clears durable failure reasons and evidence after %s changes', (change) => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    api()
-    mount(
-      ready({
-        failedPhotoAssessments: [
-          { url: 'https://example.test/room.jpg', status: 'unrelated', reason: 'No inventory.' },
-        ],
-        price,
-        estimateId: 'old-id',
-      }),
-    )
-    if (change === 'details') fireEvent.change(screen.getByLabelText('Moving from'), { target: { value: '' } })
-    else {
-      reopenStage(/Reopen photos/)
-      fireEvent.click(
-        within(screen.getByRole('list', { name: 'Selected photos' })).getByRole('button', { name: 'Remove' }),
-      )
-    }
-    expect(draft()).toMatchObject({
-      failedPhotoAssessments: [],
-      analysis: null,
-      items: [],
-      photoDecisions: {},
-      price: null,
-      estimateId: null,
-      followUps: { garage: null, closets: null, appliances: null },
-      wholeMoveCovered: null,
-    })
-    if (change === 'details') expect(draft().moveDetails.from).toBeNull()
-    expect(screen.queryByText(/Photo 1: No inventory/)).not.toBeInTheDocument()
-  })
-
-  it('uses the shared alias/count/add/remove commands and locks photo decisions after inventory edits', () => {
-    api()
-    mount(
-      ready({
-        items: [
-          { type: 'Couch', count: 1 },
-          { type: 'Sofa', count: 5 },
-          { type: 'piano', count: 2 },
-        ],
-        price,
-        estimateId: 'old-id',
-        analysis: { ...analysis, specialHandling: [{ item: 'couch', reason: 'Needs extra movers' }] },
-      }),
-    )
-    expect(screen.getByLabelText('sofa count')).toHaveTextContent('6')
-    expect(screen.queryByLabelText('Couch count')).not.toBeInTheDocument()
-    expect(screen.getByText('couch: Needs extra movers')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Add something we missed'), { target: { value: 'couch' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
-    expect(draft().items).toEqual([
-      { type: 'sofa', count: 7 },
-      { type: 'piano', count: 2 },
-    ])
-    fireEvent.click(screen.getByRole('button', { name: 'One more sofa' }))
-    expect(draft().items[0]?.count).toBe(8)
-    fireEvent.click(screen.getByRole('button', { name: 'One fewer sofa' }))
-    expect(draft().items[0]?.count).toBe(7)
-    fireEvent.click(within(screen.getByLabelText('sofa count')).getByRole('button', { name: 'Remove' }))
-    expect(draft()).toMatchObject({
-      items: [{ type: 'piano', count: 2 }],
-      price: null,
-      estimateId: null,
-      photoDecisionsLocked: true,
-    })
-  })
-
-  it.each(['success', 'failure', 'stale'])(
-    'revalidates restored saved estimates on explicit date request (%s), never on mount',
-    async (result) => {
-      const pending = deferred<Response>()
-      const fetch = api((path) => (path === '/api/ai-status' ? pending.promise : undefined))
-      mount(ready({ price, estimateId: 'saved-id' }))
-      expect(fetch.mock.calls).toHaveLength(0)
-      for (const [label, value] of [
-        ['Your name', 'Synthetic'],
-        ['Email', 'synthetic@example.test'],
-        ['Phone', '555-0101'],
-        ['Preferred move date', '2027-01-20'],
-      ])
-        fireEvent.change(screen.getByLabelText(label ?? ''), { target: { value } })
-      fireEvent.click(screen.getByRole('button', { name: 'Request this date' }))
-      expect(screen.getByRole('button', { name: 'Request this date' })).toBeDisabled()
-      expect(fetch.mock.calls.some(([path]) => path.endsWith('/contact'))).toBe(false)
-      await act(async () =>
-        pending.resolve(
-          result === 'failure'
-            ? Response.json({}, { status: 503 })
-            : Response.json({
-                visionRevision: 100,
-                visionFingerprint: result === 'stale' ? 'changed' : 'current-vision',
-              }),
-        ),
-      )
-      if (result === 'success') expect(draft().scheduleResult?.status).toBe('requested')
-      else {
-        expect(draft().scheduleResult).toBeNull()
-        expect(screen.getByRole('alert')).toHaveTextContent(
-          result === 'stale' ? /analyze your photos again/i : /unable to check/i,
-        )
-      }
-      expect(fetch.mock.calls.some(([path]) => path === '/api/price' || path === '/api/estimates')).toBe(false)
-    },
-  )
-
-  it('retries a failed reply without double-adding the user message, and cancellation ignores a late reply', async () => {
-    let replies = 0
-    const late = deferred<Response>()
-    api((path) =>
-      path === '/api/conversation'
-        ? ++replies === 1
-          ? Promise.resolve(Response.json({}, { status: 503 }))
-          : replies === 2
-            ? Promise.resolve(Response.json({ reply: 'Recovered', basedOnRevision: 0, proposals: [] }))
-            : late.promise
-        : undefined,
-    )
-    mount(ready())
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'hello' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Retry reply' }))
-    await screen.findByText('Recovered')
-    expect(draft().messages.filter((message) => message.role === 'user')).toHaveLength(1)
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'another' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel reply' }))
-    await act(async () => late.resolve(Response.json({ reply: 'Too late', basedOnRevision: 0, proposals: [] })))
-    expect(screen.queryByText('Too late')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Message')).toBeEnabled()
-  })
-
-  it('uploads at most ten selected photos, keeps receipts, and never resurrects a removed pending upload', async () => {
-    vi.stubGlobal(
-      'URL',
-      class extends URL {
-        static createObjectURL() {
-          return 'blob:batch'
-        }
-        static revokeObjectURL() {}
-      },
-    )
-    vi.stubGlobal('createImageBitmap', undefined)
-    const pending: (() => void)[] = []
-    let count = 0
-    class XHR {
-      upload = { onprogress: null }
-      status = 200
-      responseText = ''
-      onload: (() => void) | null = null
-      onerror: (() => void) | null = null
-      open() {}
-      send() {
-        const number = ++count
-        this.responseText = JSON.stringify({
-          uploads: [{ url: `https://example.test/batch-${number}.jpg`, receipt: `receipt-${number}` }],
-        })
-        pending.push(() => this.onload?.())
-      }
-    }
-    vi.stubGlobal('XMLHttpRequest', XHR)
-    api()
-    mount(ready({ photos: [], photoRefs: [], photoUrls: [], analysis: null, items: [] }))
-    fireEvent.change(screen.getByLabelText('Choose from library'), {
-      target: {
-        files: Array.from(
-          { length: 11 },
-          (_, index) => new File(['synthetic'], `room-${index}.jpg`, { type: 'image/jpeg' }),
-        ),
-      },
-    })
-    await waitFor(() => expect(pending).toHaveLength(10))
-    fireEvent.click(
-      within(screen.getByRole('list', { name: 'Selected photos' }).firstElementChild as HTMLElement).getByRole(
-        'button',
-        { name: 'Remove' },
-      ),
-    )
-    await act(async () => {
-      for (const finish of pending) finish()
-    })
-    expect(draft().photos).toHaveLength(9)
-    expect(draft().photoRefs.every((ref) => !!ref.receipt)).toBe(true)
-    expect(draft().photoUrls).not.toContain('https://example.test/batch-1.jpg')
-    expect(screen.getByLabelText('Message')).toBeInTheDocument()
-  })
-
-  it('preserves history and trailing-card reader positions and measures short visual viewports without outer scrolling', async () => {
-    const viewport = Object.assign(new EventTarget(), { height: 420, offsetTop: 0 })
-    vi.stubGlobal('visualViewport', viewport)
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
-      const log = document.querySelector('.conv-feed')
-      return { top: this.hasAttribute('data-conversation-anchor') ? 1140 - (log?.scrollTop ?? 0) : 140 } as DOMRect
-    })
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(3000)
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(200)
-    api()
-    mount(
-      ready({
-        messages: Array.from({ length: 80 }, (_, index) => ({
-          id: `message-${index}`,
-          role: 'user',
-          content: `Synthetic message ${index}`,
-        })),
-        items: Array.from({ length: 50 }, (_, index) => ({ type: `synthetic item ${index}`, count: 1 })),
-      }),
-    )
-    const log = screen.getByRole('log', { name: 'Move conversation' })
-    expect(within(log).getByText('Synthetic message 79')).toBeInTheDocument()
-    const scroll = vi.mocked(log.scrollTo)
-    const outer = vi.spyOn(window, 'scrollTo')
-    expect(screen.getByRole('main').style.getPropertyValue('--est-chat-height')).toBe('280px')
-    log.scrollTop = 100
-    fireEvent.scroll(log)
-    scroll.mockClear()
-    fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '50' } })
-    expect(scroll).not.toHaveBeenCalled()
-    log.scrollTop = 2790
-    fireEvent.scroll(log)
-    fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '51' } })
-    expect(log.scrollTop).toBe(2790)
-    expect(scroll).not.toHaveBeenCalled()
-    expect(outer).not.toHaveBeenCalled()
-    viewport.height = 300
-    fireEvent(viewport, new Event('resize'))
-    expect(screen.getByRole('main').style.getPropertyValue('--est-chat-height')).toBe('160px')
-  })
-
-  it('does not discard a pending write through Start over or permit another save', async () => {
-    const pending = deferred<Response>()
-    const fetch = api((path) => (path === '/api/estimates' ? pending.promise : undefined))
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    mount(ready())
-    const sessionId = draft().sessionId
-    fireEvent.click(confirmPrice())
-    await waitFor(() => expect(fetch.mock.calls.some(([path]) => path === '/api/estimates')).toBe(true))
-    fireEvent.click(screen.getByRole('button', { name: 'Start over' }))
-    expect(draft().sessionId).toBe(sessionId)
-    expect(screen.getByRole('alert')).toHaveTextContent(/finish|in progress/i)
-    await act(async () => pending.resolve(Response.json({ id: 'saved-id', storage: 'memory' })))
-    expect(draft().estimateId).toBe('saved-id')
-    expect(fetch.mock.calls.filter(([path]) => path === '/api/estimates')).toHaveLength(1)
-  })
-
-  it('retains legacy excluded-photo linkage reasons without treating eligible links as relevance or exposing URLs', () => {
-    api()
-    mount(
-      ready({
-        analysis: {
-          ...analysis,
-          photoLinkStatuses: [
-            { url: 'https://example.test/room.jpg', status: 'unlinked', reason: 'Re-upload this room.' },
-          ],
-        },
-      }),
-    )
-    reopenStage(/Reopen photos/)
-    expect(screen.getByText('Photo 1: Re-upload this room.')).toBeInTheDocument()
-    expect(screen.queryByText(/https:\/\/example\.test/)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Keep photo 1' })).not.toBeInTheDocument()
-  })
-
-  it.each(['preflight', 'price-result'] as const)(
-    'blocks dependent writes when an attachment is selected during %s',
-    async (phase) => {
-      const pending = deferred<Response>()
-      const fetch = api((path) =>
-        (phase === 'preflight' ? path === '/api/ai-status' : path === '/api/price') ? pending.promise : undefined,
-      )
-      const { pending: uploads, select } = controlledUploads()
-      vi.spyOn(window, 'confirm').mockReturnValue(true)
-      mount(ready())
-      fireEvent.click(confirmPrice())
-      await waitFor(() =>
-        expect(
-          fetch.mock.calls.some(([path]) => path === (phase === 'preflight' ? '/api/ai-status' : '/api/price')),
-        ).toBe(true),
-      )
-      select()
-      await waitFor(() => expect(uploads).toHaveLength(1))
-      await act(async () =>
-        pending.resolve(
-          Response.json(phase === 'preflight' ? { visionRevision: 1, visionFingerprint: 'current-vision' } : { price }),
-        ),
-      )
-      expect(fetch.mock.calls.filter(([path]) => path === '/api/price')).toHaveLength(phase === 'preflight' ? 0 : 1)
-      expect(fetch.mock.calls.filter(([path]) => path === '/api/estimates')).toHaveLength(0)
-      expect(screen.getByRole('alert')).toHaveTextContent(/pending uploads|finish.*uploads/i)
-      expect(draft().estimateId).toBeNull()
-    },
-  )
-
-  it.each([0, 1])('accepts receipts across overlapping upload selections, completion order %s first', async (first) => {
-    const { pending, select } = controlledUploads()
-    api()
-    mount(ready({ analysis: null, items: [], photos: [], photoRefs: [], photoUrls: [] }))
-    select()
-    select()
-    await waitFor(() => expect(pending).toHaveLength(2))
-    await act(async () => pending[first]?.())
-    await act(async () => pending[1 - first]?.())
-    expect(draft().photos).toHaveLength(2)
-    expect(
-      draft()
-        .photoRefs.map((ref) => ref.receipt)
-        .sort(),
-    ).toEqual(['selection-receipt-1', 'selection-receipt-2'])
-    expect(screen.queryByRole('button', { name: 'Retry upload' })).not.toBeInTheDocument()
-  })
-
-  it('does not rebase an older upload cohort over unrelated edits or a newer selection', async () => {
-    const { pending, select } = controlledUploads()
-    api()
-    mount(ready({ analysis: null, items: [], photos: [], photoRefs: [], photoUrls: [] }))
-    select()
-    select()
-    await waitFor(() => expect(pending).toHaveLength(2))
-    await act(async () => pending[0]?.())
-    fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '44' } })
-    select()
-    await waitFor(() => expect(pending).toHaveLength(3))
-    await act(async () => pending[2]?.())
-    await act(async () => pending[1]?.())
-    expect(draft().photoRefs.map((ref) => ref.receipt)).toEqual(['selection-receipt-1', 'selection-receipt-3'])
-    expect(draft().moveDetails.distanceMiles).toBe(44)
-    expect(screen.getByRole('button', { name: 'Retry upload' })).toBeInTheDocument()
-  })
-
-  it.each([null, '2027-01-01'])(
-    'uses the current accepted move date after pricing, not the mounted default %s',
-    async (initialDate) => {
+  it.each(['analyze', 'price'] as const)(
+    'retry cannot reauthorize old %s intent after an unrelated revision change',
+    async (action) => {
+      let failed = true
       const fetch = api((path, request) =>
-        path.endsWith('/contact')
+        path === '/api/conversation'
           ? Promise.resolve(
-              Response.json({
-                reference: 'saved-id',
-                requestedDate: JSON.parse(request?.body as string).requestedDate,
-                note: 'Requested',
-              }),
+              failed
+                ? Response.json({}, { status: 502 })
+                : Response.json(
+                    packet([{ type: 'request.action', action }], JSON.parse(request?.body as string).snapshot.revision),
+                  ),
             )
           : undefined,
       )
-      mount(ready({ moveDetails: { ...ready().moveDetails, date: initialDate } }))
-      fireEvent.change(screen.getByLabelText('Move date'), { target: { value: '2027-02-02' } })
-      await rebuildEstimate()
-      expect(screen.getByLabelText('Preferred move date')).toHaveValue('2027-02-02')
-      for (const [label, value] of [
-        ['Your name', 'Synthetic'],
-        ['Email', 'synthetic@example.test'],
-        ['Phone', '555-0101'],
-      ])
-        fireEvent.change(screen.getByLabelText(label ?? ''), { target: { value } })
-      fireEvent.click(screen.getByRole('button', { name: 'Request this date' }))
-      await waitFor(() => expect(draft().scheduleResult?.requestedDate).toBe('2027-02-02'))
-      expect(
-        JSON.parse(fetch.mock.calls.find(([path]) => path.endsWith('/contact'))?.[1]?.body as string).requestedDate,
-      ).toBe('2027-02-02')
+      const { result } = hook()
+      await act(async () => {
+        await result.current.sendMessage(`Please ${action}`)
+      })
+      act(() => {
+        result.current.apply({ type: 'details.patch', patch: { date: '2027-01-11' } })
+      })
+      failed = false
+      await act(async () => {
+        await result.current.retryChat()
+      })
+      expect(result.current.session.pendingProposals).toHaveLength(1)
+      expect(result.current.view).toBe('chat')
+      expect(calls(fetch, '/api/analyze')).toHaveLength(0)
+      expect(calls(fetch, '/api/price')).toHaveLength(0)
+      expect(writes(fetch)).toEqual([])
     },
   )
-
-  it.each(['2027-01-20', ''])(
-    'preserves an intentionally edited request date %s across accepted move-date changes',
-    async (editedDate) => {
-      const fetch = api()
-      mount(ready({ price, estimateId: 'saved-id', moveDetails: { ...ready().moveDetails, date: '2027-01-01' } }))
-      fireEvent.change(screen.getByLabelText('Preferred move date'), { target: { value: editedDate } })
-      fireEvent.change(screen.getByLabelText('Move date'), { target: { value: '2027-02-02' } })
-      await rebuildEstimate()
-      expect(screen.getByLabelText('Preferred move date')).toHaveValue(editedDate)
-      if (editedDate) {
-        for (const [label, value] of [
-          ['Your name', 'Synthetic'],
-          ['Email', 'synthetic@example.test'],
-          ['Phone', '555-0101'],
-        ])
-          fireEvent.change(screen.getByLabelText(label ?? ''), { target: { value } })
-        fireEvent.click(screen.getByRole('button', { name: 'Request this date' }))
-        await waitFor(() => expect(draft().scheduleResult?.requestedDate).toBe('2027-01-20'))
-        expect(
-          JSON.parse(fetch.mock.calls.find(([path]) => path.endsWith('/contact'))?.[1]?.body as string).requestedDate,
-        ).toBe(editedDate)
-      }
-    },
-  )
-
-  it.each(['fresh', 'long-history', 'review-cards'] as const)(
-    'follows the readable conversation anchor instead of trailing cards in %s',
-    async (context) => {
-      const pending = deferred<Response>()
-      api((path) => (path === '/api/conversation' ? pending.promise : undefined))
-      vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(5000)
-      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300)
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
-        const log = document.querySelector('.conv-feed')
-        const top = this.hasAttribute('data-conversation-anchor')
-          ? (this.textContent?.includes('New synthetic reply')
-              ? 1800
-              : this.textContent?.includes('New synthetic question')
-                ? 1600
-                : context === 'fresh'
-                  ? 0
-                  : 1000) -
-            (log?.scrollTop ?? 0) +
-            20
-          : 20
-        return { top } as DOMRect
-      })
-      Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
-        configurable: true,
-        value: vi.fn(function (this: HTMLElement, options: ScrollToOptions) {
-          this.scrollTop = options.top ?? 0
-          this.dispatchEvent(new Event('scroll'))
-        }),
-      })
-      mount(
-        context === 'fresh'
-          ? createConversationSession()
-          : ready({
-              messages: Array.from({ length: 80 }, (_, index) => ({
-                id: `history-${index}`,
-                role: index === 79 ? 'assistant' : 'user',
-                content: `History ${index}`,
-              })),
-              ...(context === 'review-cards'
-                ? {
-                    analysis: {
-                      ...analysis,
-                      unseenAreas: Array.from({ length: 20 }, (_, index) => `Unseen area ${index}`),
-                    },
-                  }
-                : {}),
-            }),
-      )
-      const log = screen.getByRole('log', { name: 'Move conversation' })
-      const composer = screen.getByLabelText('Message')
-      expect(log.scrollTop).toBe(context === 'fresh' ? 0 : 1000)
-      fireEvent.change(composer, { target: { value: 'New synthetic question' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-      expect(log.scrollTop).toBe(1600)
-      await act(async () =>
-        pending.resolve(
-          Response.json({ reply: 'New synthetic reply', basedOnRevision: draft().revision, proposals: [] }),
-        ),
-      )
-      expect(log.scrollTop).toBe(1800)
-      expect(screen.getByText('New synthetic reply')).toBeInTheDocument()
-      expect(screen.getByLabelText('Message')).toBe(composer)
-      expect(screen.queryByRole('region', { name: 'Conversation photos' })).not.toBeInTheDocument()
-      if (context !== 'fresh') reopenStage(/Reopen review/)
-      const scroll = vi.mocked(log.scrollTo)
-      log.scrollTop = 100
-      fireEvent.scroll(log)
-      scroll.mockClear()
-      fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Reader draft' } })
-      expect(scroll).not.toHaveBeenCalled()
-      log.scrollTop = 2500
-      fireEvent.scroll(log)
-      if (context !== 'fresh') {
-        reopenStage(/Reopen review/)
-        fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'No' }))
-      }
-      fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Reading the cards' } })
-      expect(log.scrollTop).toBe(2500)
-      expect(scroll).not.toHaveBeenCalled()
-    },
-  )
-
-  it.each(['draft edit', 'manifest change', 'card answer'] as const)(
-    'preserves a bottom-of-card-stack reader during %s, then resumes on explicit Send',
-    async (change) => {
-      const pending = deferred<Response>()
-      api((path) => (path === '/api/conversation' ? pending.promise : undefined))
-      vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(5000)
-      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300)
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
-        const log = document.querySelector('.conv-feed')
-        const anchorTop = this.textContent?.includes('Resumed synthetic reply')
-          ? 1800
-          : this.textContent?.includes('Explicit synthetic Send')
-            ? 1600
-            : 1000
-        return {
-          top: this.hasAttribute('data-conversation-anchor') ? anchorTop - (log?.scrollTop ?? 0) + 20 : 20,
-        } as DOMRect
-      })
-      Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
-        configurable: true,
-        value: vi.fn(function (this: HTMLElement, options: ScrollToOptions) {
-          this.scrollTop = options.top ?? 0
-          this.dispatchEvent(new Event('scroll'))
-        }),
-      })
-      mount(
-        ready({
-          messages: Array.from({ length: 80 }, (_, index) => ({
-            id: `reader-history-${index}`,
-            role: index === 79 ? 'assistant' : 'user',
-            content: `Synthetic reader history ${index}`,
-          })),
-          analysis: {
-            ...analysis,
-            possibleDuplicates: Array.from({ length: 20 }, (_, index) => ({
-              item: `synthetic item ${index}`,
-              count: 2,
-            })),
-          },
-          items: Array.from({ length: 50 }, (_, index) => ({ type: `synthetic item ${index}`, count: 2 })),
-        }),
-      )
-      const log = screen.getByRole('log', { name: 'Move conversation' })
-      const composer = screen.getByLabelText('Message')
-      expect(log.scrollTop).toBe(1000)
-      log.scrollTop = 4700
-      fireEvent.scroll(log)
-      const scroll = vi.mocked(log.scrollTo)
-      scroll.mockClear()
-      if (change === 'draft edit') fireEvent.change(composer, { target: { value: 'Unsent reader draft' } })
-      else if (change === 'manifest change')
-        fireEvent.change(screen.getByLabelText('Distance (miles)'), { target: { value: '44' } })
-      else {
-        reopenStage(/Reopen review/)
-        fireEvent.click(within(screen.getByRole('group', { name: /whole move/i })).getByRole('button', { name: 'No' }))
-      }
-      expect(log.scrollTop).toBe(4700)
-      expect(scroll).not.toHaveBeenCalled()
-      expect(screen.getByLabelText('Message')).toBe(composer)
-      fireEvent.change(composer, { target: { value: 'Explicit synthetic Send' } })
-      expect(scroll).not.toHaveBeenCalled()
-      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-      expect(log.scrollTop).toBe(1600)
-      await act(async () =>
-        pending.resolve(
-          Response.json({ reply: 'Resumed synthetic reply', basedOnRevision: draft().revision, proposals: [] }),
-        ),
-      )
-      expect(log.scrollTop).toBe(1800)
-      expect(screen.getByText('Resumed synthetic reply')).toBeInTheDocument()
-      expect(screen.getByLabelText('Message')).toBe(composer)
-    },
-  )
-
-  it('keeps actionable local HEIC guidance without forwarding or displaying raw upload failures', async () => {
-    vi.stubGlobal(
-      'URL',
-      class extends URL {
-        static createObjectURL() {
-          return 'blob:heic'
-        }
-        static revokeObjectURL() {}
-      },
+  it('original explicit price intent opens a read-only summary, never a saved lead', async () => {
+    const fetch = api((path, request) =>
+      path === '/api/conversation'
+        ? Promise.resolve(
+            Response.json(
+              packet(
+                [{ type: 'request.action', action: 'price' }],
+                JSON.parse(request?.body as string).snapshot.revision,
+              ),
+            ),
+          )
+        : undefined,
     )
-    const xhr = vi.fn()
-    vi.stubGlobal('XMLHttpRequest', xhr)
-    api()
-    mount(ready({ analysis: null, items: [], photos: [], photoRefs: [], photoUrls: [] }))
-    fireEvent.change(screen.getByLabelText('Choose from library'), {
-      target: { files: [new File(['synthetic'], 'room.heic', { type: 'image/heic' })] },
+    const { result } = hook()
+    await act(async () => {
+      await result.current.sendMessage('Please show my price summary.')
     })
-    expect(await screen.findByRole('alert')).toHaveTextContent(/HEIC.*JPEG/i)
-    expect(xhr).not.toHaveBeenCalled()
-    expect(draft().photoRefs).toEqual([])
-    expect(screen.getByLabelText('Message')).toBeEnabled()
+    expect(result.current.view).toBe('summary')
+    expect(result.current.session.price).toEqual(price)
+    expect(calls(fetch, '/api/price')).toHaveLength(1)
+    expect(writes(fetch)).toEqual([])
   })
-
-  it('opens a modal right drawer, closes with Escape and returns focus without replacing chat or draft', async () => {
-    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener() {},
-      removeListener() {},
-      addEventListener() {},
-      removeEventListener() {},
-      dispatchEvent: () => false,
-    }))
+  it('pagehide-aborted reply restores composer availability without writes or duplicate turn', async () => {
+    const pending = deferred<Response>()
+    const fetch = api((path) => (path === '/api/conversation' ? pending.promise : undefined))
+    const { result } = hook()
+    let work: Promise<void> | undefined
+    act(() => {
+      work = result.current.sendMessage('hello')
+    })
+    fireEvent(window, new Event('pagehide'))
+    await act(async () => {
+      pending.resolve(Response.json(packet([], 0, 'Late hidden reply')))
+      await work
+    })
+    fireEvent(window, new Event('pageshow'))
+    expect(result.current.chatBusy).toBe(false)
+    expect(result.current.session.messages.map((message) => message.content)).toEqual(['hello'])
+    expect(writes(fetch)).toEqual([])
+  })
+  it.each(['update view', 'domain edit'] as const)(
+    'callback rejects a stale displayed scope after %s',
+    async (change) => {
+      const fetch = api()
+      const { result } = hook()
+      await act(async () => {
+        await result.current.openSummary()
+      })
+      act(() => result.current.bookMove())
+      act(() => {
+        if (change === 'update view') result.current.updateSession()
+        else result.current.apply({ type: 'details.patch', patch: { date: '2027-01-11' } })
+      })
+      await act(async () => {
+        await result.current.bookContact(contact)
+      })
+      expect(result.current.error).toMatch(/displayed move changed/i)
+      expect(writes(fetch)).toEqual([])
+    },
+  )
+  it.each(writeCases)(
+    'pending $kind blocks reset and repeat writes before the response arrives',
+    async ({ kind, path }) => {
+      const pending = deferred<Response>()
+      const fetch = api((endpoint) => (endpoint === path ? pending.promise : undefined))
+      const { result } = hook(ready({ price, estimateId: kind === 'save' ? null : 'saved-id', contact }))
+      if (kind === 'save') {
+        await act(async () => {
+          await result.current.openSummary()
+        })
+        act(() => result.current.bookMove())
+      }
+      let work: Promise<void>
+      act(() => {
+        work = beginWrite(result, kind)
+      })
+      await waitFor(() => expect(calls(fetch, path)).toHaveLength(1))
+      const sessionId = result.current.session.sessionId
+      act(() => {
+        result.current.reset('new')
+      })
+      await act(async () => {
+        await beginWrite(result, kind)
+      })
+      expect(result.current.session.sessionId).toBe(sessionId)
+      expect(calls(fetch, path)).toHaveLength(1)
+      await act(async () => {
+        pending.reject(new TypeError('Disconnected'))
+        await work
+      })
+      expect(Object.values(result.current.session.operations).at(-1)?.status).toBe('pending')
+    },
+  )
+  it('legacy linkage exclusions stay visible without exposing their source URL or inventing relevance', () => {
     api()
-    mount(ready())
-    const composer = screen.getByLabelText('Message')
-    fireEvent.change(composer, { target: { value: 'drawer draft' } })
-    const trigger = screen.getByRole('button', { name: /open move manifest/i })
-    fireEvent.click(trigger)
-    expect(screen.getByRole('dialog', { name: 'Move manifest' })).toHaveAttribute('aria-modal', 'true')
-    expect(composer).toBeInTheDocument()
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape', code: 'Escape' })
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(trigger).toHaveFocus()
-    expect(composer).toHaveValue('drawer draft')
+    mount(
+      ready({
+        analysis: {
+          ...analysis,
+          photoLinkStatuses: [{ url: ready().photos[0].url, status: 'unlinked', reason: 'Re-upload required' }],
+        },
+      }),
+    )
+    expect(screen.getByRole('region', { name: 'Conversation photos' })).toHaveTextContent('Re-upload required')
+    expect(document.body.textContent).not.toContain(ready().photos[0].url)
+    expect(screen.queryByText('Reviewed', { exact: true })).not.toBeInTheDocument()
+  })
+})
+
+describe('bounded private context and durable history', () => {
+  it('snapshot excludes stored contact, lead reference, receipts, URLs and internal price', async () => {
+    const fetch = api()
+    const state = ready({ contact, price, estimateId: 'private-reference' })
+    const { result } = hook(state)
+    await act(async () => {
+      await result.current.sendMessage('What remains?')
+    })
+    const payload = JSON.parse(calls(fetch, '/api/conversation')[0][1]?.body as string)
+    const text = JSON.stringify(payload)
+    for (const value of [
+      contact.name,
+      contact.email,
+      contact.phone,
+      state.estimateId,
+      state.photos[0].url,
+      state.photos[0].receipt,
+    ])
+      expect(text).not.toContain(value)
+    expect(payload.snapshot.status.estimateSaved).toBe(true)
+    expect(payload.snapshot).not.toHaveProperty('contact')
+    expect(writes(fetch)).toEqual([])
+  })
+  it('rejects oversized new input before append or fetch and retains the exact draft/history', async () => {
+    const fetch = api()
+    const { result } = hook()
+    const before = result.current.session
+    act(() => result.current.setDraft('x'.repeat(12001)))
+    await act(async () => {
+      await result.current.sendMessage()
+    })
+    expect(result.current.session).toBe(before)
+    expect(result.current.draft).toHaveLength(12001)
+    expect(result.current.error).toMatch(/12,000/)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+  it('bounds client context but keeps full legacy history and latest question across reload', async () => {
+    const messages: ConversationSession['messages'] = Array.from({ length: 220 }, (_, index) => ({
+      id: `old-${index}`,
+      role: 'user',
+      content: `History ${index}`,
+    }))
+    messages.push(
+      { id: 'oversized', role: 'user', content: 'x'.repeat(12001) },
+      { id: 'question', role: 'assistant', content: 'What is the origin address?' },
+    )
+    const fetch = api()
+    const view = hook(ready({ messages }))
+    await act(async () => {
+      await view.result.current.sendMessage('Boston')
+    })
+    const body = JSON.parse(calls(fetch, '/api/conversation')[0][1]?.body as string)
+    expect(body.messages).toEqual([messages.at(-1), expect.objectContaining({ role: 'user', content: 'Boston' })])
+    expect(view.result.current.session.messages.slice(0, 222)).toEqual(messages)
+    const accepted = view.result.current.session.messages
+    view.unmount()
+    const restored = renderHook(() => useConversationController())
+    expect(restored.result.current.session.messages).toEqual(accepted)
+    expect(calls(fetch, '/api/conversation')).toHaveLength(1)
   })
 })

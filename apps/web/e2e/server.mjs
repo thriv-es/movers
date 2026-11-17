@@ -149,10 +149,18 @@ const env = {
   PRICE_PER_BOX: '50',
   AI: {
     async run(_model, input) {
-      const content = input.messages[0].content
-      if (Array.isArray(content)) {
-        const image = content.find((part) => part.type === 'image_url')
-        const hash = digest(Buffer.from(image.image_url.url.split(',')[1], 'base64'))
+      if (Array.isArray(input.image)) {
+        if (
+          _model !== '@cf/meta/llama-3.2-11b-vision-instruct' ||
+          typeof input.prompt !== 'string' ||
+          !input.prompt.includes('verdict') ||
+          input.max_tokens !== 2048 ||
+          input.temperature !== 0 ||
+          input.image.length === 0 ||
+          !input.image.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+        )
+          throw new Error('Fake Vision requires the documented native byte-array profile')
+        const hash = digest(Buffer.from(input.image))
         const file = byDigest.get(hash)
         if (!file) throw new Error('Fake AI received bytes not recorded by upload middleware')
         calls.push({ file, hash })
@@ -183,6 +191,7 @@ const env = {
           }),
         }
       }
+      const content = input.messages[0].content
       if (content.includes('CURRENT_STATE_AND_MESSAGES_JSON')) {
         const { snapshot, messages } = JSON.parse(
           content.split('CURRENT_STATE_AND_MESSAGES_JSON\n')[1].split('\nEND_CURRENT_STATE_AND_MESSAGES_JSON')[0],

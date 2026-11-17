@@ -7,16 +7,16 @@ import {
   writes,
   openPhotos,
   upload,
-  analyze,
   review,
-  priceButton,
+  propose,
   expectPriceBlocked,
+  updateSession,
+  composer,
+  manifestPanel,
 } from './fixtures.mjs'
-
-const composer = (page) => page.getByRole('textbox', { name: 'Message', exact: true })
 const chatRequests = (data) => data.requests.filter((entry) => entry.path === '/api/conversation')
 
-test('bounded history survives legacy oversize, rejected new input, retry and reload without losing the latest question', async ({
+test('bounded history survives oversized legacy input, rejected new draft, retry and reload without losing latest question', async ({
   page,
   request,
 }) => {
@@ -34,7 +34,7 @@ test('bounded history survives legacy oversize, rejected new input, retry and re
     { id: 'question', role: 'assistant', content: 'What is the origin city or address?' },
   )
   await page.evaluate(
-    ({ original, messages }) => {
+    ({ original, messages }) =>
       sessionStorage.setItem(
         'movers.estimate',
         JSON.stringify({
@@ -42,8 +42,7 @@ test('bounded history survives legacy oversize, rejected new input, retry and re
           messages,
           timeline: messages.map((message) => ({ kind: 'message', id: message.id, revision: 0, message })),
         }),
-      )
-    },
+      ),
     { original, messages },
   )
   await page.reload()
@@ -62,18 +61,22 @@ test('bounded history survives legacy oversize, rejected new input, retry and re
   const body = response.request().postDataJSON()
   expect(body.messages).toEqual([messages.at(-1), expect.objectContaining({ role: 'user', content: 'Tel Aviv' })])
   expect(body.snapshot.moveDetails.from).toBeNull()
-  await expect(page.getByLabel('Moving from', { exact: true })).toHaveValue('Tel Aviv')
+  expect((await session(page)).moveDetails.from).toBe('Tel Aviv')
   expect((await session(page)).messages.slice(0, 222)).toEqual(messages)
   expect((await session(page)).timeline.slice(0, 222).map((entry) => entry.message)).toEqual(messages)
   await request.post('/__e2e/scenario', { data: { name: 'normal', conversationFailure: true } })
-  expect((await send(page, 'from Tel Aviv to Raanana on 1.1.2027')).status()).toBe(502)
+  expect((await send(page, 'From 12 Main Street, Boston, MA to 9 Oak Street, Hartford, CT.')).status()).toBe(502)
   await request.post('/__e2e/scenario', { data: { name: 'normal' } })
   const retried = page.waitForResponse((reply) => reply.url().endsWith('/api/conversation'))
-  await page.getByRole('button', { name: 'Retry reply', exact: true }).click()
+  await page.getByRole('button', { name: 'Retry reply' }).click()
   expect((await retried).status()).toBe(200)
-  await expect(page.getByLabel('Moving to', { exact: true })).toHaveValue('Raanana')
+  await expect.poll(async () => (await session(page)).moveDetails.to).toBe('9 Oak Street, Hartford, CT')
   const settled = await session(page)
-  expect(settled.messages.filter((entry) => entry.content === 'from Tel Aviv to Raanana on 1.1.2027')).toHaveLength(1)
+  expect(
+    settled.messages.filter(
+      (entry) => entry.content === 'From 12 Main Street, Boston, MA to 9 Oak Street, Hartford, CT.',
+    ),
+  ).toHaveLength(1)
   await page.reload()
   expect((await session(page)).messages).toEqual(settled.messages)
   expect((await send(page, 'hello')).status()).toBe(200)
@@ -82,13 +85,12 @@ test('bounded history survives legacy oversize, rejected new input, retry and re
 })
 
 for (const resolution of ['same', 'different']) {
-  test(`v5 long-label inventory count/remove and duplicate ${resolution} controls recover pricing readiness`, async ({
+  test(`v5 long-label inventory count/remove and duplicate ${resolution} use explicit chat review`, async ({
     page,
     request,
   }) => {
     await openPhotos(page)
-    await upload(page, [2])
-    expect((await analyze(page)).status()).toBe(200)
+    expect((await upload(page, [2])).status()).toBe(200)
     const original = await session(page)
     const label = `legacy custom ${'x'.repeat(220)}`
     await page.evaluate(
@@ -111,35 +113,34 @@ for (const resolution of ['same', 'different']) {
       { original, label },
     )
     await page.reload()
-    await expect(page.getByRole('log')).toContainText('Your earlier draft is here')
-    await page.getByRole('button', { name: 'Review move details', exact: true }).click()
-    await page.getByRole('button', { name: 'Confirm move details', exact: true }).click()
-    const row = page.getByRole('listitem', { name: `${label} count`, exact: true })
-    await row.getByRole('button', { name: `One more ${label}`, exact: true }).click()
+    await expect.poll(async () => (await session(page))?.version).toBe(6)
+    expect((await session(page)).timeline).toContainEqual(
+      expect.objectContaining({ kind: 'event', event: 'migration' }),
+    )
+    await propose(page, { type: 'item.count', itemType: label, count: 3 })
     expect((await session(page)).items[0]).toEqual({ type: label, count: 3 })
-    await row.getByRole('button', { name: `One fewer ${label}`, exact: true }).click()
+    await propose(page, { type: 'item.count', itemType: label, count: 2 })
     expect((await session(page)).items[0]).toEqual({ type: label, count: 2 })
     await expectPriceBlocked(page)
     await review(page, { duplicates: [{ item: label, count: 2, resolution }] })
-    await expect(priceButton(page)).toBeEnabled()
-    const expectedCount = resolution === 'same' ? 1 : 2
+    await expect(page.getByRole('button', { name: 'Book this move' })).toBeEnabled()
     expect((await session(page)).items).toEqual([
-      { type: label, count: expectedCount },
+      { type: label, count: resolution === 'same' ? 1 : 2 },
       { type: 'desk', count: 1 },
     ])
     await page.reload()
     expect((await session(page)).photoRefs).toEqual(original.photoRefs)
     expect((await session(page)).moveDetails).toEqual(original.moveDetails)
     expect((await session(page)).duplicateResolutions).toEqual({ [label]: resolution })
-    await expect(page.getByRole('button', { name: /^(Same|Different) / })).toHaveCount(0)
-    await row.getByRole('button', { name: 'Remove', exact: true }).click()
+    await propose(page, { type: 'item.remove', itemType: label })
     expect((await session(page)).items).toEqual([{ type: 'desk', count: 1 }])
-    await expect(priceButton(page)).toBeEnabled()
-    expect(writes(await state(request))).toEqual([])
+    expect((await state(request)).estimates).toBe(0)
+    // Read-only price replaced the old save-on-review behavior; no commercial request is implied.
+    expect(writes(await state(request)).every((entry) => entry.path === '/api/price')).toBe(true)
   })
 }
 
-test('actual mock handles side-labelled street fragments and explicit city replacement without inventing a side', async ({
+test('actual offline extractor handles side-labelled street fragments and explicit city replacement without inventing a side', async ({
   page,
   request,
 }) => {
@@ -147,15 +148,16 @@ test('actual mock handles side-labelled street fragments and explicit city repla
   await request.post('/__e2e/scenario', { data: { name: 'normal', conversationMode: 'mock' } })
   expect((await send(page, 'from Tel Aviv to Raanana on 1.1.2027')).headers()['x-movers-ai-mode']).toBe('mock')
   for (const [text, field, expected] of [
-    ['origin street: 12 Main Street', 'Moving from', '12 Main Street, Tel Aviv'],
-    ['destination street: 9 Oak Street', 'Moving to', '9 Oak Street, Raanana'],
-    ['origin street: 12 Main Street, Haifa', 'Moving from', '12 Main Street, Haifa'],
+    ['origin street: 12 Main Street', 'from', '12 Main Street, Tel Aviv'],
+    ['destination street: 9 Oak Street', 'to', '9 Oak Street, Raanana'],
+    ['origin street: 12 Main Street, Haifa', 'from', '12 Main Street, Haifa'],
   ]) {
     const response = await send(page, text)
     expect(response.status()).toBe(200)
     expect(response.headers()['x-movers-ai-mode']).toBe('mock')
     expect((await response.json()).reply).not.toMatch(/origin or destination/i)
-    await expect(page.getByLabel(field, { exact: true })).toHaveValue(expected)
+    expect((await session(page)).moveDetails[field]).toBe(expected)
+    await expect(manifestPanel(page)).toContainText(expected)
   }
   const before = (await session(page)).moveDetails
   const ambiguous = await send(page, '12 Unknown Street')
@@ -163,8 +165,8 @@ test('actual mock handles side-labelled street fragments and explicit city repla
   expect((await session(page)).moveDetails).toEqual(before)
   const distance = await send(page, '15')
   expect((await distance.json()).proposals).toEqual([])
-  // The ambiguous-address clarification is not a distance question; no stale question can authorize this answer.
   expect((await session(page)).moveDetails.distanceMiles).toBeNull()
   expect((await state(request)).conversationCalls).toBe(0)
   expect(writes(await state(request))).toEqual([])
+  await updateSession(page)
 })
