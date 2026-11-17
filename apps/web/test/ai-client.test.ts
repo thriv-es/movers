@@ -257,10 +257,19 @@ describe('gateway mode', () => {
     expect(result).toEqual({ text: 'gateway answer', mode: 'gateway' })
     expect(generateTextMock).toHaveBeenCalledTimes(1)
     const args = generateTextMock.mock.calls[0]?.[0] as Record<string, any>
-    expect(Object.keys(args).sort()).toEqual(['model', 'prompt'])
+    expect(Object.keys(args).sort()).toEqual(['maxOutputTokens', 'model', 'prompt'])
     expect(args.prompt).toBe('PROMPT')
+    expect(args.maxOutputTokens).toBe(2048)
     expect(args.model.modelId).toBe(TEXT_MODEL)
     expect(AI.run).not.toHaveBeenCalled()
+  })
+
+  it('caps the output so the JSON session block is not truncated (the gateway default is 256 tokens)', async () => {
+    generateTextMock.mockResolvedValue({ text: 'gateway answer' } as never)
+    await runText(env({ CF_AIG_TOKEN: 'token' }), 'PROMPT', mock)
+
+    const args = generateTextMock.mock.calls[0]?.[0] as Record<string, any>
+    expect(args.maxOutputTokens).toBeGreaterThanOrEqual(2048)
   })
 
   it('calls generateText once per photo: vision model with one image part', async () => {
@@ -270,7 +279,8 @@ describe('gateway mode', () => {
     expect(result).toEqual({ texts: ['gateway vision', 'gateway vision'], mode: 'gateway' })
     expect(generateTextMock).toHaveBeenCalledTimes(2)
     const args = generateTextMock.mock.calls[0]?.[0] as Record<string, any>
-    expect(Object.keys(args).sort()).toEqual(['messages', 'model'])
+    expect(Object.keys(args).sort()).toEqual(['maxOutputTokens', 'messages', 'model'])
+    expect(args.maxOutputTokens).toBe(2048)
     expect(args.model.modelId).toBe(VISION_MODEL)
     expect(args.messages).toEqual([
       {

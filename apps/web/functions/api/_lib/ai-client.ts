@@ -20,8 +20,8 @@ export interface AiResult {
 
 type Backend = Exclude<AiMode, 'mock'>
 
-/** The binding defaults to 256 output tokens, which truncates the JSON the prompts ask for. */
-const BINDING_MAX_TOKENS = 2048
+/** Both real backends otherwise default to output limits that truncate the requested JSON. */
+const MAX_OUTPUT_TOKENS = 2048
 // Exact-model binding profile: the documented native prompt/image input passes strict photo assessment.
 const NATIVE_VISION_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct'
 // This optional Chat model otherwise spends the bounded completion on reasoning rather than visible JSON.
@@ -107,10 +107,10 @@ export async function runText(
             ? {
                 // Installed openai-compatible adapter supports reasoningEffort and additional provider-scoped body fields.
                 providerOptions: {
-                  'workers-ai': { reasoningEffort: 'none', max_completion_tokens: BINDING_MAX_TOKENS },
+                  'workers-ai': { reasoningEffort: 'none', max_completion_tokens: MAX_OUTPUT_TOKENS },
                 },
               }
-            : {}),
+            : { maxOutputTokens: MAX_OUTPUT_TOKENS }),
         })
         return text
       },
@@ -118,8 +118,8 @@ export async function runText(
         const output = await requireBinding(env).run(model, {
           messages: [{ role: 'user', content: prompt }],
           ...(usesCompletionProfile(model, purpose)
-            ? { max_completion_tokens: BINDING_MAX_TOKENS, reasoning_effort: 'none' }
-            : { max_tokens: BINDING_MAX_TOKENS }),
+            ? { max_completion_tokens: MAX_OUTPUT_TOKENS, reasoning_effort: 'none' }
+            : { max_tokens: MAX_OUTPUT_TOKENS }),
         })
         return readBindingText(output, purpose)
       },
@@ -166,6 +166,7 @@ export async function runVision(
                   ],
                 },
               ],
+              maxOutputTokens: MAX_OUTPUT_TOKENS,
             })
             return text
           }),
@@ -178,7 +179,7 @@ export async function runVision(
                 ? {
                     prompt,
                     image: Array.from(img.data),
-                    max_tokens: BINDING_MAX_TOKENS,
+                    max_tokens: MAX_OUTPUT_TOKENS,
                     temperature: 0,
                   }
                 : {
@@ -191,7 +192,7 @@ export async function runVision(
                         ],
                       },
                     ],
-                    max_tokens: BINDING_MAX_TOKENS,
+                    max_tokens: MAX_OUTPUT_TOKENS,
                   }
             const output = await requireBinding(env).run(model, input)
             // Empty vision replies are malformed assessments, so the caller owns their bounded retry.
