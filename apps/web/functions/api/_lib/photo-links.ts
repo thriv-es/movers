@@ -218,7 +218,8 @@ export async function resolvePhotoLinks(
         }
       }
       trusted = true
-      const response = path ? await fetch(`${origin}${path}`, { redirect: 'error' }) : null
+      // workerd supports manual, not error; the non-2xx gate below rejects redirects without following them.
+      const response = path ? await fetch(`${origin}${path}`, { redirect: 'manual' }) : null
       if (response && !response.ok) {
         results.push(unavailable)
         continue

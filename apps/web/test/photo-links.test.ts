@@ -187,9 +187,13 @@ describe('photo link gate', () => {
     expect(get).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
   })
-  it('fetches only exact server-constructed sample URLs without redirect following, preserving order', async () => {
+  it('fetches exact sample URLs using Worker-supported redirect handling, preserving order', async () => {
     const { env } = setup()
-    const fetch = vi.fn(async () => new Response(png, { headers: { 'content-type': 'image/png' } }))
+    const fetch = vi.fn(async (_url: string, options?: RequestInit) => {
+      // workerd rejects this option before performing any IO, unlike Node fetch.
+      if (options?.redirect === 'error') throw new TypeError('Unsupported Worker redirect mode')
+      return new Response(png, { headers: { 'content-type': 'image/png' } })
+    })
     vi.stubGlobal('fetch', fetch)
     const urls = [`${origin}/sample/kitchen.jpg`, 'https://other.example/a.jpg', `${origin}/sample/bedroom.jpg`]
     const result = await resolvePhotoLinks(
@@ -203,9 +207,31 @@ describe('photo link gate', () => {
       urls.map((url, i) => ({ url, status: i === 1 ? 'unlinked' : 'eligible' })),
     )
     expect(fetch.mock.calls).toEqual([
-      [`${origin}/sample/kitchen.jpg`, { redirect: 'error' }],
-      [`${origin}/sample/bedroom.jpg`, { redirect: 'error' }],
+      [`${origin}/sample/kitchen.jpg`, { redirect: 'manual' }],
+      [`${origin}/sample/bedroom.jpg`, { redirect: 'manual' }],
     ])
+  })
+  it.each([301, 302, 303, 307, 308])('rejects a sample redirect (%s) even with valid image bytes', async (status) => {
+    const { env } = setup()
+    const response = new Response(png, {
+      status,
+      headers: { 'content-type': 'image/png', location: 'https://other.example/private.jpg' },
+    })
+    const read = vi.spyOn(response, 'arrayBuffer')
+    const fetch = vi.fn(async () => response)
+    vi.stubGlobal('fetch', fetch)
+    const result = await resolvePhotoLinks(
+      env,
+      origin,
+      'session-a',
+      [{ url: `${origin}/sample/kitchen.jpg`, receipt: null }],
+      true,
+    )
+    expect(result[0]?.status).toBe('unavailable')
+    expect(result[0]?.image).toBeUndefined()
+    expect(read).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledWith(`${origin}/sample/kitchen.jpg`, { redirect: 'manual' })
   })
   it('does not read R2 without D1 and excludes corrupt or unreadable own bytes', async () => {
     const { env, get } = setup()
