@@ -18,6 +18,12 @@ function binding(run: (...args: any[]) => unknown) {
 }
 
 const image = { data: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' }
+const alternateVisionRole = {
+  selection: { backend: 'binding', model: 'other-vision-model' },
+  mode: 'binding',
+  available: true,
+  revision: 1,
+} as const
 
 beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -43,15 +49,49 @@ describe('binding mode', () => {
     expect(generateTextMock).not.toHaveBeenCalled()
   })
 
-  it('runs the vision model once per photo (one image_url data-URL part each) and keeps the order', async () => {
+  it('uses native prompt and bytes for Llama Vision without changing per-photo order', async () => {
+    const AI = binding(async (_model, input) => {
+      if (input.prompt !== 'PROMPT' || !Array.isArray(input.image)) throw new Error('Native profile required')
+      return { response: JSON.stringify({ photo: input.image[0] }) }
+    })
+    const result = await runVision(
+      env({ AI, AI_MODE: 'binding' }),
+      'PROMPT',
+      [image, { data: new Uint8Array([1, 2, 3]), mimeType: 'image/png' }],
+      mock,
+    )
+    expect(result).toEqual({ mode: 'binding', texts: ['{"photo":255}', '{"photo":1}'] })
+    expect(AI.run).toHaveBeenCalledTimes(2)
+    expect(AI.run).toHaveBeenNthCalledWith(1, VISION_MODEL, {
+      prompt: 'PROMPT',
+      image: Array.from(image.data),
+      max_tokens: 2048,
+      temperature: 0,
+    })
+    expect(AI.run).toHaveBeenNthCalledWith(2, VISION_MODEL, {
+      prompt: 'PROMPT',
+      image: [1, 2, 3],
+      max_tokens: 2048,
+      temperature: 0,
+    })
+    expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('keeps image_url data-URL parts for other binding Vision models and preserves photo order', async () => {
     let calls = 0
     const AI = binding(async () => ({ response: `{"photo":${++calls}}` }))
-    const result = await runVision(env({ AI }), 'PROMPT', [image, { ...image, mimeType: 'image/png' }], mock)
+    const result = await runVision(
+      env({ AI }),
+      'PROMPT',
+      [image, { ...image, mimeType: 'image/png' }],
+      mock,
+      alternateVisionRole,
+    )
 
     expect(result.mode).toBe('binding')
     expect(result.texts).toEqual(['{"photo":1}', '{"photo":2}'])
     expect(AI.run).toHaveBeenCalledTimes(2)
-    expect(AI.run).toHaveBeenNthCalledWith(1, VISION_MODEL, {
+    expect(AI.run).toHaveBeenNthCalledWith(1, alternateVisionRole.selection.model, {
       messages: [
         {
           role: 'user',
@@ -63,7 +103,7 @@ describe('binding mode', () => {
       ],
       max_tokens: 2048,
     })
-    expect(AI.run).toHaveBeenNthCalledWith(2, VISION_MODEL, {
+    expect(AI.run).toHaveBeenNthCalledWith(2, alternateVisionRole.selection.model, {
       messages: [
         {
           role: 'user',
@@ -90,7 +130,7 @@ describe('binding mode', () => {
   it('encodes images larger than one String.fromCharCode chunk', async () => {
     const big = new Uint8Array(100_000).map((_, i) => i % 251)
     const AI = binding(async () => ({ response: 'ok' }))
-    await runVision(env({ AI }), 'PROMPT', [{ data: big, mimeType: 'image/jpeg' }], mock)
+    await runVision(env({ AI }), 'PROMPT', [{ data: big, mimeType: 'image/jpeg' }], mock, alternateVisionRole)
 
     const url: string = AI.run.mock.calls[0]?.[1].messages[0].content[1].image_url.url
     const decoded = Uint8Array.from(atob(url.replace('data:image/jpeg;base64,', '')), (c) => c.charCodeAt(0))

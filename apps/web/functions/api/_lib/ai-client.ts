@@ -22,6 +22,8 @@ type Backend = Exclude<AiMode, 'mock'>
 
 /** The binding defaults to 256 output tokens, which truncates the JSON the prompts ask for. */
 const BINDING_MAX_TOKENS = 2048
+// Exact-model binding profile: the documented native prompt/image input passes strict photo assessment.
+const NATIVE_VISION_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct'
 // This optional Chat model otherwise spends the bounded completion on reasoning rather than visible JSON.
 const DEEPSEEK_CHAT_MODEL = '@cf/deepseek-ai/deepseek-v4.1-flash-1017'
 const usesCompletionProfile = (model: string, purpose: TextPurpose) =>
@@ -171,18 +173,27 @@ export async function runVision(
       binding: (model) =>
         Promise.all(
           images.map(async (img) => {
-            const output = await requireBinding(env).run(model, {
-              messages: [
-                {
-                  role: 'user',
-                  content: [
-                    { type: 'text', text: prompt },
-                    { type: 'image_url', image_url: { url: toDataUrl(img) } },
-                  ],
-                },
-              ],
-              max_tokens: BINDING_MAX_TOKENS,
-            })
+            const input =
+              model === NATIVE_VISION_MODEL
+                ? {
+                    prompt,
+                    image: Array.from(img.data),
+                    max_tokens: BINDING_MAX_TOKENS,
+                    temperature: 0,
+                  }
+                : {
+                    messages: [
+                      {
+                        role: 'user',
+                        content: [
+                          { type: 'text', text: prompt },
+                          { type: 'image_url', image_url: { url: toDataUrl(img) } },
+                        ],
+                      },
+                    ],
+                    max_tokens: BINDING_MAX_TOKENS,
+                  }
+            const output = await requireBinding(env).run(model, input)
             // Empty vision replies are malformed assessments, so the caller owns their bounded retry.
             return readBindingText(output, 'vision', true)
           }),
