@@ -138,24 +138,51 @@ To target one app: `pnpm --filter @movers/web <script>` or `pnpm --filter @mover
 
 ## Deploying
 
-Nothing in the local workflow deploys. Deployment is a separate, explicit step.
+Nothing in the local workflow deploys. The estimator (`apps/web`) is a Cloudflare Pages project connected to GitHub, so Cloudflare builds it on every push.
+
+| Branch | Environment | URL |
+|---|---|---|
+| `main` | Production | https://movers.thriv.es |
+| `dev` | Preview | https://dev.movers-ee0.pages.dev |
+
+Build settings: root directory `apps/web`, build command `pnpm build`, output directory `dist`. Bindings and vars come from `apps/web/wrangler.toml`: `[env.preview]` for the `dev` branch, `[env.production]` for `main`.
+
+### Resources
+
+| Resource | Preview (`dev`) | Production (`main`) |
+|---|---|---|
+| R2 bucket (uploaded photos) | `movers` | `movers-prod` |
+| D1 database (estimates, movers, quote requests) | `movers` | `movers-prod` |
+| AI backend | `AI` binding (Workers AI) | `CF_AIG_TOKEN` secret (AI Gateway) |
+
+Preview and production deliberately use separate buckets and databases, so a preview build can never read or write production leads and photos.
 
 ### First time setup
 
-1. Create a Cloudflare Pages project named `movers`
-2. Create an R2 bucket: `wrangler r2 bucket create movers-storage`
-3. Set the production secret: `wrangler pages secret put CF_AIG_TOKEN`
-4. In `apps/web/wrangler.toml`, uncomment `[env.production.r2_buckets]` and set your bucket name
-
-> **If your Pages project builds from Git:** the estimator moved from the repo root to `apps/web`. Before merging the monorepo layout, set the Pages build to root directory `apps/web`, build command `pnpm install && pnpm build`, output directory `dist`.
+1. Create a Cloudflare Pages project named `movers` and connect it to `thriv-es/movers`
+2. Set the production branch to `main`
+3. Set the build settings: root directory `apps/web`, build command `pnpm build`, output directory `dist`
+4. Create the buckets and databases:
+   - `wrangler r2 bucket create movers` and `wrangler r2 bucket create movers-prod`
+   - `wrangler d1 create movers` and `wrangler d1 create movers-prod`
+5. Apply the D1 migrations to each database:
+   - `wrangler d1 migrations apply movers --remote`
+   - `wrangler d1 migrations apply movers-prod --remote --env production`
+6. Set the production secret: `wrangler pages secret put CF_AIG_TOKEN`
+7. Accept the Workers AI terms for `llama-3.2-11b-vision-instruct` (Workers AI > Model catalog)
 
 ### Ship it
 
+Push to `dev` for a preview, push to `main` for production:
+
 ```bash
-pnpm --filter @movers/web ship    # build + deploy the estimator to Cloudflare Pages
+git push origin dev     # preview build
+git push origin main    # production build
 ```
 
-The landing page (`apps/landing`) builds to a static `dist/` and can be hosted on any static host. Set `VITE_APP_URL` at build time to the public URL of the estimator's `/estimate` page.
+Manual fallback: `pnpm --filter @movers/web ship` builds and uploads the estimator with `wrangler pages deploy`.
+
+The landing page (`apps/landing`) builds to a static `dist/` and is published with a direct upload to the separate `movers-landing` Pages project. It is not connected to GitHub, so it has to be re-uploaded by hand after a change. Set `VITE_APP_URL` at build time to the public URL of the estimator's `/estimate` page.
 
 ## Environment variables
 
@@ -165,6 +192,8 @@ The landing page (`apps/landing`) builds to a static `dist/` and can be hosted o
 | `AI_MODE` | `apps/web/.dev.vars` | `auto` (default), `gateway`, `binding` or `mock` |
 | `PRICE_PER_BOX` | `apps/web/wrangler.toml` | Base price per moving box (default: 50) |
 | `ENV` | `apps/web/wrangler.toml` | `development`, `preview` or `production` |
+| `CHAT_MODEL` / `PRICE_MODEL` | `apps/web/wrangler.toml` | Workers AI models for the chat and pricing calls. Empty means `llama-3.3-70b` |
+| `VITE_LANDING_URL` | `apps/web/wrangler.toml` | Public URL of the landing page |
 | `VITE_GITHUB` | `apps/web/.env` | GitHub repo path, e.g. `thriv-es/movers` |
 | `VITE_APP_URL` | `apps/landing/.env` | Where the landing page's "Get an estimate" points. Default `http://localhost:4610/estimate` |
 

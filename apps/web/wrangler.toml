@@ -6,12 +6,15 @@
 # 1. For local dev: copy .dev.vars.example to .dev.vars and fill in secrets
 # 2. Run the stack: pnpm dev  (Vite on 4610 is the entry point, wrangler pages dev on 4611)
 # 3. Deploy: push a branch. The Pages project "movers" is connected to GitHub and
-#    builds every branch as a preview (root dir apps/web, `pnpm build`, output dist);
-#    `main` is production. `pnpm deploy` is the manual fallback.
+#    builds the `dev` branch as a preview (root dir apps/web, `pnpm build`, output
+#    dist); `main` is production. `pnpm deploy` is the manual fallback.
 #
 # PRODUCTION SETUP
 # ----------------
-# Create resources in the Cloudflare dashboard, then update [env.production] below.
+# The production resources exist and are bound in [env.production] below:
+# R2 bucket `movers-prod`, D1 database `movers-prod`.
+# Apply D1 migrations with:
+#   wrangler d1 migrations apply movers-prod --remote --env production
 # Deploy with: wrangler pages deploy dist --project-name=movers --branch=main
 # =============================================================================
 
@@ -29,8 +32,9 @@ ENV = "development"
 PRICE_PER_BOX = "50"
 
 # ---------------------------------------------------------------------------
-# Cloudflare R2 - object storage for uploaded move photos
-# Create for production: wrangler r2 bucket create movers-storage
+# Cloudflare R2 - object storage for uploaded move photos.
+# The top-level and [env.preview] blocks use the dev bucket "movers";
+# production uses its own bucket "movers-prod" (see [env.production] below).
 # Docs: https://developers.cloudflare.com/r2/
 # ---------------------------------------------------------------------------
 [[r2_buckets]]
@@ -42,7 +46,8 @@ bucket_name = "movers"
 # Migrations live in ./migrations; `pnpm dev:api` applies them to the local
 # database before starting. Without this binding the API keeps records in
 # memory (unit tests).
-# Create for production: wrangler d1 create movers, then paste the database_id.
+# The top-level and [env.preview] blocks use the dev database "movers";
+# production uses its own database "movers-prod" (see [env.production] below).
 # Docs: https://developers.cloudflare.com/d1/
 # ---------------------------------------------------------------------------
 [[d1_databases]]
@@ -103,8 +108,24 @@ binding = "AI"
 # Uncomment and fill in after creating resources in Cloudflare.
 # =============================================================================
 [env.production]
-vars = { ENV = "production" }
+vars = { ENV = "production", PRICE_PER_BOX = "50" }
 
-# [[env.production.r2_buckets]]
-# binding = "MOVERS_BUCKET"
-# bucket_name = "movers-storage"
+# ---------------------------------------------------------------------------
+# Production Cloudflare R2 - object storage for uploaded move photos.
+# Separate from the preview bucket "movers" so previews can never read or
+# write production photos.
+# ---------------------------------------------------------------------------
+[[env.production.r2_buckets]]
+binding = "MOVERS_BUCKET"
+bucket_name = "movers-prod"
+
+# ---------------------------------------------------------------------------
+# Production Cloudflare D1 - saved estimates (leads), movers and quote requests.
+# Separate from the preview database "movers" for the same reason.
+# Migrations: `wrangler d1 migrations apply movers-prod --remote --env production`
+# ---------------------------------------------------------------------------
+[[env.production.d1_databases]]
+binding = "MOVERS_DB"
+database_name = "movers-prod"
+database_id = "4b7ca9e1-ce6e-47bf-a0d0-186361d75035"
+migrations_dir = "migrations"
