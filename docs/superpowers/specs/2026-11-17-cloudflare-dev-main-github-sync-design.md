@@ -89,10 +89,54 @@ a real merge that moves the app into `apps/web` and `packages/ui`.
 
 ## Verification
 
-1. `pnpm --filter @movers/web build` and `pnpm --filter @movers/web test` pass locally.
+1. `pnpm --filter @movers/web build` and `pnpm --filter @movers/web test` pass locally (109 tests).
 2. Pages shows a successful preview deployment for `dev` and a successful production
    deployment for `main`.
 3. `https://movers.thriv.es` serves the current UI.
 4. The production deployment config lists `movers-prod` for R2 and D1.
 5. `POST https://movers.thriv.es/api/chat` returns a real AI answer, not a mock.
 6. A saved estimate lands in `movers-prod`, not in `movers`.
+
+All six checks pass. The end-to-end smoke test against production
+(`MOVERS_URL=https://movers.thriv.es MOVERS_EXPECT_MODE=gateway pnpm smoke`) reports
+`SMOKE OK`: chat, upload, analyze, price, sample, estimate, contact, movers and quotes all
+answer, every AI call runs in `gateway` mode, the estimate reports `storage: d1`, and
+`/api/admin` answers 404 because `ENV=production`.
+
+## Two problems found while deploying
+
+### 1. The AI Gateway truncated every answer (fixed)
+
+The gateway path called `generateText` without an output cap. Workers AI defaults to 256
+output tokens on the gateway exactly like on the binding, so the model was cut off in the
+middle of the JSON session block. The reply kept the raw ` ```json ` block, the parser found
+no session data, and every move detail came back null.
+
+Only production broke, because production runs on the gateway (`CF_AIG_TOKEN` is set) while
+the dev preview runs on the Workers AI binding, which already sent `max_tokens: 2048`.
+
+Fix: the gateway path sends the same cap through `maxOutputTokens` (the AI SDK v5+ name,
+mapped to `max_tokens` by `@ai-sdk/openai-compatible`). The constant is now
+`MAX_OUTPUT_TOKENS` because it applies to both backends, and the gateway tests assert the
+cap so the regression cannot come back.
+
+### 2. One Git-triggered production deploy failed at the deploy stage
+
+The first push to `main` built successfully but failed in the `deploy` stage, so the domain
+kept serving the old deployment. A manual `wrangler pages deploy` of the same commit
+succeeded, which ruled out the config (the bindings it applied were correct), and the next
+Git-triggered production build deployed and took the `movers.thriv.es` alias.
+
+Treated as a transient Cloudflare failure rather than a config problem. If it recurs, the
+build log in the Pages dashboard shows the reason; the API does not expose it.
+
+## Notes
+
+- The project-level `deployment_configs.production` in the Pages API still shows the old
+  dashboard baseline (no D1, no R2). Every build re-applies `apps/web/wrangler.toml`, so the
+  deployed bindings are correct; the baseline was left alone on purpose, because patching it
+  risks dropping the write-only `CF_AIG_TOKEN` secret.
+- `pnpm lint` reports 10 pre-existing Biome errors in `functions/api/_lib/json-utils.ts`,
+  `functions/api/_routes/images.ts` and `src/components/seo.tsx`. They predate this change
+  and the Pages build does not run the linter.
+
