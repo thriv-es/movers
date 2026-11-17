@@ -105,10 +105,9 @@ binding = "AI"
 
 # =============================================================================
 # PRODUCTION ENVIRONMENT
-# Uncomment and fill in after creating resources in Cloudflare.
 # =============================================================================
 [env.production]
-vars = { ENV = "production", PRICE_PER_BOX = "50" }
+vars = { ENV = "production", PRICE_PER_BOX = "50", VITE_LANDING_URL = "https://movers-landing.pages.dev/" }
 
 # ---------------------------------------------------------------------------
 # Production Cloudflare R2 - object storage for uploaded move photos.
